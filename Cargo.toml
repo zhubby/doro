@@ -1,0 +1,63 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ansi-escape",
+    "crates/apply-patch",
+    "crates/cli",
+    "crates/common",
+    "crates/core",
+    "crates/exec",
+    "crates/execpolicy",
+    "crates/file-search",
+    "crates/linux-sandbox",
+    "crates/login",
+    "crates/mcp-client",
+    "crates/mcp-server",
+    "crates/mcp-types",
+    "crates/tui",
+]
+
+
+[workspace.dependencies]
+codex-ansi-escape = { path = "crates/ansi-escape"}
+codex-apply-patch = { path = "crates/apply-patch"}
+codex-cli = { path = "crates/cli"}
+codex-common = { path = "crates/common"}
+codex-core = { path = "crates/core"}
+codex-exec = { path = "crates/exec"}
+codex-execpolicy = { path = "crates/execpolicy"}
+codex-file-search = { path = "crates/file-search"}
+codex-linux-sandbox = { path = "crates/linux-sandbox"}
+codex-login = { path = "crates/login"}
+codex-mcp-client = { path = "crates/mcp-client"}
+codex-mcp-server = { path = "crates/mcp-server"}
+mcp-types = { path = "crates/mcp-types"}
+codex-tui = { path = "crates/tui"}
+
+
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.81"
+authors = ["zhubby <yanvalue@gmail.com>"]
+version = "0.1.0"
+description = "doro"
+repository = "https://github.com/zhubby/doro"
+homepage = "https://github.com/zhubby/doro"
+
+[workspace.lints]
+rust = {}
+
+[workspace.lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+
+[profile.release]
+lto = "fat"
+# Because we bundle some of these executables with the TypeScript CLI, we
+# remove everything to make the binary as small as possible.
+strip = "symbols"
+
+# See https://github.com/openai/codex/issues/1411 for details.
+codegen-units = 1
