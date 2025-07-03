@@ -1,0 +1,1 @@
+FROM rust:1.77.2-slim-bookworm
