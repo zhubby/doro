@@ -550,253 +550,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9b18233253483ce2f65329a24072ec414db782531bdbb7d0bbc4bd2ce6b7e21"
 
 [[package]]
-name = "codex-ansi-escape"
-version = "0.1.0"
-dependencies = [
- "ansi-to-tui",
- "ratatui",
- "tracing",
-]
-
-[[package]]
-name = "codex-apply-patch"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "pretty_assertions",
- "serde_json",
- "similar",
- "tempfile",
- "thiserror 2.0.12",
- "tree-sitter",
- "tree-sitter-bash",
-]
-
-[[package]]
-name = "codex-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "codex-common",
- "codex-core",
- "codex-exec",
- "codex-linux-sandbox",
- "codex-login",
- "codex-mcp-server",
- "codex-tui",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "codex-common"
-version = "0.1.0"
-dependencies = [
- "clap",
- "codex-core",
- "serde",
- "toml",
-]
-
-[[package]]
-name = "codex-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "assert_cmd",
- "async-channel",
- "base64 0.21.7",
- "bytes",
- "codex-apply-patch",
- "codex-login",
- "codex-mcp-client",
- "dirs",
- "env-flags",
- "eventsource-stream",
- "fs-err",
- "fs2",
- "futures",
- "landlock",
- "maplit",
- "mcp-types",
- "mime_guess",
- "openssl-sys",
- "patch",
- "path-absolutize",
- "predicates",
- "pretty_assertions",
- "rand 0.9.1",
- "reqwest",
- "seccompiler",
- "serde",
- "serde_json",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "tempfile",
- "thiserror 2.0.12",
- "time",
- "tokio",
- "tokio-util",
- "toml",
- "tracing",
- "tree-sitter",
- "tree-sitter-bash",
- "uuid",
- "wildmatch",
- "wiremock",
-]
-
-[[package]]
-name = "codex-exec"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "codex-common",
- "codex-core",
- "codex-linux-sandbox",
- "mcp-types",
- "owo-colors",
- "serde_json",
- "shlex",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "codex-execpolicy"
-version = "0.1.0"
-dependencies = [
- "allocative",
- "anyhow",
- "clap",
- "derive_more",
- "env_logger",
- "log",
- "multimap",
- "path-absolutize",
- "regex-lite",
- "serde",
- "serde_json",
- "serde_with",
- "starlark",
- "tempfile",
-]
-
-[[package]]
-name = "codex-file-search"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ignore",
- "nucleo-matcher",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "codex-linux-sandbox"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "codex-core",
- "landlock",
- "libc",
- "seccompiler",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "codex-login"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "reqwest",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "codex-mcp-client"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mcp-types",
- "pretty_assertions",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "codex-mcp-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "codex-core",
- "codex-linux-sandbox",
- "mcp-types",
- "pretty_assertions",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "codex-tui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "clap",
- "codex-ansi-escape",
- "codex-common",
- "codex-core",
- "codex-file-search",
- "codex-linux-sandbox",
- "codex-login",
- "color-eyre",
- "crossterm",
- "image",
- "lazy_static",
- "mcp-types",
- "path-clean",
- "pretty_assertions",
- "ratatui",
- "ratatui-image",
- "regex-lite",
- "serde_json",
- "shlex",
- "strum 0.27.1",
- "strum_macros 0.27.1",
- "tokio",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tui-input",
- "tui-markdown",
- "tui-textarea",
- "unicode-segmentation",
- "uuid",
-]
-
-[[package]]
 name = "color-eyre"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1154,6 +907,261 @@ name = "doc-comment"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fea41bba32d969b513997752735605054bc0dfa92b4c56bf1189f2e174be7a10"
+
+[[package]]
+name = "doro-ansi-escape"
+version = "0.1.0"
+dependencies = [
+ "ansi-to-tui",
+ "ratatui",
+ "tracing",
+]
+
+[[package]]
+name = "doro-apply-patch"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "pretty_assertions",
+ "serde_json",
+ "similar",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tree-sitter",
+ "tree-sitter-bash",
+]
+
+[[package]]
+name = "doro-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "doro-common",
+ "doro-core",
+ "doro-exec",
+ "doro-linux-sandbox",
+ "doro-login",
+ "doro-mcp-server",
+ "doro-tui",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "doro-common"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "doro-core",
+ "serde",
+ "toml",
+]
+
+[[package]]
+name = "doro-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_cmd",
+ "async-channel",
+ "base64 0.21.7",
+ "bytes",
+ "dirs",
+ "doro-apply-patch",
+ "doro-login",
+ "doro-mcp-client",
+ "doro-mcp-types",
+ "env-flags",
+ "eventsource-stream",
+ "fs-err",
+ "fs2",
+ "futures",
+ "landlock",
+ "maplit",
+ "mime_guess",
+ "openssl-sys",
+ "patch",
+ "path-absolutize",
+ "predicates",
+ "pretty_assertions",
+ "rand 0.9.1",
+ "reqwest",
+ "seccompiler",
+ "serde",
+ "serde_json",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "tempfile",
+ "thiserror 2.0.12",
+ "time",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "tree-sitter",
+ "tree-sitter-bash",
+ "uuid",
+ "wildmatch",
+ "wiremock",
+]
+
+[[package]]
+name = "doro-exec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "doro-common",
+ "doro-core",
+ "doro-linux-sandbox",
+ "doro-mcp-types",
+ "owo-colors",
+ "serde_json",
+ "shlex",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "doro-execpolicy"
+version = "0.1.0"
+dependencies = [
+ "allocative",
+ "anyhow",
+ "clap",
+ "derive_more",
+ "env_logger",
+ "log",
+ "multimap",
+ "path-absolutize",
+ "regex-lite",
+ "serde",
+ "serde_json",
+ "serde_with",
+ "starlark",
+ "tempfile",
+]
+
+[[package]]
+name = "doro-file-search"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ignore",
+ "nucleo-matcher",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "doro-linux-sandbox"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "doro-core",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "doro-login"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "doro-mcp-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "doro-mcp-types",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "doro-mcp-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "doro-core",
+ "doro-linux-sandbox",
+ "doro-mcp-types",
+ "pretty_assertions",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "doro-mcp-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "doro-tui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "color-eyre",
+ "crossterm",
+ "doro-ansi-escape",
+ "doro-common",
+ "doro-core",
+ "doro-file-search",
+ "doro-linux-sandbox",
+ "doro-login",
+ "doro-mcp-types",
+ "image",
+ "lazy_static",
+ "path-clean",
+ "pretty_assertions",
+ "ratatui",
+ "ratatui-image",
+ "regex-lite",
+ "serde_json",
+ "shlex",
+ "strum 0.27.1",
+ "strum_macros 0.27.1",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tui-input",
+ "tui-markdown",
+ "tui-textarea",
+ "unicode-segmentation",
+ "uuid",
+]
 
 [[package]]
 name = "dupe"
@@ -2451,14 +2459,6 @@ checksum = "8ea1f30cedd69f0a2954655f7188c6a834246d2bcf1e315e2ac40c4b24dc9519"
 dependencies = [
  "cfg-if",
  "rayon",
-]
-
-[[package]]
-name = "mcp-types"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

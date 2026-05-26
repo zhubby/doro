@@ -1,38 +1,38 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/ansi-escape",
-    "crates/apply-patch",
-    "crates/cli",
-    "crates/common",
-    "crates/core",
-    "crates/exec",
-    "crates/execpolicy",
-    "crates/file-search",
-    "crates/linux-sandbox",
-    "crates/login",
-    "crates/mcp-client",
-    "crates/mcp-server",
-    "crates/mcp-types",
-    "crates/tui",
+    "doro-ansi-escape",
+    "doro-apply-patch",
+    "doro-cli",
+    "doro-common",
+    "doro-core",
+    "doro-exec",
+    "doro-execpolicy",
+    "doro-file-search",
+    "doro-linux-sandbox",
+    "doro-login",
+    "doro-mcp-client",
+    "doro-mcp-server",
+    "doro-mcp-types",
+    "doro-tui",
 ]
 
 
 [workspace.dependencies]
-codex-ansi-escape = { path = "crates/ansi-escape" }
-codex-apply-patch = { path = "crates/apply-patch" }
-codex-cli = { path = "crates/cli" }
-codex-common = { path = "crates/common" }
-codex-core = { path = "crates/core" }
-codex-exec = { path = "crates/exec" }
-codex-execpolicy = { path = "crates/execpolicy" }
-codex-file-search = { path = "crates/file-search" }
-codex-linux-sandbox = { path = "crates/linux-sandbox" }
-codex-login = { path = "crates/login" }
-codex-mcp-client = { path = "crates/mcp-client" }
-codex-mcp-server = { path = "crates/mcp-server" }
-mcp-types = { path = "crates/mcp-types" }
-codex-tui = { path = "crates/tui" }
+doro-ansi-escape = { path = "doro-ansi-escape" }
+doro-apply-patch = { path = "doro-apply-patch" }
+doro-cli = { path = "doro-cli" }
+doro-common = { path = "doro-common" }
+doro-core = { path = "doro-core" }
+doro-exec = { path = "doro-exec" }
+doro-execpolicy = { path = "doro-execpolicy" }
+doro-file-search = { path = "doro-file-search" }
+doro-linux-sandbox = { path = "doro-linux-sandbox" }
+doro-login = { path = "doro-login" }
+doro-mcp-client = { path = "doro-mcp-client" }
+doro-mcp-server = { path = "doro-mcp-server" }
+doro-mcp-types = { path = "doro-mcp-types" }
+doro-tui = { path = "doro-tui" }
 
 
 [workspace.package]

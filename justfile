@@ -18,7 +18,7 @@ tui *args:
 
 # Run the CLI version of the file-search crate.
 file-search *args:
-    cargo run --bin codex-file-search -- "$@"
+    cargo run --bin doro-file-search -- "$@"
 
 # format code
 fmt:

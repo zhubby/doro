@@ -1,1 +1,4 @@
-FROM rust:1.77.2-slim-bookworm
+FROM alpine:latest
+WORKDIR /app
+COPY bin /app/bin
+ENTRYPOINT ["/app/bin"]

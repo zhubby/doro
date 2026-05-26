@@ -1,0 +1,23 @@
+[package]
+name = "doro-common"
+version = { workspace = true }
+edition = "2024"
+
+[lib]
+name = "codex_common"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive", "wrap_help"], optional = true }
+doro-core = { workspace = true }
+toml = { version = "0.8", optional = true }
+serde = { version = "1", optional = true }
+
+[features]
+# Separate feature so that `clap` is not a mandatory dependency.
+cli = ["clap", "toml", "serde"]
+elapsed = []
+sandbox_summary = []
