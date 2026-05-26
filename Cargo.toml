@@ -36,7 +36,7 @@ doro-tui = { path = "doro-tui" }
 
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.81"
 authors = ["zhubby <yanvalue@gmail.com>"]
