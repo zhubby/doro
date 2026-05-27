@@ -1,17 +1,20 @@
 use sea_orm::entity::prelude::*;
 use serde_json::Value;
-use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "agent_events")]
+#[sea_orm(table_name = "operation_logs")]
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i64,
-    pub host_id: Option<Uuid>,
-    pub agent_id: Option<Uuid>,
-    pub event_type: String,
-    pub event_json: Value,
-    pub recorded_at: DateTimeWithTimeZone,
+    pub source: String,
+    pub actor: Option<String>,
+    pub method: String,
+    pub path: String,
+    pub status_code: i32,
+    pub latency_ms: i32,
+    pub message: Option<String>,
+    pub detail: Value,
+    pub created_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

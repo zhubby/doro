@@ -1,23 +1,18 @@
 use sea_orm::entity::prelude::*;
-use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "tasks")]
+#[sea_orm(table_name = "enrollment_tokens")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub host_id: Option<Uuid>,
-    pub title: String,
-    pub prompt: Option<String>,
+    pub label: String,
+    pub token_hash: String,
     pub status: String,
-    pub created_by: String,
+    pub expires_at: Option<DateTimeWithTimeZone>,
+    pub used_at: Option<DateTimeWithTimeZone>,
+    pub used_by_agent_id: Option<Uuid>,
     pub created_at: DateTimeWithTimeZone,
-    pub queued_at: Option<DateTimeWithTimeZone>,
-    pub started_at: Option<DateTimeWithTimeZone>,
-    pub finished_at: Option<DateTimeWithTimeZone>,
-    pub error_message: Option<String>,
-    pub metadata: Value,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

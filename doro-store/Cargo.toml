@@ -8,9 +8,12 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 doro-config = { workspace = true }
 doro-protocol = { workspace = true }
 sea-orm = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

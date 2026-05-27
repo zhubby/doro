@@ -67,7 +67,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ControlPlane => {
             init_logging(cli.log_level)?;
-            doro_control_plane::run(loaded_config.config.server).await?;
+            doro_control_plane::run(loaded_config.config).await?;
         }
         Command::Status => {
             println!("Doro control plane workspace");

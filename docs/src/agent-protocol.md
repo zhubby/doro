@@ -22,6 +22,17 @@ The initial service surface is:
 - `ReportHeartbeat`: report liveness and current capability declarations.
 - `OpenAgentStream`: bidirectional stream where agents send `AgentEvent` messages and receive `ControlPlaneCommand` messages.
 
+## Persistence
+
+Agent protocol traffic is persisted by `doro-store`:
+
+- Enrollment creates or updates `hosts`, `agents`, and `agent_capabilities`, then appends an `agent_events` record.
+- Heartbeats update agent and host `last_seen_at`, replace declared capabilities for that agent, and append a heartbeat event.
+- Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
+- Metric payloads should be normalized into `metric_snapshots` when agents start sending structured metrics.
+
+Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
+
 ## Lifecycle
 
 1. Agent connects and authenticates.

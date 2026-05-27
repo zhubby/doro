@@ -3,21 +3,20 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel)]
-#[sea_orm(table_name = "tasks")]
+#[sea_orm(table_name = "databases")]
 pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub id: Uuid,
-    pub host_id: Option<Uuid>,
-    pub title: String,
-    pub prompt: Option<String>,
+    pub host_id: Uuid,
+    pub app_install_id: Option<Uuid>,
+    pub name: String,
+    pub engine: String,
+    pub version: String,
     pub status: String,
-    pub created_by: String,
-    pub created_at: DateTimeWithTimeZone,
-    pub queued_at: Option<DateTimeWithTimeZone>,
-    pub started_at: Option<DateTimeWithTimeZone>,
-    pub finished_at: Option<DateTimeWithTimeZone>,
-    pub error_message: Option<String>,
+    pub endpoint: Value,
     pub metadata: Value,
+    pub created_at: DateTimeWithTimeZone,
+    pub updated_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

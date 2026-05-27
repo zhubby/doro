@@ -916,6 +916,8 @@ dependencies = [
  "doro-protocol",
  "doro-store",
  "futures-util",
+ "prost-types",
+ "sea-orm",
  "serde",
  "serde_json",
  "tokio",
@@ -946,10 +948,13 @@ name = "doro-store"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "doro-config",
  "doro-protocol",
  "sea-orm",
+ "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
