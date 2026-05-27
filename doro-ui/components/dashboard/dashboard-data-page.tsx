@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 
-import { toApplications } from "@/lib/control-plane-mappers";
 import {
   getApps,
   getApprovals,
@@ -91,12 +90,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
     return <ApprovalsPage approvals={data.approvals} apiError={data.error} />;
   }
   if (view === "apps") {
-    return (
-      <AppsPage
-        initialApplications={data.apps.length > 0 ? toApplications(data.apps) : undefined}
-        apiError={data.error}
-      />
-    );
+    return <AppsPage apiError={data.error} />;
   }
   if (view === "settings") {
     return <SettingsPage settings={data.settings} apiError={data.error} />;

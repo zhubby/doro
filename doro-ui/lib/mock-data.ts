@@ -14,6 +14,7 @@ import type {
   SystemStat,
   TerminalSession,
   ToolEntry,
+  VirtualMachineResource,
   WebsiteResource,
 } from "@/types/dashboard";
 
@@ -21,7 +22,7 @@ export const overviewStats: OverviewStat[] = [
   { label: "智能体", value: "0", helper: "待接入" },
   { label: "网站", value: "1", helper: "1 个运行中" },
   { label: "数据库", value: "2", helper: "MySQL / Redis" },
-  { label: "已安装应用", value: "6", helper: "2 个可更新" },
+  { label: "容器", value: "4", helper: "3 个运行中" },
 ];
 
 export const systemStats: SystemStat[] = [
@@ -48,7 +49,7 @@ export const diskMetrics: Metric[] = [
 export const trendBars = [18, 26, 22, 34, 28, 44, 38, 52, 46, 58, 48, 64];
 
 export const notes = [
-  "本周检查应用更新与备份策略。",
+  "本周检查虚拟机快照与备份策略。",
   "开启安全入口后再暴露公网访问。",
   "数据库监控阈值保持默认配置。",
 ];
@@ -125,6 +126,72 @@ export const containers: ContainerResource[] = [
     cpu: "0.00%",
     memory: "0 MB",
     ports: "6379:6379",
+    updatedAt: "昨天",
+  },
+  {
+    id: "n8n",
+    name: "doro-n8n",
+    image: "n8nio/n8n:1.92",
+    status: "warning",
+    source: "手动创建",
+    cpu: "4.78%",
+    memory: "768 MB",
+    ports: "5678:5678",
+    updatedAt: "18 分钟前",
+  },
+];
+
+export const virtualMachines: VirtualMachineResource[] = [
+  {
+    id: "vm-home-assistant",
+    name: "home-assistant",
+    status: "running",
+    host: "doro-node-01",
+    image: "Debian 12 / HAOS",
+    cpu: "2 vCPU · 18%",
+    memory: "4 GB · 62%",
+    disk: "64 GB · 28%",
+    address: "10.0.1.24",
+    uptime: "12 天 4 小时",
+    updatedAt: "刚刚",
+  },
+  {
+    id: "vm-devbox",
+    name: "devbox",
+    status: "running",
+    host: "doro-node-01",
+    image: "Ubuntu 24.04 LTS",
+    cpu: "4 vCPU · 36%",
+    memory: "8 GB · 51%",
+    disk: "160 GB · 47%",
+    address: "10.0.1.31",
+    uptime: "3 天 7 小时",
+    updatedAt: "5 分钟前",
+  },
+  {
+    id: "vm-media",
+    name: "media-stack",
+    status: "warning",
+    host: "doro-node-02",
+    image: "Fedora Server 40",
+    cpu: "6 vCPU · 72%",
+    memory: "12 GB · 81%",
+    disk: "1.2 TB · 86%",
+    address: "10.0.1.42",
+    uptime: "24 天 1 小时",
+    updatedAt: "16 分钟前",
+  },
+  {
+    id: "vm-lab",
+    name: "security-lab",
+    status: "stopped",
+    host: "doro-node-02",
+    image: "Kali 2025.1",
+    cpu: "2 vCPU · 0%",
+    memory: "4 GB · 0%",
+    disk: "96 GB · 34%",
+    address: "未分配",
+    uptime: "已停止",
     updatedAt: "昨天",
   },
 ];

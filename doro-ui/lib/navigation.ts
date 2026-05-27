@@ -20,7 +20,7 @@ export const navigation: NavigationItem[] = [
   {
     label: "概览",
     href: "/",
-    description: "统一查看站点、数据库、应用和服务器运行状态。",
+    description: "统一查看站点、数据库、容器和服务器运行状态。",
     icon: Home,
   },
   {
@@ -42,11 +42,11 @@ export const navigation: NavigationItem[] = [
     icon: ShieldCheck,
   },
   {
-    label: "应用",
+    label: "虚拟机",
     href: "/apps",
-    description: "浏览、安装和管理常用服务应用。",
+    description: "管理虚拟机生命周期、镜像、宿主机和资源分配。",
     icon: AppWindow,
-    count: 6,
+    count: 4,
   },
   {
     label: "AI",

@@ -4,7 +4,7 @@ import { AlertTriangle, CircleGauge, HardDrive, Network, NotebookPen } from "luc
 
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
 import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
-import { ApplicationList } from "@/components/dashboard/apps/application-list";
+import { ContainerList } from "@/components/dashboard/overview/container-list";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,13 +18,12 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  applications,
+  containers,
   diskMetrics,
   notes,
   systemStats,
   trafficMetrics,
 } from "@/lib/mock-data";
-import { toApplications } from "@/lib/control-plane-mappers";
 import type { AppSummary, ApprovalRequest, Host, Task } from "@/types/api";
 
 type OverviewPageProps = {
@@ -42,11 +41,13 @@ export function OverviewPage({
   apps = [],
   apiError,
 }: OverviewPageProps) {
-  const liveApplications = apps.length > 0 ? toApplications(apps) : applications;
   const waitingApprovals = approvals.filter(
     (approval) => approval.status === "pending",
   ).length;
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
+  const runningContainers = containers.filter(
+    (container) => container.status === "running",
+  ).length;
   const overviewStats = [
     {
       label: "智能体",
@@ -64,9 +65,9 @@ export function OverviewPage({
       helper: waitingApprovals > 0 ? `${waitingApprovals} 个待处理` : "当前无需处理",
     },
     {
-      label: "应用",
-      value: String(liveApplications.length),
-      helper: "来自控制平面应用目录",
+      label: "容器",
+      value: String(containers.length),
+      helper: `${runningContainers} 个运行中`,
     },
   ];
 
@@ -185,12 +186,9 @@ export function OverviewPage({
           </CardContent>
         </Card>
 
-        <ApplicationList
-          title="应用"
-          description="常用服务与安装状态"
-          applications={liveApplications}
+        <ContainerList
+          containers={containers}
           className="h-full xl:col-start-2 xl:row-start-2"
-          compact
         />
       </div>
     </PageContainer>

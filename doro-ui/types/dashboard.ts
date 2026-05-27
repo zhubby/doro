@@ -43,6 +43,20 @@ export type Application = {
 
 export type ResourceStatus = "running" | "stopped" | "warning";
 
+export type VirtualMachineResource = {
+  id: string;
+  name: string;
+  status: ResourceStatus;
+  host: string;
+  image: string;
+  cpu: string;
+  memory: string;
+  disk: string;
+  address: string;
+  uptime: string;
+  updatedAt: string;
+};
+
 export type ResourceAction = {
   label: string;
   disabled?: boolean;
