@@ -240,7 +240,7 @@ async fn settings() -> Json<SettingsResponse> {
     Json(SettingsResponse {
         approval_policy: "policy_and_human_approval".to_string(),
         agent_transport: "grpc_protobuf".to_string(),
-        database: "sqlite".to_string(),
+        database: "postgres".to_string(),
     })
 }
 

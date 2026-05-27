@@ -13,7 +13,7 @@
 
 - Durable enrollment flow.
 - Authenticated UI sessions.
-- Real SQLite task, host, approval, and event persistence.
+- Real Postgres task, host, approval, and event persistence.
 - Agent task dispatch over gRPC streaming.
 - Container, service, log, and metrics integrations.
 - Human approval UI.
@@ -24,4 +24,4 @@
 - Policy editor and reusable automation recipes.
 - Application catalog with backup and restore workflows.
 - Multi-user roles.
-- Optional Postgres backend for larger deployments.
+- Database migration tooling and retention policies for metrics, logs, and audit events.

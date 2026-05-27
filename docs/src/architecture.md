@@ -6,7 +6,7 @@ Doro uses a hub-and-spoke architecture.
 flowchart LR
     UI["doro-ui"] --> CP["doro-control-plane"]
     CLI["doro-cli"] --> CP
-    CP --> Store["doro-store / SQLite"]
+    CP --> Store["doro-store / Postgres"]
     CP --> AI["doro-ai"]
     A1["doro-agent / host-a"] --> CP
     A2["doro-agent / host-b"] --> CP
@@ -22,6 +22,6 @@ The UI uses REST APIs for query and mutation, plus SSE at `/api/v1/events` for r
 Trust boundaries:
 
 - Browser to control plane: authenticated user/API session.
-- Control plane to store: local trusted persistence boundary.
+- Control plane to store: trusted persistence boundary configured through `doro-config`.
 - Agent to control plane: enrolled agent identity and transport security.
 - AI to control plane: advisory planning only; policy and approval remain control-plane responsibilities.

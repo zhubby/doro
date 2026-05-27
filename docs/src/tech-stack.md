@@ -6,7 +6,7 @@ Tokio provides async runtime support for HTTP, gRPC, timers, and future backgrou
 
 Axum is the control-plane HTTP framework. It keeps routing and typed extraction simple while staying close to the Tokio ecosystem.
 
-SQLite with `sqlx` is the MVP persistence layer. It is easy to deploy on a home server, supports durable local state, and can later be abstracted if a larger deployment needs Postgres.
+Postgres with SeaORM is the default persistence layer. Doro stores operational history, approvals, event streams, task state, and future catalog data in a database that can handle long-lived home-server state without forcing ad hoc local files. SeaORM keeps database access behind an ORM boundary while still allowing explicit schema ownership in `doro-store`.
 
 Next.js, React, Tailwind, and shadcn/ui remain the UI stack. They are already present in `doro-ui` and fit a dense operations console.
 

@@ -12,8 +12,9 @@ This repository is a Rust workspace plus a Next.js frontend.
 
 - `doro-protocol`: shared domain protocol types plus generated tonic/prost gRPC types and ts-rs TypeScript bindings.
 - `doro-control-plane`: Axum HTTP API, tonic gRPC Agent service, task orchestration, approvals, event stream, and AI entrypoints.
+- `doro-config`: TOML config schema, default config path resolution, and load-or-create behavior.
 - `doro-agent`: host daemon skeleton for enrollment, capability declaration, heartbeat, metrics, and future task execution.
-- `doro-store`: SQLite persistence boundary and schema ownership through `sqlx`.
+- `doro-store`: Postgres persistence boundary and schema ownership through SeaORM.
 - `doro-ai`: AI provider abstraction and planning helpers. AI output is advisory and must not bypass policy or approval.
 - `doro-cli`: local operations CLI for status, enrollment-token workflows, diagnostics, and future administrative commands.
 - `doro-ui`: Next.js operations console that talks to the control-plane API.
@@ -32,7 +33,7 @@ Run workspace-level commands from the repository root:
 - `cargo clippy --workspace --all-targets -- -D warnings`: strict Rust linting when touching production Rust.
 - `cargo run -p doro-control-plane`: run HTTP on `127.0.0.1:8787` and Agent gRPC on `127.0.0.1:8788`.
 - `cargo run -p doro-agent`: run the local Agent skeleton.
-- `cargo run -p doro-cli -- status`: run the Doro CLI.
+- `cargo run -p doro-cli -- status`: run the Doro CLI and create `~/.doro/config.toml` if needed.
 - `cd doro-ui && bun run build`: verify frontend production build.
 - `mdbook build docs`: verify documentation structure and links.
 
@@ -66,7 +67,7 @@ For UI protocol dependencies, keep `ts-rs` in root `[workspace.dependencies]` an
 - Use `anyhow::Result` at binary/app boundaries and `thiserror` for reusable library/domain errors.
 - Never use `.unwrap()` or `.expect()` in production code. Workspace lints deny these. Use `?`, `ok_or_else`, `unwrap_or_default`, or explicit recovery.
 - Prefer crates over subprocesses. Use `std::process::Command` only when no mature crate/API exists.
-- For a single SQLite database file, reuse the same store/connection pool across the process. Do not open independent pools to the same DB for background writers or sidecar tasks.
+- Reuse the same configured SeaORM connection pool across the process. Do not open independent pools for background writers or sidecar tasks.
 
 ## Agent Protocol Rules
 
@@ -102,8 +103,10 @@ Every host action must be auditable. Agent code must preserve these invariants:
 
 ## Store and Config Safety
 
-- Treat SQLite as the MVP source of truth unless a task explicitly changes storage direction.
+- Treat Postgres as the default source of truth. Keep database backend and pool settings in `doro-config`.
 - Keep schema ownership in `doro-store`; avoid ad hoc database access from UI, CLI, or Agent code.
+- Keep TOML config ownership in `doro-config`; other crates should use its schema and load helpers instead of parsing config files directly.
+- The default config file is `~/.doro/config.toml`. CLI commands must support global `--config <PATH>` overrides.
 - Reload current persisted config/state before targeted writes when multiple subsystems may edit the same data.
 - Never commit API keys, enrollment secrets, model credentials, or local tokens.
 - Redact secrets in examples and logs.
