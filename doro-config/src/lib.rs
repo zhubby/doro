@@ -112,6 +112,7 @@ impl fmt::Display for StoreBackend {
 pub struct SecurityConfig {
     pub approval_policy: String,
     pub require_tls: bool,
+    pub jwt_secret: Option<String>,
 }
 
 impl Default for SecurityConfig {
@@ -119,6 +120,7 @@ impl Default for SecurityConfig {
         Self {
             approval_policy: "policy_and_human_approval".to_string(),
             require_tls: false,
+            jwt_secret: None,
         }
     }
 }

@@ -21,16 +21,21 @@ doro-protocol = { path = "doro-protocol" }
 doro-store = { path = "doro-store" }
 
 anyhow = "1"
+argon2 = "0.5"
 axum = { version = "0.7", features = ["json", "macros", "tokio"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
 futures-util = "0.3"
+jsonwebtoken = "9"
 prost = "0.13"
 prost-types = "0.13"
+rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sea-orm = { version = "2.0.0-rc.38", default-features = false, features = ["macros", "mock", "runtime-tokio-rustls", "sqlx-postgres", "with-chrono", "with-json", "with-uuid"] }
+sha2 = "0.10"
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }

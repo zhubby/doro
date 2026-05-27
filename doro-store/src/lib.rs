@@ -31,6 +31,8 @@ use sea_orm::Statement;
 use sea_orm::TransactionTrait;
 use serde_json::Value;
 use serde_json::json;
+use sha2::Digest;
+use sha2::Sha256;
 use std::str::FromStr;
 use std::time::Duration;
 use uuid::Uuid;
@@ -90,6 +92,44 @@ pub struct NewMetricSnapshot {
     pub disk_percent: f32,
     pub load_average: f32,
     pub extra: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewUser {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub password_hash: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredUser {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub password_hash: String,
+    pub role: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewRefreshToken {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub token: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredRefreshToken {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub status: String,
+    pub expires_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
 }
 
 impl Store {
@@ -166,6 +206,14 @@ impl Store {
 
     pub fn apps(&self) -> AppRepository<'_> {
         AppRepository { store: self }
+    }
+
+    pub fn users(&self) -> UserRepository<'_> {
+        UserRepository { store: self }
+    }
+
+    pub fn refresh_tokens(&self) -> RefreshTokenRepository<'_> {
+        RefreshTokenRepository { store: self }
     }
 
     async fn execute_sql(&self, sql: &str) -> Result<(), DbErr> {
@@ -540,10 +588,216 @@ impl SettingsRepository<'_> {
             .await?;
         Ok(setting.map(|setting| setting.value))
     }
+
+    pub async fn upsert_json(
+        &self,
+        key: &str,
+        value: Value,
+        description: Option<String>,
+    ) -> Result<(), DbErr> {
+        entities::settings::Entity::insert(entities::settings::ActiveModel {
+            key: Set(key.to_string()),
+            value: Set(value),
+            description: Set(description),
+            updated_at: Set(Utc::now().into()),
+        })
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::column(entities::settings::Column::Key)
+                .update_columns([
+                    entities::settings::Column::Value,
+                    entities::settings::Column::Description,
+                    entities::settings::Column::UpdatedAt,
+                ])
+                .to_owned(),
+        )
+        .exec(self.store.connection())
+        .await?;
+        Ok(())
+    }
 }
 
 pub struct AppRepository<'a> {
     store: &'a Store,
+}
+
+pub struct UserRepository<'a> {
+    store: &'a Store,
+}
+
+impl UserRepository<'_> {
+    pub async fn registration_open(&self) -> Result<bool, DbErr> {
+        let active_user = entities::users::Entity::find()
+            .filter(entities::users::Column::Status.eq("active"))
+            .one(self.store.connection())
+            .await?;
+        Ok(active_user.is_none())
+    }
+
+    pub async fn create_first_admin(&self, user: NewUser) -> Result<StoredUser, DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        let active_user = entities::users::Entity::find()
+            .filter(entities::users::Column::Status.eq("active"))
+            .one(&transaction)
+            .await?;
+        if active_user.is_some() {
+            return Err(DbErr::Custom("registration is closed".to_string()));
+        }
+
+        let model = entities::users::ActiveModel {
+            id: Set(user.id),
+            username: Set(user.username),
+            display_name: Set(user.display_name),
+            password_hash: Set(user.password_hash),
+            role: Set(user.role),
+            status: Set("active".to_string()),
+            created_at: Set(user.created_at.into()),
+            updated_at: Set(user.created_at.into()),
+            last_login_at: Set(None),
+        }
+        .insert(&transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(stored_user(model))
+    }
+
+    pub async fn find_by_username(&self, username: &str) -> Result<Option<StoredUser>, DbErr> {
+        let user = entities::users::Entity::find()
+            .filter(entities::users::Column::Username.eq(username))
+            .one(self.store.connection())
+            .await?;
+        Ok(user.map(stored_user))
+    }
+
+    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<StoredUser>, DbErr> {
+        let user = entities::users::Entity::find_by_id(id)
+            .one(self.store.connection())
+            .await?;
+        Ok(user.map(stored_user))
+    }
+
+    pub async fn mark_login(&self, id: Uuid, at: DateTime<Utc>) -> Result<(), DbErr> {
+        entities::users::Entity::update_many()
+            .col_expr(
+                entities::users::Column::LastLoginAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .col_expr(
+                entities::users::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(Utc::now()),
+            )
+            .filter(entities::users::Column::Id.eq(id))
+            .exec(self.store.connection())
+            .await?;
+        Ok(())
+    }
+}
+
+pub struct RefreshTokenRepository<'a> {
+    store: &'a Store,
+}
+
+impl RefreshTokenRepository<'_> {
+    pub async fn create(&self, token: NewRefreshToken) -> Result<StoredRefreshToken, DbErr> {
+        let model = entities::refresh_tokens::ActiveModel {
+            id: Set(token.id),
+            user_id: Set(token.user_id),
+            token_hash: Set(hash_token(&token.token)),
+            status: Set("active".to_string()),
+            created_at: Set(token.created_at.into()),
+            expires_at: Set(token.expires_at.into()),
+            revoked_at: Set(None),
+            last_used_at: Set(None),
+            replaced_by_token_id: Set(None),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(stored_refresh_token(model))
+    }
+
+    pub async fn find_by_token(&self, token: &str) -> Result<Option<StoredRefreshToken>, DbErr> {
+        let row = entities::refresh_tokens::Entity::find()
+            .filter(entities::refresh_tokens::Column::TokenHash.eq(hash_token(token)))
+            .one(self.store.connection())
+            .await?;
+        Ok(row.map(stored_refresh_token))
+    }
+
+    pub async fn rotate(
+        &self,
+        old_token_id: Uuid,
+        new_token: NewRefreshToken,
+        at: DateTime<Utc>,
+    ) -> Result<StoredRefreshToken, DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        let model = entities::refresh_tokens::ActiveModel {
+            id: Set(new_token.id),
+            user_id: Set(new_token.user_id),
+            token_hash: Set(hash_token(&new_token.token)),
+            status: Set("active".to_string()),
+            created_at: Set(new_token.created_at.into()),
+            expires_at: Set(new_token.expires_at.into()),
+            revoked_at: Set(None),
+            last_used_at: Set(None),
+            replaced_by_token_id: Set(None),
+        }
+        .insert(&transaction)
+        .await?;
+        entities::refresh_tokens::Entity::update_many()
+            .col_expr(
+                entities::refresh_tokens::Column::Status,
+                sea_orm::sea_query::Expr::value("revoked"),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::RevokedAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::LastUsedAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::ReplacedByTokenId,
+                sea_orm::sea_query::Expr::value(new_token.id),
+            )
+            .filter(entities::refresh_tokens::Column::Id.eq(old_token_id))
+            .exec(&transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(stored_refresh_token(model))
+    }
+
+    pub async fn revoke(&self, token: &str, at: DateTime<Utc>) -> Result<(), DbErr> {
+        entities::refresh_tokens::Entity::update_many()
+            .col_expr(
+                entities::refresh_tokens::Column::Status,
+                sea_orm::sea_query::Expr::value("revoked"),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::RevokedAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .filter(entities::refresh_tokens::Column::TokenHash.eq(hash_token(token)))
+            .exec(self.store.connection())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn revoke_all_for_user(&self, user_id: Uuid, at: DateTime<Utc>) -> Result<(), DbErr> {
+        entities::refresh_tokens::Entity::update_many()
+            .col_expr(
+                entities::refresh_tokens::Column::Status,
+                sea_orm::sea_query::Expr::value("revoked"),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::RevokedAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .filter(entities::refresh_tokens::Column::UserId.eq(user_id))
+            .filter(entities::refresh_tokens::Column::Status.eq("active"))
+            .exec(self.store.connection())
+            .await?;
+        Ok(())
+    }
 }
 
 impl AppRepository<'_> {
@@ -705,6 +959,10 @@ fn migrations() -> &'static [Migration] {
         Migration {
             id: "202605270003_seed_apps_settings",
             sql: SEED_SQL,
+        },
+        Migration {
+            id: "202605270004_users_refresh_tokens",
+            sql: AUTH_SCHEMA_SQL,
         },
     ]
 }
@@ -1008,6 +1266,62 @@ VALUES
     ('database', '"postgres"'::jsonb, 'Configured store backend')
 ON CONFLICT (key) DO NOTHING;
 "#;
+
+const AUTH_SCHEMA_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    last_login_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id UUID PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    last_used_at TIMESTAMPTZ,
+    replaced_by_token_id UUID REFERENCES refresh_tokens(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_status ON refresh_tokens(status);
+"#;
+
+fn stored_user(user: entities::users::Model) -> StoredUser {
+    StoredUser {
+        id: user.id,
+        username: user.username,
+        display_name: user.display_name,
+        password_hash: user.password_hash,
+        role: user.role,
+        status: user.status,
+    }
+}
+
+fn stored_refresh_token(token: entities::refresh_tokens::Model) -> StoredRefreshToken {
+    StoredRefreshToken {
+        id: token.id,
+        user_id: token.user_id,
+        status: token.status,
+        expires_at: token.expires_at.into(),
+        revoked_at: token.revoked_at.map(Into::into),
+    }
+}
+
+pub fn hash_token(token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
 
 fn json_array_strings(value: Value) -> Vec<String> {
     value

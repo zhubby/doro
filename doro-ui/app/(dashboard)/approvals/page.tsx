@@ -1,15 +1,5 @@
-import { ApprovalsPage } from "@/components/dashboard/approvals/approvals-page";
-import { getApprovals } from "@/lib/control-plane-api";
+import { DashboardDataPage } from "@/components/dashboard/dashboard-data-page";
 
-export const dynamic = "force-dynamic";
-
-export default async function ApprovalsRoute() {
-  const approvals = await getApprovals();
-
-  return (
-    <ApprovalsPage
-      approvals={approvals.data?.items ?? []}
-      apiError={approvals.error}
-    />
-  );
+export default function ApprovalsRoute() {
+  return <DashboardDataPage view="approvals" />;
 }

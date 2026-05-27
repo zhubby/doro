@@ -181,6 +181,57 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AuthStatusResponse.ts")]
+pub struct AuthStatusResponse {
+    pub registration_open: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "RegisterRequest.ts")]
+pub struct RegisterRequest {
+    pub username: String,
+    pub password: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "LoginRequest.ts")]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "RefreshTokenRequest.ts")]
+pub struct RefreshTokenRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UserSummary.ts")]
+pub struct UserSummary {
+    pub id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AuthTokenResponse.ts")]
+pub struct AuthTokenResponse {
+    pub access_token: String,
+    pub refresh_token: String,
+    pub expires_at: DateTime<Utc>,
+    pub user: UserSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CurrentUserResponse.ts")]
+pub struct CurrentUserResponse {
+    pub user: UserSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "ListHostsResponse.ts")]
 pub struct ListHostsResponse {
     pub items: Vec<Host>,
@@ -285,6 +336,13 @@ mod tests {
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(AuthStatusResponse::export_all(&cfg).is_ok());
+        assert!(RegisterRequest::export_all(&cfg).is_ok());
+        assert!(LoginRequest::export_all(&cfg).is_ok());
+        assert!(RefreshTokenRequest::export_all(&cfg).is_ok());
+        assert!(UserSummary::export_all(&cfg).is_ok());
+        assert!(AuthTokenResponse::export_all(&cfg).is_ok());
+        assert!(CurrentUserResponse::export_all(&cfg).is_ok());
         assert!(ListHostsResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());
         assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
