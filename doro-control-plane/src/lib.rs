@@ -7,6 +7,7 @@ use axum::Extension;
 use axum::Json;
 use axum::Router;
 use axum::extract::Path as AxumPath;
+use axum::extract::Query;
 use axum::extract::State;
 use axum::http::Request as HttpRequest;
 use axum::http::StatusCode;
@@ -39,6 +40,7 @@ use doro_protocol::ListApprovalsResponse;
 use doro_protocol::ListAppsResponse;
 use doro_protocol::ListHostContainersResponse;
 use doro_protocol::ListHostsResponse;
+use doro_protocol::ListMetricSnapshotsResponse;
 use doro_protocol::ListTasksResponse;
 use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
@@ -107,6 +109,11 @@ pub struct CurrentUser {
     pub role: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct MetricHistoryQuery {
+    limit: Option<u64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Claims {
     sub: String,
@@ -139,10 +146,12 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
 
     let protected_routes = Router::new()
         .route("/api/v1/hosts", get(list_hosts))
+        .route("/api/v1/hosts/:host_id", axum::routing::delete(delete_host))
         .route(
             "/api/v1/hosts/:host_id/metrics/latest",
             get(latest_host_metric),
         )
+        .route("/api/v1/hosts/:host_id/metrics", get(list_host_metrics))
         .route(
             "/api/v1/hosts/:host_id/containers",
             get(list_host_containers),
@@ -653,12 +662,38 @@ async fn list_hosts(State(state): State<AppState>) -> Result<Json<ListHostsRespo
     }))
 }
 
+async fn delete_host(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+) -> Result<StatusCode, AppError> {
+    if state.store.hosts().delete(host_id).await? {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+}
+
 async fn latest_host_metric(
     State(state): State<AppState>,
     AxumPath(host_id): AxumPath<Uuid>,
 ) -> Result<Json<LatestMetricResponse>, AppError> {
     Ok(Json(LatestMetricResponse {
         item: state.store.metrics().latest_for_host(host_id).await?,
+    }))
+}
+
+async fn list_host_metrics(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<MetricHistoryQuery>,
+) -> Result<Json<ListMetricSnapshotsResponse>, AppError> {
+    let limit = query.limit.unwrap_or(60).clamp(1, 240);
+    Ok(Json(ListMetricSnapshotsResponse {
+        items: state
+            .store
+            .metrics()
+            .recent_for_host(host_id, limit)
+            .await?,
     }))
 }
 
@@ -1223,6 +1258,7 @@ pub fn example_metric(host_id: Uuid) -> MetricSnapshot {
         memory_percent: 0.0,
         disk_percent: 0.0,
         load_average: 0.0,
+        extra: serde_json::json!({}),
     }
 }
 

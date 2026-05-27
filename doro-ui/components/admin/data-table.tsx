@@ -2,11 +2,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ResourceColumn, ResourceStatus } from "@/types/dashboard";
+import type { ReactNode } from "react";
 
 type DataTableProps<T extends { id: string }> = {
   columns: ResourceColumn<T>[];
   rows: T[];
   actions?: string[];
+  renderActions?: (row: T) => ReactNode;
   emptyText?: string;
 };
 
@@ -14,9 +16,10 @@ export function DataTable<T extends { id: string }>({
   columns,
   rows,
   actions = ["管理"],
+  renderActions,
   emptyText = "暂无数据",
 }: DataTableProps<T>) {
-  const hasActions = actions.length > 0;
+  const hasActions = actions.length > 0 || Boolean(renderActions);
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -61,11 +64,13 @@ export function DataTable<T extends { id: string }>({
                   {hasActions ? (
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-2">
-                        {actions.map((action) => (
-                          <Button key={action} variant="outline" size="sm">
-                            {action}
-                          </Button>
-                        ))}
+                        {renderActions
+                          ? renderActions(row)
+                          : actions.map((action) => (
+                              <Button key={action} variant="outline" size="sm">
+                                {action}
+                              </Button>
+                            ))}
                       </div>
                     </td>
                   ) : null}

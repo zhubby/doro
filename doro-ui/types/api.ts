@@ -20,6 +20,7 @@ export type { ListApprovalsResponse } from "./generated/ListApprovalsResponse";
 export type { ListAppsResponse } from "./generated/ListAppsResponse";
 export type { ListHostContainersResponse } from "./generated/ListHostContainersResponse";
 export type { ListHostsResponse } from "./generated/ListHostsResponse";
+export type { ListMetricSnapshotsResponse } from "./generated/ListMetricSnapshotsResponse";
 export type { ListTasksResponse } from "./generated/ListTasksResponse";
 export type { MetricSnapshot } from "./generated/MetricSnapshot";
 export type { RefreshTokenRequest } from "./generated/RefreshTokenRequest";

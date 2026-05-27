@@ -182,6 +182,7 @@ impl Agent {
             memory_percent: 0.0,
             disk_percent: 0.0,
             load_average: 0.0,
+            extra: serde_json::json!({}),
         }
     }
 }
@@ -307,6 +308,12 @@ async fn open_agent_stream(
     shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let (sender, receiver) = mpsc::channel(8);
+    tracing::debug!(
+        agent_id = %agent_id,
+        host_id = %agent.config.host_id,
+        hostname = %agent.config.hostname,
+        "opening agent stream"
+    );
     sender
         .send(agent.grpc_event(
             agent_id,
@@ -317,6 +324,7 @@ async fn open_agent_stream(
             }),
         ))
         .await?;
+    tracing::debug!(agent_id = %agent_id, "queued agent connected event");
 
     let heartbeat_agent = agent.clone();
     let heartbeat_sender = sender.clone();
@@ -338,6 +346,7 @@ async fn open_agent_stream(
             if heartbeat_sender.send(event).await.is_err() {
                 break;
             }
+            tracing::debug!(agent_id = %agent_id, "queued heartbeat event");
         }
     });
 
@@ -382,6 +391,12 @@ async fn open_agent_stream(
                             }),
                         ),
                     };
+                    tracing::debug!(
+                        agent_id = %agent_id,
+                        host_id = %metrics_agent.config.host_id,
+                        kind,
+                        "queued telemetry event"
+                    );
                     if metrics_sender
                         .send(metrics_agent.grpc_event(agent_id, kind, payload))
                         .await
@@ -398,6 +413,7 @@ async fn open_agent_stream(
         .open_agent_stream(ReceiverStream::new(receiver))
         .await?
         .into_inner();
+    tracing::debug!(agent_id = %agent_id, "agent stream opened");
     loop {
         tokio::select! {
             command = commands.message() => {

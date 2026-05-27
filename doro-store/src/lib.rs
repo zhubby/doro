@@ -27,6 +27,7 @@ use sea_orm::EntityTrait;
 use sea_orm::Order;
 use sea_orm::QueryFilter;
 use sea_orm::QueryOrder;
+use sea_orm::QuerySelect;
 use sea_orm::Set;
 use sea_orm::Statement;
 use sea_orm::TransactionTrait;
@@ -299,6 +300,13 @@ impl HostRepository<'_> {
             items.push(self.to_protocol(host).await?);
         }
         Ok(items)
+    }
+
+    pub async fn delete(&self, host_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::hosts::Entity::delete_by_id(host_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
     }
 
     pub async fn upsert_observed(
@@ -708,7 +716,35 @@ impl MetricRepository<'_> {
             memory_percent: snapshot.memory_percent,
             disk_percent: snapshot.disk_percent,
             load_average: snapshot.load_average,
+            extra: snapshot.extra,
         }))
+    }
+
+    pub async fn recent_for_host(
+        &self,
+        host_id: Uuid,
+        limit: u64,
+    ) -> Result<Vec<MetricSnapshot>, DbErr> {
+        let snapshots = entities::metric_snapshots::Entity::find()
+            .filter(entities::metric_snapshots::Column::HostId.eq(host_id))
+            .order_by(entities::metric_snapshots::Column::CapturedAt, Order::Desc)
+            .limit(limit)
+            .all(self.store.connection())
+            .await?;
+        let mut snapshots = snapshots
+            .into_iter()
+            .map(|snapshot| MetricSnapshot {
+                host_id: snapshot.host_id,
+                captured_at: snapshot.captured_at.into(),
+                cpu_percent: snapshot.cpu_percent,
+                memory_percent: snapshot.memory_percent,
+                disk_percent: snapshot.disk_percent,
+                load_average: snapshot.load_average,
+                extra: snapshot.extra,
+            })
+            .collect::<Vec<_>>();
+        snapshots.reverse();
+        Ok(snapshots)
     }
 
     pub fn from_protocol(snapshot: MetricSnapshot) -> NewMetricSnapshot {
@@ -719,7 +755,7 @@ impl MetricRepository<'_> {
             memory_percent: snapshot.memory_percent,
             disk_percent: snapshot.disk_percent,
             load_average: snapshot.load_average,
-            extra: json!({}),
+            extra: snapshot.extra,
         }
     }
 }
@@ -1907,6 +1943,22 @@ mod tests {
         host.last_seen_at =
             Some((Utc::now() - chrono::Duration::seconds(HOST_ONLINE_TTL_SECONDS + 1)).into());
         assert_eq!(current_host_status(&host), HostStatus::Offline);
+    }
+
+    #[tokio::test]
+    async fn deletes_host_and_reports_whether_row_existed() -> anyhow::Result<()> {
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let deleted = store.hosts().delete(Uuid::new_v4()).await?;
+
+        assert!(deleted);
+        Ok(())
     }
 
     #[test]

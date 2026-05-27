@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import {
   getApps,
   getApprovals,
+  getHostMetrics,
   getHosts,
   getSettings,
   getTasks,
@@ -19,6 +20,7 @@ import type {
   AppSummary,
   ApprovalRequest,
   Host,
+  MetricSnapshot,
   SettingsResponse,
   Task,
 } from "@/types/api";
@@ -28,6 +30,7 @@ type DashboardData = {
   tasks: Task[];
   approvals: ApprovalRequest[];
   apps: AppSummary[];
+  metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
   error: string | null;
 };
@@ -37,6 +40,7 @@ const emptyData: DashboardData = {
   tasks: [],
   approvals: [],
   apps: [],
+  metricHistoryByHost: {},
   settings: null,
   error: null,
 };
@@ -58,18 +62,34 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       if (cancelled) {
         return;
       }
+      const hostItems = hosts.data?.items ?? [];
+      const metricResults = await Promise.all(
+        hostItems.map((host) => getHostMetrics(host.id, 60)),
+      );
+      if (cancelled) {
+        return;
+      }
+      const metricHistoryByHost = Object.fromEntries(
+        hostItems.map((host, index) => [
+          host.id,
+          metricResults[index]?.data?.items ?? [],
+        ]),
+      );
       setData({
-        hosts: hosts.data?.items ?? [],
+        hosts: hostItems,
         tasks: tasks.data?.items ?? [],
         approvals: approvals.data?.items ?? [],
         apps: apps.data?.items ?? [],
+        metricHistoryByHost,
         settings: settings.data,
         error:
           hosts.error ??
           tasks.error ??
           approvals.error ??
           apps.error ??
-          settings.error,
+          settings.error ??
+          metricResults.find((result) => result.error)?.error ??
+          null,
       });
     }
 
@@ -81,7 +101,24 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
   }, []);
 
   if (view === "hosts") {
-    return <HostsPage hosts={data.hosts} apiError={data.error} />;
+    return (
+      <HostsPage
+        hosts={data.hosts}
+        metricHistoryByHost={data.metricHistoryByHost}
+        apiError={data.error}
+        onHostDeleted={(hostId) => {
+          setData((current) => {
+            const metricHistoryByHost = { ...current.metricHistoryByHost };
+            delete metricHistoryByHost[hostId];
+            return {
+              ...current,
+              hosts: current.hosts.filter((host) => host.id !== hostId),
+              metricHistoryByHost,
+            };
+          });
+        }}
+      />
+    );
   }
   if (view === "tasks") {
     return <TasksPage tasks={data.tasks} apiError={data.error} />;

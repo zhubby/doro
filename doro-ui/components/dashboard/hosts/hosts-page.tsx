@@ -1,3 +1,7 @@
+"use client";
+
+import { useState } from "react";
+
 import { DataTable } from "@/components/admin/data-table";
 import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
@@ -6,19 +10,24 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import type { Host } from "@/types/api";
+import { deleteHost } from "@/lib/control-plane-api";
+import type { Host, MetricSnapshot } from "@/types/api";
 import type { ResourceColumn } from "@/types/dashboard";
-import { Activity, Cpu, Plus, Server } from "lucide-react";
+import { Activity, Cpu, Plus, Server, Trash2 } from "lucide-react";
 
 type HostsPageProps = {
   hosts: Host[];
+  metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
+  onHostDeleted?: (hostId: string) => void;
 };
 
 function hostStatusLabel(status: Host["status"]) {
@@ -56,55 +65,204 @@ function formatLastSeen(value: string | null) {
   }).format(date);
 }
 
-const hostColumns: ResourceColumn<Host>[] = [
-  {
-    key: "hostname",
-    label: "Agent",
-    render: (host) => (
-      <div>
-        <p className="font-medium">{host.hostname}</p>
-        <p className="text-xs text-muted-foreground">{host.id}</p>
-      </div>
-    ),
-  },
-  {
-    key: "status",
-    label: "状态",
-    render: (host) => hostStatusLabel(host.status),
-  },
-  {
-    key: "capabilities",
-    label: "能力",
-    render: (host) => (
-      <div className="flex flex-wrap gap-1.5">
-        {host.capabilities.length === 0 ? (
-          <span className="text-muted-foreground">未声明</span>
-        ) : (
-          host.capabilities.map((capability) => (
-            <Badge
-              key={capability.name}
-              variant={capability.risk === "high" ? "secondary" : "outline"}
-            >
-              {capability.name}
-            </Badge>
-          ))
-        )}
-      </div>
-    ),
-  },
-  {
-    key: "labels",
-    label: "标签",
-    render: (host) => host.labels.join(" / ") || "-",
-  },
-  {
-    key: "last_seen_at",
-    label: "最后心跳",
-    render: (host) => formatLastSeen(host.last_seen_at),
-  },
-];
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
 
-export function HostsPage({ hosts, apiError }: HostsPageProps) {
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatBytes(value: unknown) {
+  const bytes = numberValue(value);
+  if (!bytes) {
+    return null;
+  }
+  const gib = bytes / 1024 ** 3;
+  return `${gib >= 10 ? gib.toFixed(0) : gib.toFixed(1)} GB`;
+}
+
+function machineSummary(history: MetricSnapshot[], fallback: string) {
+  const latest = history.at(-1);
+  const extra = objectValue(latest?.extra);
+  const system = objectValue(extra?.system);
+  if (!system) {
+    return fallback;
+  }
+
+  const os =
+    stringValue(system.long_os_version) ??
+    stringValue(system.os_name) ??
+    stringValue(system.kernel_version);
+  const arch = stringValue(system.cpu_arch);
+  const physicalCores = numberValue(system.physical_core_count);
+  const logicalCores = numberValue(system.logical_core_count);
+  const memory = formatBytes(objectValue(system.memory)?.total_bytes);
+  const cores = physicalCores
+    ? logicalCores && logicalCores !== physicalCores
+      ? `${physicalCores}C/${logicalCores}T`
+      : `${physicalCores}C`
+    : logicalCores
+      ? `${logicalCores}T`
+      : null;
+  const summary = [os, arch, cores, memory].filter(Boolean).join(" · ");
+  return summary || fallback;
+}
+
+function latestPercent(
+  history: MetricSnapshot[],
+  key: "cpu_percent" | "memory_percent",
+) {
+  const latest = history.at(-1)?.[key];
+  if (typeof latest !== "number" || Number.isNaN(latest)) {
+    return "-";
+  }
+  return `${latest.toFixed(1)}%`;
+}
+
+function sparklinePath(values: number[], width: number, height: number) {
+  if (values.length === 0) {
+    return "";
+  }
+  if (values.length === 1) {
+    const y = height - (Math.min(100, Math.max(0, values[0])) / 100) * height;
+    return `M 0 ${y.toFixed(2)} L ${width} ${y.toFixed(2)}`;
+  }
+  return values
+    .map((value, index) => {
+      const x = (index / (values.length - 1)) * width;
+      const y = height - (Math.min(100, Math.max(0, value)) / 100) * height;
+      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(" ");
+}
+
+function MetricMiniChart({
+  history,
+  label,
+  field,
+}: {
+  history: MetricSnapshot[];
+  label: string;
+  field: "cpu_percent" | "memory_percent";
+}) {
+  const width = 128;
+  const height = 24;
+  const path = sparklinePath(
+    history.map((snapshot) => snapshot[field]),
+    width,
+    height,
+  );
+
+  return (
+    <div className="w-24 space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] font-medium text-muted-foreground">
+          {label}
+        </span>
+        <span className="text-right text-[11px] tabular-nums">
+          {latestPercent(history, field)}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-6 w-24 overflow-visible"
+        role="img"
+        aria-label={`${label} 使用率趋势`}
+      >
+        <line
+          x1="0"
+          y1={height / 2}
+          x2={width}
+          y2={height / 2}
+          className="stroke-muted"
+          strokeDasharray="3 4"
+        />
+        <path
+          d={path}
+          fill="none"
+          className={
+            field === "cpu_percent"
+              ? "stroke-primary"
+              : "stroke-muted-foreground"
+          }
+          strokeWidth="2"
+        />
+      </svg>
+    </div>
+  );
+}
+
+function HostMetricChart({ history }: { history: MetricSnapshot[] }) {
+  if (history.length === 0) {
+    return <span className="text-muted-foreground">等待采样</span>;
+  }
+
+  return (
+    <div className="flex w-52 items-center gap-4">
+      <MetricMiniChart history={history} label="CPU" field="cpu_percent" />
+      <MetricMiniChart history={history} label="内存" field="memory_percent" />
+    </div>
+  );
+}
+
+function hostColumns(
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+): ResourceColumn<Host>[] {
+  return [
+    {
+      key: "hostname",
+      label: "Agent",
+      render: (host) => (
+        <div>
+          <p className="font-medium">{host.hostname}</p>
+          <p className="text-xs text-muted-foreground">
+            {machineSummary(metricHistoryByHost[host.id] ?? [], host.id)}
+          </p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: "状态",
+      render: (host) => hostStatusLabel(host.status),
+    },
+    {
+      key: "capabilities",
+      label: "CPU / 内存",
+      render: (host) => (
+        <HostMetricChart history={metricHistoryByHost[host.id] ?? []} />
+      ),
+    },
+    {
+      key: "labels",
+      label: "标签",
+      render: (host) => host.labels.join(" / ") || "-",
+    },
+    {
+      key: "last_seen_at",
+      label: "最后心跳",
+      render: (host) => formatLastSeen(host.last_seen_at),
+    },
+  ];
+}
+
+export function HostsPage({
+  hosts,
+  metricHistoryByHost = {},
+  apiError,
+  onHostDeleted,
+}: HostsPageProps) {
+  const [deleteTarget, setDeleteTarget] = useState<Host | null>(null);
+  const [deletePending, setDeletePending] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
   const declaredCapabilities = hosts.reduce(
     (total, host) => total + host.capabilities.length,
@@ -119,6 +277,25 @@ export function HostsPage({ hosts, apiError }: HostsPageProps) {
       "--enrollment-token PASTE_TOKEN_HERE",
     ].join(" \\\n  "),
   ];
+
+  async function handleDeleteHost() {
+    if (!deleteTarget) {
+      return;
+    }
+
+    setDeletePending(true);
+    setDeleteError(null);
+    const result = await deleteHost(deleteTarget.id);
+    setDeletePending(false);
+
+    if (result.error) {
+      setDeleteError(result.error);
+      return;
+    }
+
+    onHostDeleted?.(deleteTarget.id);
+    setDeleteTarget(null);
+  }
 
   return (
     <PageContainer>
@@ -210,12 +387,72 @@ export function HostsPage({ hosts, apiError }: HostsPageProps) {
           </Card>
         </div>
         <DataTable
-          columns={hostColumns}
+          columns={hostColumns(metricHistoryByHost)}
           rows={hosts}
           actions={[]}
+          renderActions={(host) => (
+            <Button
+              aria-label={`删除主机 ${host.hostname}`}
+              title="删除"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => {
+                setDeleteTarget(host);
+                setDeleteError(null);
+              }}
+            >
+              <Trash2 className="size-4" />
+            </Button>
+          )}
           emptyText="暂无已连接 Agent"
         />
       </PageSection>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !deletePending) {
+            setDeleteTarget(null);
+            setDeleteError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>删除主机</DialogTitle>
+            <DialogDescription>
+              删除后会移除该主机的 Agent 记录、能力声明、指标快照和容器观测数据。仍在运行的
+              Agent 需要重新接入。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="rounded-md border bg-muted/30 p-3 text-sm">
+            <p className="font-medium">{deleteTarget?.hostname}</p>
+            <p className="mt-1 text-xs text-muted-foreground">{deleteTarget?.id}</p>
+          </div>
+
+          {deleteError ? (
+            <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
+              删除失败：{deleteError}
+            </div>
+          ) : null}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" disabled={deletePending}>
+                取消
+              </Button>
+            </DialogClose>
+            <Button
+              variant="destructive"
+              disabled={deletePending}
+              onClick={handleDeleteHost}
+            >
+              {deletePending ? "删除中" : "确认删除"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </PageContainer>
   );
 }

@@ -7,6 +7,7 @@ import type {
   ListApprovalsResponse,
   ListHostContainersResponse,
   ListHostsResponse,
+  ListMetricSnapshotsResponse,
   ListTasksResponse,
   LoginRequest,
   RefreshTokenRequest,
@@ -180,6 +181,26 @@ async function getJson<T>(path: string): Promise<ApiResult<T>> {
   return result;
 }
 
+async function authedRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<ApiResult<T>> {
+  let token = await authToken();
+  if (!token) {
+    return { data: null, error: "未登录", status: 401 };
+  }
+
+  let result = await requestJson<T>(path, init, token);
+  if (result.status === 401) {
+    const current = readAuth();
+    const refreshed = current ? await refreshAuth(current) : null;
+    token = refreshed?.accessToken ?? null;
+    result = token ? await requestJson<T>(path, init, token) : result;
+  }
+
+  return result;
+}
+
 export async function authStatus() {
   return requestJson<AuthStatusResponse>("/api/v1/auth/status");
 }
@@ -227,8 +248,20 @@ export async function getHosts() {
   return getJson<ListHostsResponse>("/api/v1/hosts");
 }
 
+export async function deleteHost(hostId: string) {
+  return authedRequest<null>(`/api/v1/hosts/${hostId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function getLatestHostMetric(hostId: string) {
   return getJson<LatestMetricResponse>(`/api/v1/hosts/${hostId}/metrics/latest`);
+}
+
+export async function getHostMetrics(hostId: string, limit = 60) {
+  return getJson<ListMetricSnapshotsResponse>(
+    `/api/v1/hosts/${hostId}/metrics?limit=${limit}`,
+  );
 }
 
 export async function getHostContainers(hostId: string) {

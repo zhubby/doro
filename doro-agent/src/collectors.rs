@@ -124,11 +124,17 @@ impl LocalCollectors {
                 memory_percent,
                 disk_percent,
                 load_average: load_average.one as f32,
+                extra: json!({}),
             },
             extra: json!({
                 "system": {
                     "kernel_version": System::kernel_version(),
+                    "long_os_version": System::long_os_version(),
                     "os_name": System::name(),
+                    "host_name": System::host_name(),
+                    "cpu_arch": System::cpu_arch(),
+                    "physical_core_count": System::physical_core_count(),
+                    "logical_core_count": self.system.cpus().len(),
                     "uptime_seconds": System::uptime(),
                     "process_count": self.system.processes().len(),
                     "load_average": {

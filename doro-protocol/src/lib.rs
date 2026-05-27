@@ -145,6 +145,7 @@ pub struct MetricSnapshot {
     pub memory_percent: f32,
     pub disk_percent: f32,
     pub load_average: f32,
+    pub extra: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -257,6 +258,12 @@ pub struct ListHostsResponse {
 #[ts(export_to = "LatestMetricResponse.ts")]
 pub struct LatestMetricResponse {
     pub item: Option<MetricSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListMetricSnapshotsResponse.ts")]
+pub struct ListMetricSnapshotsResponse {
+    pub items: Vec<MetricSnapshot>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -374,6 +381,7 @@ mod tests {
         assert!(CurrentUserResponse::export_all(&cfg).is_ok());
         assert!(ListHostsResponse::export_all(&cfg).is_ok());
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
+        assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());
         assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
