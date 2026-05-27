@@ -27,8 +27,10 @@ use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
+use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
 use futures_util::StreamExt;
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -39,6 +41,8 @@ use tonic::Request;
 use tonic::Response;
 use tonic::Status;
 use tonic::Streaming;
+use tonic::transport::Server;
+use tower_http::cors::Any;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
@@ -62,8 +66,38 @@ pub fn app() -> Router {
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/events", get(events))
         .with_state(state)
-        .layer(CorsLayer::permissive())
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        )
         .layer(TraceLayer::new_for_http())
+}
+
+pub async fn run(config: doro_config::ServerConfig) -> anyhow::Result<()> {
+    let http_addr: SocketAddr = config.http_bind.parse()?;
+    let grpc_addr: SocketAddr = config.grpc_bind.parse()?;
+
+    let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
+    tracing::info!("doro control-plane http listening on http://{http_addr}");
+    tracing::info!("doro control-plane grpc listening on http://{grpc_addr}");
+
+    let http_server = async move {
+        axum::serve(http_listener, app())
+            .await
+            .map_err(anyhow::Error::from)
+    };
+    let grpc_server = async move {
+        Server::builder()
+            .add_service(AgentControlPlaneServer::new(GrpcAgentService))
+            .serve(grpc_addr)
+            .await
+            .map_err(anyhow::Error::from)
+    };
+
+    tokio::try_join!(http_server, grpc_server)?;
+    Ok(())
 }
 
 #[derive(Debug, Default)]

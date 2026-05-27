@@ -3,19 +3,13 @@ name = "doro-agent"
 version = { workspace = true }
 edition = "2024"
 
-[[bin]]
-name = "doro-agent"
-path = "src/main.rs"
-
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-clap = { workspace = true }
+doro-config = { workspace = true }
 doro-protocol = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
-tonic = { workspace = true }
 uuid = { workspace = true }

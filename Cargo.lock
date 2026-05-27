@@ -860,11 +860,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
+ "doro-config",
  "doro-protocol",
  "serde_json",
- "tokio",
- "tonic",
  "uuid",
 ]
 
@@ -885,9 +883,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "doro-agent",
  "doro-config",
+ "doro-control-plane",
  "doro-protocol",
  "serde_json",
+ "tokio",
+ "tracing-subscriber",
  "uuid",
 ]
 
@@ -910,6 +912,7 @@ dependencies = [
  "axum",
  "chrono",
  "doro-ai",
+ "doro-config",
  "doro-protocol",
  "doro-store",
  "futures-util",
@@ -920,7 +923,6 @@ dependencies = [
  "tonic",
  "tower-http",
  "tracing",
- "tracing-subscriber",
  "uuid",
 ]
 

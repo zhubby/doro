@@ -1,11 +1,10 @@
-import { PlaceholderPage } from "@/components/dashboard/placeholder-page";
+import { HostsPage } from "@/components/dashboard/hosts/hosts-page";
+import { getHosts } from "@/lib/control-plane-api";
 
-export default function HostsRoute() {
-  return (
-    <PlaceholderPage
-      title="主机"
-      description="查看 Agent 注册状态、能力声明、心跳和主机资源概览。"
-      items={["Agent 列表", "能力声明", "心跳状态", "主机标签"]}
-    />
-  );
+export const dynamic = "force-dynamic";
+
+export default async function HostsRoute() {
+  const hosts = await getHosts();
+
+  return <HostsPage hosts={hosts.data?.items ?? []} apiError={hosts.error} />;
 }

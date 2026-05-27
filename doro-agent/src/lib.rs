@@ -19,11 +19,19 @@ pub struct AgentConfig {
 
 impl AgentConfig {
     pub fn local(control_plane_url: impl Into<String>) -> Self {
+        Self::new("doro-local-agent", control_plane_url)
+    }
+
+    pub fn new(hostname: impl Into<String>, control_plane_url: impl Into<String>) -> Self {
         Self {
             host_id: Uuid::new_v4(),
-            hostname: "doro-local-agent".to_string(),
+            hostname: hostname.into(),
             control_plane_url: control_plane_url.into(),
         }
+    }
+
+    pub fn from_config(config: &doro_config::AgentConfig) -> Self {
+        Self::new(config.hostname.clone(), config.control_plane_url.clone())
     }
 }
 
@@ -105,4 +113,14 @@ impl Agent {
             load_average: 0.0,
         }
     }
+}
+
+pub async fn run(config: doro_config::AgentConfig) -> anyhow::Result<()> {
+    let agent = Agent::new(AgentConfig::from_config(&config));
+
+    println!("{}", serde_json::to_string_pretty(&agent.host())?);
+    println!("{}", serde_json::to_string_pretty(&agent.heartbeat())?);
+    println!("{:?}", agent.grpc_heartbeat("local-agent"));
+
+    Ok(())
 }

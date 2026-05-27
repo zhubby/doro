@@ -7,12 +7,27 @@ import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { applications } from "@/lib/mock-data";
+import type { Application } from "@/types/dashboard";
 
-export function AppsPage() {
+type AppsPageProps = {
+  initialApplications?: Application[];
+  apiError?: string | null;
+};
+
+export function AppsPage({
+  initialApplications = applications,
+  apiError,
+}: AppsPageProps) {
+  const applications = initialApplications;
   const upgradeCount = applications.filter((app) => app.updateAvailable).length;
 
   return (
     <PageContainer>
+      {apiError ? (
+        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
+          控制平面暂不可用：{apiError}
+        </div>
+      ) : null}
       <Tabs defaultValue="all" className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="w-fit">
@@ -29,7 +44,7 @@ export function AppsPage() {
         <TabsContent value="all">
           <ApplicationList
             title="全部应用"
-            description="按照 1Panel 应用商店的信息结构展示常用服务。"
+            description="来自控制平面的应用目录。"
             applications={applications}
           />
         </TabsContent>
@@ -52,7 +67,7 @@ export function AppsPage() {
         <TabsContent value="setting">
           <ApplicationList
             title="应用商店设置"
-            description="当前先用 mock 应用源和同步状态表达设置入口。"
+            description="应用源和同步状态入口。"
             applications={applications.slice(0, 2)}
           />
         </TabsContent>

@@ -1,11 +1,10 @@
-import { PlaceholderPage } from "@/components/dashboard/placeholder-page";
+import { TasksPage } from "@/components/dashboard/tasks/tasks-page";
+import { getTasks } from "@/lib/control-plane-api";
 
-export default function TasksRoute() {
-  return (
-    <PlaceholderPage
-      title="任务"
-      description="跟踪控制面下发的任务、步骤、状态和执行结果。"
-      items={["任务队列", "执行步骤", "失败重试", "AI 计划草稿"]}
-    />
-  );
+export const dynamic = "force-dynamic";
+
+export default async function TasksRoute() {
+  const tasks = await getTasks();
+
+  return <TasksPage tasks={tasks.data?.items ?? []} apiError={tasks.error} />;
 }

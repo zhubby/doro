@@ -1,6 +1,6 @@
 "use client";
 
-import { CircleGauge, HardDrive, Network, NotebookPen } from "lucide-react";
+import { AlertTriangle, CircleGauge, HardDrive, Network, NotebookPen } from "lucide-react";
 
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
 import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
@@ -21,12 +21,55 @@ import {
   applications,
   diskMetrics,
   notes,
-  overviewStats,
   systemStats,
   trafficMetrics,
 } from "@/lib/mock-data";
+import { toApplications } from "@/lib/control-plane-mappers";
+import type { AppSummary, ApprovalRequest, Host, Task } from "@/types/api";
 
-export function OverviewPage() {
+type OverviewPageProps = {
+  hosts?: Host[];
+  tasks?: Task[];
+  approvals?: ApprovalRequest[];
+  apps?: AppSummary[];
+  apiError?: string | null;
+};
+
+export function OverviewPage({
+  hosts = [],
+  tasks = [],
+  approvals = [],
+  apps = [],
+  apiError,
+}: OverviewPageProps) {
+  const liveApplications = apps.length > 0 ? toApplications(apps) : applications;
+  const waitingApprovals = approvals.filter(
+    (approval) => approval.status === "pending",
+  ).length;
+  const onlineHosts = hosts.filter((host) => host.status === "online").length;
+  const overviewStats = [
+    {
+      label: "智能体",
+      value: String(hosts.length),
+      helper: `${onlineHosts} 个在线`,
+    },
+    {
+      label: "任务",
+      value: String(tasks.length),
+      helper: waitingApprovals > 0 ? `${waitingApprovals} 个等待审批` : "无阻塞任务",
+    },
+    {
+      label: "审批",
+      value: String(approvals.length),
+      helper: waitingApprovals > 0 ? `${waitingApprovals} 个待处理` : "当前无需处理",
+    },
+    {
+      label: "应用",
+      value: String(liveApplications.length),
+      helper: "来自控制平面应用目录",
+    },
+  ];
+
   return (
     <PageContainer
       aside={
@@ -55,12 +98,21 @@ export function OverviewPage() {
           <ApplicationList
             title="应用"
             description="常用服务与安装状态"
-            applications={applications}
+            applications={liveApplications}
             compact
           />
         </>
       }
     >
+      {apiError ? (
+        <Card className="border-destructive/30">
+          <CardContent className="flex items-center gap-3 pt-6 text-sm text-muted-foreground">
+            <AlertTriangle className="size-4 text-destructive" aria-hidden="true" />
+            控制平面暂不可用：{apiError}
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {overviewStats.map((stat) => (
           <Card key={stat.label}>
@@ -112,7 +164,7 @@ export function OverviewPage() {
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
             <div>
               <CardTitle>监控</CardTitle>
-              <CardDescription>使用 mock 数据展示流量和磁盘 IO 趋势</CardDescription>
+              <CardDescription>展示流量和磁盘 IO 趋势</CardDescription>
             </div>
             <Badge variant="secondary">近 1 小时</Badge>
           </div>

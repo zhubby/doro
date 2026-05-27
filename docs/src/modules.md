@@ -12,7 +12,7 @@
 
 `doro-ai` owns provider abstraction and planning. It can draft task steps, but the control plane still decides dispatch and approval.
 
-`doro-cli` is the local operations CLI for initialization, enrollment token workflows, diagnostics, and future administrative commands.
+`doro-cli` is the local operations CLI for initialization, enrollment token workflows, diagnostics, and service entrypoints. Run the control plane with `doro control-plane` and the host agent with `doro agent`.
 
 `doro-config` owns TOML configuration loading, default config creation, and the `~/.doro/config.toml` schema shared by CLI and future runtime crates.
 

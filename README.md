@@ -34,7 +34,7 @@ mdbook build docs
 Run the control-plane API:
 
 ```bash
-cargo run -p doro-control-plane
+cargo run -p doro-cli -- control-plane
 ```
 
 The control plane listens on `127.0.0.1:8787` for HTTP and `127.0.0.1:8788` for Agent gRPC.
@@ -42,7 +42,13 @@ The control plane listens on `127.0.0.1:8787` for HTTP and `127.0.0.1:8788` for 
 Run the agent skeleton:
 
 ```bash
-cargo run -p doro-agent
+cargo run -p doro-cli -- agent
+```
+
+Set service log verbosity with the global CLI flag:
+
+```bash
+cargo run -p doro-cli -- --log-level debug control-plane
 ```
 
 Run the CLI:

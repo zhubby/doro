@@ -16,6 +16,8 @@ export function DataTable<T extends { id: string }>({
   actions = ["管理"],
   emptyText = "暂无数据",
 }: DataTableProps<T>) {
+  const hasActions = actions.length > 0;
+
   return (
     <div className="overflow-hidden rounded-lg border">
       <div className="overflow-x-auto">
@@ -30,14 +32,14 @@ export function DataTable<T extends { id: string }>({
                   {column.label}
                 </th>
               ))}
-              <th className="px-4 py-3 text-right">操作</th>
+              {hasActions ? <th className="px-4 py-3 text-right">操作</th> : null}
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
                 <td
-                  colSpan={columns.length + 2}
+                  colSpan={columns.length + (hasActions ? 2 : 1)}
                   className="px-4 py-10 text-center text-muted-foreground"
                 >
                   {emptyText}
@@ -56,15 +58,17 @@ export function DataTable<T extends { id: string }>({
                         : String(row[column.key as keyof T] ?? "")}
                     </td>
                   ))}
-                  <td className="px-4 py-4">
-                    <div className="flex justify-end gap-2">
-                      {actions.map((action) => (
-                        <Button key={action} variant="outline" size="sm">
-                          {action}
-                        </Button>
-                      ))}
-                    </div>
-                  </td>
+                  {hasActions ? (
+                    <td className="px-4 py-4">
+                      <div className="flex justify-end gap-2">
+                        {actions.map((action) => (
+                          <Button key={action} variant="outline" size="sm">
+                            {action}
+                          </Button>
+                        ))}
+                      </div>
+                    </td>
+                  ) : null}
                 </tr>
               ))
             )}

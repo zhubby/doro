@@ -1,11 +1,15 @@
-import { PlaceholderPage } from "@/components/dashboard/placeholder-page";
+import { ApprovalsPage } from "@/components/dashboard/approvals/approvals-page";
+import { getApprovals } from "@/lib/control-plane-api";
 
-export default function ApprovalsRoute() {
+export const dynamic = "force-dynamic";
+
+export default async function ApprovalsRoute() {
+  const approvals = await getApprovals();
+
   return (
-    <PlaceholderPage
-      title="审批"
-      description="处理 shell、文件写入、容器删除、端口暴露等高风险操作。"
-      items={["待审批操作", "风险说明", "审批历史", "策略命中记录"]}
+    <ApprovalsPage
+      approvals={approvals.data?.items ?? []}
+      apiError={approvals.error}
     />
   );
 }
