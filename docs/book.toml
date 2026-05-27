@@ -1,0 +1,10 @@
+[book]
+title = "Doro"
+description = "AI-native home server control plane"
+authors = ["zhubby"]
+language = "zh-CN"
+multilingual = false
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/zhubby/doro"

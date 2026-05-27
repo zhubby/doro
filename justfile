@@ -4,22 +4,22 @@ set positional-arguments
 help:
     just -l
 
-# `codex`
-codex *args:
-    cargo run --bin codex -- "$@"
+# Run the Doro CLI.
+cli *args:
+    cargo run -p doro-cli -- "$@"
 
-# `codex exec`
-exec *args:
-    cargo run --bin codex -- exec "$@"
+# Run the control-plane API.
+control-plane:
+    cargo run -p doro-control-plane
 
-# `codex tui`
-tui *args:
-    cargo run --bin codex -- tui "$@"
-
-# Run the CLI version of the file-search crate.
-file-search *args:
-    cargo run --bin doro-file-search -- "$@"
+# Run the local agent skeleton.
+agent *args:
+    cargo run -p doro-agent -- "$@"
 
 # format code
 fmt:
     cargo fmt -- --config imports_granularity=Item
+
+# Check the Rust workspace.
+check:
+    cargo check --workspace

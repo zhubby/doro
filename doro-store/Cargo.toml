@@ -1,0 +1,12 @@
+[package]
+name = "doro-store"
+version = { workspace = true }
+edition = "2024"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+doro-protocol = { workspace = true }
+sqlx = { workspace = true }

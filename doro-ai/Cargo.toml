@@ -1,22 +1,14 @@
 [package]
-name = "doro-cli"
+name = "doro-ai"
 version = { workspace = true }
 edition = "2024"
-
-[[bin]]
-name = "doro"
-path = "src/main.rs"
-
-[lib]
-name = "doro_cli"
-path = "src/lib.rs"
 
 [lints]
 workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-clap = { workspace = true }
 doro-protocol = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

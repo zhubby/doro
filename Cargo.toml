@@ -1,38 +1,38 @@
 [workspace]
 resolver = "2"
 members = [
-    "doro-ansi-escape",
-    "doro-apply-patch",
+    "doro-agent",
+    "doro-ai",
     "doro-cli",
-    "doro-common",
-    "doro-core",
-    "doro-exec",
-    "doro-execpolicy",
-    "doro-file-search",
-    "doro-linux-sandbox",
-    "doro-login",
-    "doro-mcp-client",
-    "doro-mcp-server",
-    "doro-mcp-types",
-    "doro-tui",
+    "doro-control-plane",
+    "doro-protocol",
+    "doro-store",
 ]
 
 
 [workspace.dependencies]
-doro-ansi-escape = { path = "doro-ansi-escape" }
-doro-apply-patch = { path = "doro-apply-patch" }
+doro-agent = { path = "doro-agent" }
+doro-ai = { path = "doro-ai" }
 doro-cli = { path = "doro-cli" }
-doro-common = { path = "doro-common" }
-doro-core = { path = "doro-core" }
-doro-exec = { path = "doro-exec" }
-doro-execpolicy = { path = "doro-execpolicy" }
-doro-file-search = { path = "doro-file-search" }
-doro-linux-sandbox = { path = "doro-linux-sandbox" }
-doro-login = { path = "doro-login" }
-doro-mcp-client = { path = "doro-mcp-client" }
-doro-mcp-server = { path = "doro-mcp-server" }
-doro-mcp-types = { path = "doro-mcp-types" }
-doro-tui = { path = "doro-tui" }
+doro-control-plane = { path = "doro-control-plane" }
+doro-protocol = { path = "doro-protocol" }
+doro-store = { path = "doro-store" }
+
+anyhow = "1"
+axum = { version = "0.7", features = ["json", "macros", "tokio", "ws"] }
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "sqlite", "chrono", "uuid", "migrate"] }
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
+tokio-stream = "0.1"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+futures-util = "0.3"
 
 
 [workspace.package]
@@ -54,9 +54,5 @@ unwrap_used = "deny"
 
 [profile.release]
 lto = "fat"
-# Because we bundle some of these executables with the TypeScript CLI, we
-# remove everything to make the binary as small as possible.
 strip = "symbols"
-
-# See https://github.com/openai/codex/issues/1411 for details.
 codegen-units = 1
