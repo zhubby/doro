@@ -78,6 +78,66 @@ export type DatabaseResource = {
   updatedAt: string;
 };
 
+export type WebsiteResource = {
+  id: string;
+  primaryDomain: string;
+  status: ResourceStatus;
+  runtime: string;
+  ssl: string;
+  rootPath: string;
+  traffic: string;
+  updatedAt: string;
+};
+
+export type SystemMetric = {
+  label: string;
+  value: string;
+  detail: string;
+  progress: number;
+};
+
+export type SystemInfo = {
+  label: string;
+  value: string;
+  helper: string;
+};
+
+export type CronJob = {
+  id: string;
+  name: string;
+  type: string;
+  schedule: string;
+  status: ResourceStatus;
+  lastRun: string;
+  retention: string;
+};
+
+export type ToolEntry = {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  status: "ready" | "beta" | "locked";
+};
+
+export type TerminalSession = {
+  id: string;
+  name: string;
+  target: string;
+  status: ResourceStatus;
+  user: string;
+  lastActive: string;
+};
+
+export type AiAgent = {
+  id: string;
+  name: string;
+  role: string;
+  status: ResourceStatus;
+  model: string;
+  lastRun: string;
+};
+
 export type SettingOption = {
   id: string;
   label: string;
