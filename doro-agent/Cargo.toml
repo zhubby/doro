@@ -8,12 +8,19 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+bollard = { workspace = true }
 chrono = { workspace = true }
 doro-config = { workspace = true }
 doro-protocol = { workspace = true }
+nvml-wrapper = { workspace = true, optional = true }
 serde_json = { workspace = true }
+sysinfo = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+
+[features]
+default = []
+gpu = ["nvml-wrapper"]

@@ -2,8 +2,10 @@ import type {
   AuthStatusResponse,
   AuthTokenResponse,
   CurrentUserResponse,
+  LatestMetricResponse,
   ListAppsResponse,
   ListApprovalsResponse,
+  ListHostContainersResponse,
   ListHostsResponse,
   ListTasksResponse,
   LoginRequest,
@@ -223,6 +225,14 @@ export async function currentUser() {
 
 export async function getHosts() {
   return getJson<ListHostsResponse>("/api/v1/hosts");
+}
+
+export async function getLatestHostMetric(hostId: string) {
+  return getJson<LatestMetricResponse>(`/api/v1/hosts/${hostId}/metrics/latest`);
+}
+
+export async function getHostContainers(hostId: string) {
+  return getJson<ListHostContainersResponse>(`/api/v1/hosts/${hostId}/containers`);
 }
 
 export async function getTasks() {

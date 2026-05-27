@@ -1,4 +1,7 @@
 use chrono::Utc;
+use collectors::CollectorConfig;
+use collectors::CollectorEvent;
+use collectors::LocalCollectors;
 use doro_protocol::AgentCapability;
 use doro_protocol::AgentEvent;
 use doro_protocol::CapabilityName;
@@ -10,12 +13,14 @@ use doro_protocol::PROTOCOL_VERSION;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use doro_protocol::protobuf_timestamp_now;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 use uuid::Uuid;
+
+mod collectors;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
@@ -28,6 +33,12 @@ pub struct AgentConfig {
     pub control_plane_url: String,
     pub enrollment_token: Option<String>,
     pub heartbeat_interval: Duration,
+    pub metrics_enabled: bool,
+    pub metrics_interval: Duration,
+    pub process_names: Vec<String>,
+    pub container_metrics_enabled: bool,
+    pub docker_socket_path: Option<String>,
+    pub gpu_metrics_enabled: bool,
 }
 
 impl AgentConfig {
@@ -43,6 +54,12 @@ impl AgentConfig {
             control_plane_url: control_plane_url.into(),
             enrollment_token: None,
             heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
         }
     }
 
@@ -54,6 +71,12 @@ impl AgentConfig {
             control_plane_url: config.control_plane_url.clone(),
             enrollment_token: config.enrollment_token.clone(),
             heartbeat_interval: Duration::from_secs(config.heartbeat_interval_seconds.max(1)),
+            metrics_enabled: config.metrics_enabled,
+            metrics_interval: Duration::from_secs(config.metrics_interval_seconds.max(1)),
+            process_names: config.process_names.clone(),
+            container_metrics_enabled: config.container_metrics_enabled,
+            docker_socket_path: config.docker_socket_path.clone(),
+            gpu_metrics_enabled: config.gpu_metrics_enabled,
         }
     }
 }
@@ -191,7 +214,7 @@ pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()>
 }
 
 async fn run_session(
-    config_path: &PathBuf,
+    config_path: &Path,
     persisted_config: &mut doro_config::DoroConfig,
     agent: &mut Agent,
 ) -> anyhow::Result<()> {
@@ -206,7 +229,7 @@ async fn run_session(
 async fn ensure_registered(
     mut client: AgentControlPlaneClient<Channel>,
     persisted_config: &mut doro_config::DoroConfig,
-    config_path: &PathBuf,
+    config_path: &Path,
     agent: &mut Agent,
 ) -> anyhow::Result<Uuid> {
     if let (Some(agent_id), Some(host_id)) = (
@@ -287,6 +310,55 @@ async fn open_agent_stream(
         }
     });
 
+    if agent.config.metrics_enabled {
+        let metrics_agent = agent.clone();
+        let metrics_sender = sender.clone();
+        tokio::spawn(async move {
+            let collector_config = CollectorConfig {
+                process_names: metrics_agent.config.process_names.clone(),
+                container_metrics_enabled: metrics_agent.config.container_metrics_enabled,
+                docker_socket_path: metrics_agent.config.docker_socket_path.clone(),
+                gpu_metrics_enabled: metrics_agent.config.gpu_metrics_enabled,
+            };
+            let mut collectors = LocalCollectors::new(collector_config);
+            let mut interval = tokio::time::interval(metrics_agent.config.metrics_interval);
+            loop {
+                interval.tick().await;
+                for collector_event in collectors.collect(metrics_agent.config.host_id).await {
+                    let (kind, payload) = match collector_event {
+                        CollectorEvent::Metrics(metrics) => (
+                            "metrics.snapshot",
+                            serde_json::json!({
+                                "host_id": metrics.snapshot.host_id,
+                                "captured_at": metrics.snapshot.captured_at,
+                                "cpu_percent": metrics.snapshot.cpu_percent,
+                                "memory_percent": metrics.snapshot.memory_percent,
+                                "disk_percent": metrics.snapshot.disk_percent,
+                                "load_average": metrics.snapshot.load_average,
+                                "extra": metrics.extra,
+                            }),
+                        ),
+                        CollectorEvent::Containers(payload) => ("container.snapshot", payload),
+                        CollectorEvent::Error { collector, message } => (
+                            "metrics.collector_error",
+                            serde_json::json!({
+                                "collector": collector,
+                                "message": message,
+                            }),
+                        ),
+                    };
+                    if metrics_sender
+                        .send(metrics_agent.grpc_event(agent_id, kind, payload))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
     let mut commands = client
         .open_agent_stream(ReceiverStream::new(receiver))
         .await?
@@ -352,6 +424,12 @@ mod tests {
             control_plane_url: "http://127.0.0.1:8788".to_string(),
             enrollment_token: None,
             heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
         });
 
         let event = agent.grpc_event(

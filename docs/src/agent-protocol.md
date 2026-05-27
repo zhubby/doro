@@ -15,6 +15,12 @@ enrollment_token = "redacted"
 agent_id = "00000000-0000-0000-0000-000000000000"
 host_id = "00000000-0000-0000-0000-000000000000"
 heartbeat_interval_seconds = 30
+metrics_enabled = true
+metrics_interval_seconds = 10
+process_names = []
+container_metrics_enabled = false
+docker_socket_path = "/var/run/docker.sock"
+gpu_metrics_enabled = false
 ```
 
 On first run, `doro agent` requires `enrollment_token`. If `agent_id` and `host_id` are missing, the agent calls `Enroll`, writes the returned identifiers back to the config file, and uses those identifiers for subsequent heartbeats and streams.
@@ -35,7 +41,19 @@ The initial service surface is:
 - `ReportHeartbeat`: report liveness and current capability declarations.
 - `OpenAgentStream`: bidirectional stream where agents send `AgentEvent` messages and receive `ControlPlaneCommand` messages.
 
-The first stream implementation is a long-lived outbound session. The agent sends `connected` and periodic `heartbeat` events. The control plane responds with an `ack` command and persists inbound events. If the connection fails or the stream closes, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds. Task dispatch over this stream is intentionally deferred until task routing and command acknowledgements are implemented.
+The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, and local observation events. The control plane responds with an `ack` command and persists inbound events. If the connection fails or the stream closes, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds. Task dispatch over this stream is intentionally deferred until task routing and command acknowledgements are implemented.
+
+## Local Observation Events
+
+Local system collection is a one-way agent-to-control-plane flow over `OpenAgentStream`. It does not introduce MQTT, WebSocket, or direct UI-to-agent access.
+
+The base system collector is supported on macOS and Linux. Docker collection is also supported on both platforms when Docker exposes a Unix socket; the agent uses `docker_socket_path` when set, otherwise bollard follows `DOCKER_HOST=unix://...` or the platform default Docker socket. GPU collection is Linux/NVIDIA-only and requires building the agent with the `gpu` feature.
+
+- `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
+- `container.snapshot`: read-only Docker observations. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
+- `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
+
+Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
 
 ## Persistence
 
@@ -44,7 +62,8 @@ Agent protocol traffic is persisted by `doro-store`:
 - Enrollment validates and consumes an active enrollment token, creates or updates `hosts`, `agents`, and `agent_capabilities`, then appends an `agent_events` record.
 - Heartbeats update agent and host `last_seen_at`, replace declared capabilities for that agent, and append a heartbeat event.
 - Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
-- Metric payloads should be normalized into `metric_snapshots` when agents start sending structured metrics.
+- `metrics.snapshot` payloads are normalized into `metric_snapshots`.
+- `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
 
 Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
 

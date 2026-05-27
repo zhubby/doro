@@ -1,6 +1,7 @@
 "use client";
 
 import { RefreshCw, Search, Settings2 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import { DataTable } from "@/components/admin/data-table";
@@ -16,9 +17,11 @@ type ResourceListPageProps<T extends { id: string; status: ResourceStatus }> = {
   description: string;
   rows: T[];
   columns: ResourceColumn<T>[];
-  createLabel: string;
+  createLabel?: string;
   importLabel?: string;
-  batchActions: string[];
+  batchActions?: string[];
+  rowActions?: string[];
+  notice?: ReactNode;
 };
 
 const labels: Record<ResourceStatus | "all", string> = {
@@ -35,7 +38,9 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
   columns,
   createLabel,
   importLabel,
-  batchActions,
+  batchActions = [],
+  rowActions = ["管理", "日志"],
+  notice,
 }: ResourceListPageProps<T>) {
   const [activeStatus, setActiveStatus] = useState<ResourceStatus | "all">("all");
   const filters = useMemo<FilterChip[]>(() => {
@@ -65,6 +70,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
 
   return (
     <PageContainer>
+      {notice}
       <PageSection contentClassName="space-y-4">
         <FilterChips
           filters={filters}
@@ -77,7 +83,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
         <Toolbar
           left={
             <>
-              <Button>{createLabel}</Button>
+              {createLabel ? <Button>{createLabel}</Button> : null}
               {importLabel ? <Button variant="outline">{importLabel}</Button> : null}
               {batchActions.map((action) => (
                 <Button key={action} variant="outline">
@@ -101,7 +107,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
             </>
           }
         />
-        <DataTable columns={columns} rows={filteredRows} actions={["管理", "日志"]} />
+        <DataTable columns={columns} rows={filteredRows} actions={rowActions} />
       </PageSection>
     </PageContainer>
   );

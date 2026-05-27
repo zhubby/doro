@@ -9,6 +9,7 @@ use doro_protocol::ApprovalStatus;
 use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
 use doro_protocol::Host;
+use doro_protocol::HostContainer;
 use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::Task;
@@ -95,6 +96,19 @@ pub struct NewMetricSnapshot {
     pub disk_percent: f32,
     pub load_average: f32,
     pub extra: Value,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewContainerObservation {
+    pub host_id: Uuid,
+    pub runtime: String,
+    pub container_ref: String,
+    pub name: String,
+    pub image: String,
+    pub status: String,
+    pub ports: Value,
+    pub labels: Value,
+    pub observed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone)]
@@ -222,6 +236,10 @@ impl Store {
 
     pub fn metrics(&self) -> MetricRepository<'_> {
         MetricRepository { store: self }
+    }
+
+    pub fn containers(&self) -> ContainerRepository<'_> {
+        ContainerRepository { store: self }
     }
 
     pub fn settings(&self) -> SettingsRepository<'_> {
@@ -677,6 +695,22 @@ impl MetricRepository<'_> {
         Ok(())
     }
 
+    pub async fn latest_for_host(&self, host_id: Uuid) -> Result<Option<MetricSnapshot>, DbErr> {
+        let snapshot = entities::metric_snapshots::Entity::find()
+            .filter(entities::metric_snapshots::Column::HostId.eq(host_id))
+            .order_by(entities::metric_snapshots::Column::CapturedAt, Order::Desc)
+            .one(self.store.connection())
+            .await?;
+        Ok(snapshot.map(|snapshot| MetricSnapshot {
+            host_id: snapshot.host_id,
+            captured_at: snapshot.captured_at.into(),
+            cpu_percent: snapshot.cpu_percent,
+            memory_percent: snapshot.memory_percent,
+            disk_percent: snapshot.disk_percent,
+            load_average: snapshot.load_average,
+        }))
+    }
+
     pub fn from_protocol(snapshot: MetricSnapshot) -> NewMetricSnapshot {
         NewMetricSnapshot {
             host_id: snapshot.host_id,
@@ -687,6 +721,71 @@ impl MetricRepository<'_> {
             load_average: snapshot.load_average,
             extra: json!({}),
         }
+    }
+}
+
+pub struct ContainerRepository<'a> {
+    store: &'a Store,
+}
+
+impl ContainerRepository<'_> {
+    pub async fn upsert_many(&self, containers: Vec<NewContainerObservation>) -> Result<(), DbErr> {
+        for container in containers {
+            entities::containers::Entity::insert(entities::containers::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                host_id: Set(container.host_id),
+                runtime: Set(container.runtime),
+                container_ref: Set(container.container_ref),
+                name: Set(container.name),
+                image: Set(container.image),
+                status: Set(container.status),
+                ports: Set(container.ports),
+                labels: Set(container.labels),
+                observed_at: Set(container.observed_at.into()),
+            })
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    entities::containers::Column::HostId,
+                    entities::containers::Column::Runtime,
+                    entities::containers::Column::ContainerRef,
+                ])
+                .update_columns([
+                    entities::containers::Column::Name,
+                    entities::containers::Column::Image,
+                    entities::containers::Column::Status,
+                    entities::containers::Column::Ports,
+                    entities::containers::Column::Labels,
+                    entities::containers::Column::ObservedAt,
+                ])
+                .to_owned(),
+            )
+            .exec(self.store.connection())
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn list_by_host(&self, host_id: Uuid) -> Result<Vec<HostContainer>, DbErr> {
+        let rows = entities::containers::Entity::find()
+            .filter(entities::containers::Column::HostId.eq(host_id))
+            .order_by(entities::containers::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|container| HostContainer {
+                id: container.id,
+                host_id: container.host_id,
+                runtime: container.runtime,
+                container_ref: container.container_ref,
+                name: container.name,
+                image: container.image,
+                status: container.status,
+                ports: container.ports,
+                labels: container.labels,
+                observed_at: container.observed_at.into(),
+            })
+            .collect())
     }
 }
 
@@ -1831,9 +1930,10 @@ mod tests {
             .append_query_results([[model]])
             .into_connection();
 
-        let error = find_active_enrollment_token(&connection, "token", Utc::now())
-            .await
-            .expect_err("used token should be rejected");
+        let error = match find_active_enrollment_token(&connection, "token", Utc::now()).await {
+            Ok(_) => panic!("used token should be rejected"),
+            Err(error) => error,
+        };
 
         assert!(error.to_string().contains("not active"));
     }
@@ -1850,9 +1950,10 @@ mod tests {
             .append_query_results([[model]])
             .into_connection();
 
-        let error = find_active_enrollment_token(&connection, "token", Utc::now())
-            .await
-            .expect_err("expired token should be rejected");
+        let error = match find_active_enrollment_token(&connection, "token", Utc::now()).await {
+            Ok(_) => panic!("expired token should be rejected"),
+            Err(error) => error,
+        };
 
         assert!(error.to_string().contains("expired"));
     }

@@ -6,6 +6,7 @@ use argon2::password_hash::SaltString;
 use axum::Extension;
 use axum::Json;
 use axum::Router;
+use axum::extract::Path as AxumPath;
 use axum::extract::State;
 use axum::http::Request as HttpRequest;
 use axum::http::StatusCode;
@@ -33,8 +34,10 @@ use doro_protocol::CapabilityRisk;
 use doro_protocol::CreateTaskRequest;
 use doro_protocol::CurrentUserResponse;
 use doro_protocol::HealthResponse;
+use doro_protocol::LatestMetricResponse;
 use doro_protocol::ListApprovalsResponse;
 use doro_protocol::ListAppsResponse;
+use doro_protocol::ListHostContainersResponse;
 use doro_protocol::ListHostsResponse;
 use doro_protocol::ListTasksResponse;
 use doro_protocol::LoginRequest;
@@ -51,6 +54,8 @@ use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
 use doro_store::AgentHeartbeat;
 use doro_store::AgentRegistration;
 use doro_store::NewAgentEvent;
+use doro_store::NewContainerObservation;
+use doro_store::NewMetricSnapshot;
 use doro_store::NewRefreshToken;
 use doro_store::NewTask;
 use doro_store::NewUser;
@@ -133,6 +138,14 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
 
     let protected_routes = Router::new()
         .route("/api/v1/hosts", get(list_hosts))
+        .route(
+            "/api/v1/hosts/:host_id/metrics/latest",
+            get(latest_host_metric),
+        )
+        .route(
+            "/api/v1/hosts/:host_id/containers",
+            get(list_host_containers),
+        )
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
         .route("/api/v1/approvals", get(list_approvals))
         .route("/api/v1/apps", get(list_apps))
@@ -348,16 +361,16 @@ impl AgentControlPlane for GrpcAgentService {
                 } else {
                     event.kind.clone()
                 };
-                if matches!(event_type.as_str(), "connected" | "heartbeat") {
-                    if let (Some(agent_id), Some(host_id)) = (agent_id, host_id) {
-                        connected_agent = Some((agent_id, host_id));
-                        if let Err(error) = store
-                            .agents()
-                            .mark_online(agent_id, host_id, recorded_at)
-                            .await
-                        {
-                            tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
-                        }
+                if matches!(event_type.as_str(), "connected" | "heartbeat")
+                    && let (Some(agent_id), Some(host_id)) = (agent_id, host_id)
+                {
+                    connected_agent = Some((agent_id, host_id));
+                    if let Err(error) = store
+                        .agents()
+                        .mark_online(agent_id, host_id, recorded_at)
+                        .await
+                    {
+                        tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
                     }
                 }
 
@@ -377,6 +390,12 @@ impl AgentControlPlane for GrpcAgentService {
                     .await
                 {
                     tracing::warn!(%error, "failed to persist agent stream event");
+                }
+
+                if let Err(error) =
+                    ingest_agent_event(&store, host_id, &event_type, &payload, recorded_at).await
+                {
+                    tracing::warn!(%error, event_type, "failed to ingest agent stream event");
                 }
             }
 
@@ -580,6 +599,24 @@ async fn list_hosts(State(state): State<AppState>) -> Result<Json<ListHostsRespo
     }))
 }
 
+async fn latest_host_metric(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+) -> Result<Json<LatestMetricResponse>, AppError> {
+    Ok(Json(LatestMetricResponse {
+        item: state.store.metrics().latest_for_host(host_id).await?,
+    }))
+}
+
+async fn list_host_containers(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+) -> Result<Json<ListHostContainersResponse>, AppError> {
+    Ok(Json(ListHostContainersResponse {
+        items: state.store.containers().list_by_host(host_id).await?,
+    }))
+}
+
 async fn list_tasks(State(state): State<AppState>) -> Result<Json<ListTasksResponse>, AppError> {
     Ok(Json(ListTasksResponse {
         items: state.store.tasks().list().await?,
@@ -721,6 +758,126 @@ fn parse_event_payload(payload_json: &str) -> Value {
     })
 }
 
+async fn ingest_agent_event(
+    store: &Store,
+    host_id: Option<Uuid>,
+    event_type: &str,
+    payload: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Result<(), sea_orm::DbErr> {
+    match event_type {
+        "metrics.snapshot" => {
+            if let Some(snapshot) = metric_snapshot_from_payload(host_id, payload, recorded_at) {
+                store.metrics().record(snapshot).await?;
+            }
+        }
+        "container.snapshot" => {
+            if let Some(host_id) = host_id {
+                let containers = container_observations_from_payload(host_id, payload, recorded_at);
+                store.containers().upsert_many(containers).await?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn metric_snapshot_from_payload(
+    fallback_host_id: Option<Uuid>,
+    payload: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Option<NewMetricSnapshot> {
+    let host_id = payload
+        .get("host_id")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .or(fallback_host_id)?;
+    Some(NewMetricSnapshot {
+        host_id,
+        captured_at: payload
+            .get("captured_at")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or(recorded_at),
+        cpu_percent: json_f32(payload, "cpu_percent")?,
+        memory_percent: json_f32(payload, "memory_percent")?,
+        disk_percent: json_f32(payload, "disk_percent")?,
+        load_average: json_f32(payload, "load_average")?,
+        extra: payload
+            .get("extra")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+    })
+}
+
+fn container_observations_from_payload(
+    host_id: Uuid,
+    payload: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Vec<NewContainerObservation> {
+    let runtime = payload
+        .get("runtime")
+        .and_then(Value::as_str)
+        .unwrap_or("docker");
+    payload
+        .get("containers")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|container| container_observation(host_id, runtime, container, recorded_at))
+        .collect()
+}
+
+fn container_observation(
+    host_id: Uuid,
+    runtime: &str,
+    container: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Option<NewContainerObservation> {
+    let container_ref = container.get("id").and_then(Value::as_str)?.to_string();
+    let name = container
+        .get("names")
+        .and_then(Value::as_array)
+        .and_then(|names| names.first())
+        .and_then(Value::as_str)
+        .map(|name| name.trim_start_matches('/').to_string())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| container_ref.chars().take(12).collect());
+    let image = container
+        .get("image")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let status = container
+        .get("state")
+        .and_then(Value::as_str)
+        .or_else(|| container.get("status").and_then(Value::as_str))
+        .unwrap_or("unknown")
+        .to_string();
+    Some(NewContainerObservation {
+        host_id,
+        runtime: runtime.to_string(),
+        container_ref,
+        name,
+        image,
+        status,
+        ports: container
+            .get("ports")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([])),
+        labels: container
+            .get("labels")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        observed_at: recorded_at,
+    })
+}
+
+fn json_f32(payload: &Value, key: &str) -> Option<f32> {
+    payload.get(key)?.as_f64().map(|value| value as f32)
+}
+
 fn store_status(error: sea_orm::DbErr) -> Status {
     tracing::error!(%error, "store operation failed");
     Status::internal("store operation failed")
@@ -801,19 +958,19 @@ impl AuthService {
         store: &Store,
         configured_secret: Option<&str>,
     ) -> anyhow::Result<Self> {
-        if let Some(secret) = configured_secret {
-            if !secret.trim().is_empty() {
-                return Ok(Self {
-                    jwt_secret: secret.to_string(),
-                });
-            }
+        if let Some(secret) = configured_secret
+            && !secret.trim().is_empty()
+        {
+            return Ok(Self {
+                jwt_secret: secret.to_string(),
+            });
         }
 
         let existing = store.settings().get_json("jwt_secret").await?;
-        if let Some(secret) = existing.and_then(|value| value.as_str().map(str::to_string)) {
-            if !secret.trim().is_empty() {
-                return Ok(Self { jwt_secret: secret });
-            }
+        if let Some(secret) = existing.and_then(|value| value.as_str().map(str::to_string))
+            && !secret.trim().is_empty()
+        {
+            return Ok(Self { jwt_secret: secret });
         }
         let secret = generate_secret();
         store
@@ -1039,6 +1196,64 @@ mod tests {
             parse_event_payload("not json"),
             serde_json::json!({"raw": "not json"})
         );
+    }
+
+    #[test]
+    fn metrics_snapshot_payload_maps_to_store_model() {
+        let host_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "host_id": host_id,
+            "captured_at": "2026-05-27T00:00:00Z",
+            "cpu_percent": 12.5,
+            "memory_percent": 34.5,
+            "disk_percent": 56.5,
+            "load_average": 1.5,
+            "extra": {"networks": []}
+        });
+
+        let snapshot = match metric_snapshot_from_payload(None, &payload, Utc::now()) {
+            Some(snapshot) => snapshot,
+            None => panic!("valid metric payload should parse"),
+        };
+
+        assert_eq!(snapshot.host_id, host_id);
+        assert_eq!(snapshot.cpu_percent, 12.5);
+        assert_eq!(snapshot.extra, serde_json::json!({"networks": []}));
+    }
+
+    #[test]
+    fn malformed_metrics_snapshot_payload_is_ignored() {
+        let payload = serde_json::json!({
+            "cpu_percent": "not-a-number",
+            "memory_percent": 34.5,
+            "disk_percent": 56.5,
+            "load_average": 1.5
+        });
+
+        assert!(metric_snapshot_from_payload(Some(Uuid::new_v4()), &payload, Utc::now()).is_none());
+    }
+
+    #[test]
+    fn container_snapshot_payload_maps_to_observations() {
+        let host_id = Uuid::new_v4();
+        let payload = serde_json::json!({
+            "runtime": "docker",
+            "containers": [{
+                "id": "abc123",
+                "names": ["/postgres"],
+                "image": "postgres:16",
+                "state": "running",
+                "ports": [],
+                "labels": {"app": "db"}
+            }]
+        });
+
+        let observations = container_observations_from_payload(host_id, &payload, Utc::now());
+
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].container_ref, "abc123");
+        assert_eq!(observations[0].name, "postgres");
+        assert_eq!(observations[0].runtime, "docker");
     }
 
     #[test]

@@ -147,6 +147,21 @@ pub struct MetricSnapshot {
     pub load_average: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "HostContainer.ts")]
+pub struct HostContainer {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub runtime: String,
+    pub container_ref: String,
+    pub name: String,
+    pub image: String,
+    pub status: String,
+    pub ports: Value,
+    pub labels: Value,
+    pub observed_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 #[ts(export_to = "AgentEvent.ts")]
@@ -236,6 +251,18 @@ pub struct CurrentUserResponse {
 #[ts(export_to = "ListHostsResponse.ts")]
 pub struct ListHostsResponse {
     pub items: Vec<Host>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "LatestMetricResponse.ts")]
+pub struct LatestMetricResponse {
+    pub item: Option<MetricSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListHostContainersResponse.ts")]
+pub struct ListHostContainersResponse {
+    pub items: Vec<HostContainer>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -335,6 +362,7 @@ mod tests {
         assert!(ApprovalRequest::export_all(&cfg).is_ok());
         assert!(ApprovalStatus::export_all(&cfg).is_ok());
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
+        assert!(HostContainer::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
         assert!(AuthStatusResponse::export_all(&cfg).is_ok());
@@ -345,6 +373,8 @@ mod tests {
         assert!(AuthTokenResponse::export_all(&cfg).is_ok());
         assert!(CurrentUserResponse::export_all(&cfg).is_ok());
         assert!(ListHostsResponse::export_all(&cfg).is_ok());
+        assert!(LatestMetricResponse::export_all(&cfg).is_ok());
+        assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());
         assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
         assert!(AppSummary::export_all(&cfg).is_ok());

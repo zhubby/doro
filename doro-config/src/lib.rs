@@ -135,6 +135,12 @@ pub struct AgentConfig {
     pub agent_id: Option<Uuid>,
     pub host_id: Option<Uuid>,
     pub heartbeat_interval_seconds: u64,
+    pub metrics_enabled: bool,
+    pub metrics_interval_seconds: u64,
+    pub process_names: Vec<String>,
+    pub container_metrics_enabled: bool,
+    pub docker_socket_path: Option<String>,
+    pub gpu_metrics_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -146,6 +152,12 @@ impl Default for AgentConfig {
             agent_id: None,
             host_id: None,
             heartbeat_interval_seconds: 30,
+            metrics_enabled: true,
+            metrics_interval_seconds: 10,
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
         }
     }
 }
@@ -252,6 +264,12 @@ mod tests {
             "http://127.0.0.1:8788"
         );
         assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 30);
+        assert!(loaded.config.agent.metrics_enabled);
+        assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
+        assert!(loaded.config.agent.process_names.is_empty());
+        assert!(!loaded.config.agent.container_metrics_enabled);
+        assert!(loaded.config.agent.docker_socket_path.is_none());
+        assert!(!loaded.config.agent.gpu_metrics_enabled);
         assert!(loaded.config.agent.enrollment_token.is_none());
         assert!(loaded.config.agent.agent_id.is_none());
         assert!(loaded.config.agent.host_id.is_none());

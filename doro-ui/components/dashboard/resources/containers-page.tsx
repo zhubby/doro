@@ -2,7 +2,7 @@
 
 import { ResourceStatusBadge } from "@/components/admin/data-table";
 import { ResourceListPage } from "@/components/dashboard/resources/resource-list-page";
-import { containers } from "@/lib/mock-data";
+import type { HostContainer } from "@/types/api";
 import type { ContainerResource, ResourceColumn } from "@/types/dashboard";
 
 const columns: ResourceColumn<ContainerResource>[] = [
@@ -37,16 +37,75 @@ const columns: ResourceColumn<ContainerResource>[] = [
   { key: "updatedAt", label: "更新时间" },
 ];
 
-export function ContainersPage() {
+type ContainersPageProps = {
+  containers?: HostContainer[];
+  apiError?: string | null;
+};
+
+function resourceStatus(status: string): ContainerResource["status"] {
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "created" || status === "restarting" || status === "paused") {
+    return "warning";
+  }
+  return "stopped";
+}
+
+function formatPorts(ports: HostContainer["ports"]) {
+  if (!Array.isArray(ports) || ports.length === 0) {
+    return "-";
+  }
+  return ports
+    .map((port) => {
+      if (!port || typeof port !== "object") {
+        return null;
+      }
+      const value = port as Record<string, unknown>;
+      const privatePort = value.PrivatePort ?? value.private_port;
+      const publicPort = value.PublicPort ?? value.public_port;
+      return publicPort
+        ? `${publicPort}:${privatePort}`
+        : String(privatePort ?? "-");
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function toContainerResource(container: HostContainer): ContainerResource {
+  return {
+    id: container.container_ref,
+    name: container.name,
+    image: container.image,
+    status: resourceStatus(container.status),
+    source: container.runtime,
+    cpu: "-",
+    memory: "-",
+    ports: formatPorts(container.ports),
+    updatedAt: new Date(container.observed_at).toLocaleString("zh-CN"),
+  };
+}
+
+export function ContainersPage({
+  containers = [],
+  apiError,
+}: ContainersPageProps) {
+  const rows = containers.map(toContainerResource);
+
   return (
     <ResourceListPage
       title="容器"
-      description="复刻 1Panel 容器列表的筛选、批量操作、搜索与列设置入口。"
-      rows={containers}
+      description="来自 Agent 单向采集的容器运行状态。"
+      rows={rows}
       columns={columns}
-      createLabel="创建容器"
-      importLabel="导入"
-      batchActions={["启动", "停止", "重启", "删除"]}
+      rowActions={[]}
+      notice={
+        apiError ? (
+          <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
+            控制平面暂不可用：{apiError}
+          </div>
+        ) : null
+      }
     />
   );
 }
