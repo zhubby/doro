@@ -12,13 +12,17 @@ export function PageContainer({
   className,
 }: PageContainerProps) {
   if (!aside) {
-    return <div className={cn("flex-1 space-y-6 p-6", className)}>{children}</div>;
+    return (
+      <div className={cn("min-h-0 flex-1 space-y-6 overflow-y-auto p-6", className)}>
+        {children}
+      </div>
+    );
   }
 
   return (
     <div
       className={cn(
-        "grid flex-1 gap-6 p-6 xl:grid-cols-[1fr_22rem]",
+        "grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 xl:grid-cols-[1fr_22rem]",
         className,
       )}
     >

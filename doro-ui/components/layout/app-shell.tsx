@@ -6,17 +6,24 @@ import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { Sidebar } from "@/components/layout/sidebar";
 import { getNavigationItem } from "@/lib/navigation";
 import { useTheme } from "@/hooks/use-theme";
+import type { UserSummary } from "@/types/api";
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+export function AppShell({
+  children,
+  user,
+}: {
+  children: React.ReactNode;
+  user: UserSummary;
+}) {
   const pathname = usePathname();
   const { isDark, toggleTheme } = useTheme();
   const activeItem = getNavigationItem(pathname);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <div className="grid min-h-screen lg:grid-cols-[17rem_1fr]">
-        <Sidebar pathname={pathname} />
-        <main className="flex min-w-0 flex-col">
+    <div className="h-dvh overflow-hidden bg-background text-foreground">
+      <div className="grid h-full min-h-0 lg:grid-cols-[17rem_1fr]">
+        <Sidebar pathname={pathname} user={user} />
+        <main className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <DashboardHeader
             activeItem={activeItem}
             isDark={isDark}

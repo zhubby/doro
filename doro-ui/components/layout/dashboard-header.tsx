@@ -1,9 +1,11 @@
 "use client";
 
-import { Gauge, Moon, Search, Sun } from "lucide-react";
+import { useState } from "react";
+import { Moon, Sun } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { SearchCommand } from "@/components/layout/search-command";
 import type { NavigationItem } from "@/types/dashboard";
 
 type DashboardHeaderProps = {
@@ -17,8 +19,10 @@ export function DashboardHeader({
   isDark,
   onToggleTheme,
 }: DashboardHeaderProps) {
+  const [searchOpen, setSearchOpen] = useState(false);
+
   return (
-    <header className="flex min-h-16 flex-col gap-3 border-b px-6 py-4 md:flex-row md:items-center md:justify-between">
+    <header className="flex h-20 shrink-0 flex-col justify-center gap-2 border-b px-6 md:flex-row md:items-center md:justify-between">
       <div>
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold tracking-tight">
@@ -33,21 +37,19 @@ export function DashboardHeader({
         </p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline">
-          <Search className="size-4" aria-hidden="true" />
-          搜索
-        </Button>
-        <Button variant="outline" onClick={onToggleTheme}>
+        <SearchCommand open={searchOpen} onOpenChange={setSearchOpen} />
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={onToggleTheme}
+          aria-label={isDark ? "切换到浅色主题" : "切换到深色主题"}
+          title={isDark ? "切换到浅色主题" : "切换到深色主题"}
+        >
           {isDark ? (
             <Sun className="size-4" aria-hidden="true" />
           ) : (
             <Moon className="size-4" aria-hidden="true" />
           )}
-          {isDark ? "浅色" : "深色"}
-        </Button>
-        <Button>
-          <Gauge className="size-4" aria-hidden="true" />
-          快速巡检
         </Button>
       </div>
     </header>

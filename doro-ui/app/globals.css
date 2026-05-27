@@ -55,4 +55,9 @@
   body {
     @apply bg-background text-foreground antialiased;
   }
+
+  html,
+  body {
+    @apply h-full overflow-hidden;
+  }
 }

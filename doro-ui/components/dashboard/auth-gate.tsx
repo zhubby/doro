@@ -3,14 +3,21 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 
+import { AppShell } from "@/components/layout/app-shell";
 import { currentUser } from "@/lib/control-plane-api";
+import type { UserSummary } from "@/types/api";
 
 type AuthState = "checking" | "ready";
 
-export function AuthGate({ children }: { children: React.ReactNode }) {
+type AuthGateProps = {
+  children: React.ReactNode;
+};
+
+export function AuthGate({ children }: AuthGateProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [state, setState] = useState<AuthState>("checking");
+  const [user, setUser] = useState<UserSummary | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -23,6 +30,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         router.replace(`/login?next=${encodeURIComponent(pathname)}`);
         return;
       }
+      setUser(result.data.user);
       setState("ready");
     });
 
@@ -39,5 +47,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  return children;
+  if (!user) {
+    return null;
+  }
+
+  return <AppShell user={user}>{children}</AppShell>;
 }
