@@ -7,6 +7,18 @@ use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: &str = "v1";
 
+pub mod grpc {
+    tonic::include_proto!("doro.agent.v1");
+}
+
+pub fn protobuf_timestamp_now() -> prost_types::Timestamp {
+    let now = Utc::now();
+    prost_types::Timestamp {
+        seconds: now.timestamp(),
+        nanos: now.timestamp_subsec_nanos() as i32,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EnrollmentToken {
     pub id: Uuid,
@@ -164,5 +176,22 @@ mod tests {
     #[test]
     fn high_risk_capabilities_include_shell_execution() {
         assert!(high_risk_capabilities().contains(&CapabilityName::ShellExecute));
+    }
+
+    #[test]
+    fn generated_grpc_types_are_available() {
+        let command = grpc::ControlPlaneCommand {
+            command_id: "command-1".to_string(),
+            kind: "ack".to_string(),
+            payload_json: "{}".to_string(),
+            requires_approval: false,
+        };
+
+        assert_eq!(command.kind, "ack");
+    }
+
+    #[test]
+    fn protobuf_timestamp_uses_current_epoch_time() {
+        assert!(protobuf_timestamp_now().seconds > 0);
     }
 }

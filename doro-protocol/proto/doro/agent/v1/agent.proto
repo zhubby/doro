@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package doro.agent.v1;
+
+import "google/protobuf/timestamp.proto";
+
+service AgentControlPlane {
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc ReportHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  rpc OpenAgentStream(stream AgentEvent) returns (stream ControlPlaneCommand);
+}
+
+message EnrollRequest {
+  string enrollment_token = 1;
+  string hostname = 2;
+  repeated AgentCapability capabilities = 3;
+}
+
+message EnrollResponse {
+  string agent_id = 1;
+  string host_id = 2;
+  string control_plane_id = 3;
+}
+
+message HeartbeatRequest {
+  string agent_id = 1;
+  string host_id = 2;
+  google.protobuf.Timestamp observed_at = 3;
+  repeated AgentCapability capabilities = 4;
+}
+
+message HeartbeatResponse {
+  bool accepted = 1;
+  string message = 2;
+}
+
+message AgentEvent {
+  string event_id = 1;
+  string agent_id = 2;
+  string host_id = 3;
+  string kind = 4;
+  string payload_json = 5;
+  google.protobuf.Timestamp recorded_at = 6;
+}
+
+message ControlPlaneCommand {
+  string command_id = 1;
+  string kind = 2;
+  string payload_json = 3;
+  bool requires_approval = 4;
+}
+
+message AgentCapability {
+  string name = 1;
+  string risk = 2;
+  string description = 3;
+}

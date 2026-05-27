@@ -6,6 +6,8 @@ use doro_protocol::CapabilityRisk;
 use doro_protocol::Host;
 use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
+use doro_protocol::grpc;
+use doro_protocol::protobuf_timestamp_now;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -64,6 +66,26 @@ impl Agent {
                 description: "Execute approved shell commands".to_string(),
             },
         ]
+    }
+
+    pub fn grpc_capabilities(&self) -> Vec<grpc::AgentCapability> {
+        self.capabilities()
+            .into_iter()
+            .map(|capability| grpc::AgentCapability {
+                name: format!("{:?}", capability.name),
+                risk: format!("{:?}", capability.risk),
+                description: capability.description,
+            })
+            .collect()
+    }
+
+    pub fn grpc_heartbeat(&self, agent_id: impl Into<String>) -> grpc::HeartbeatRequest {
+        grpc::HeartbeatRequest {
+            agent_id: agent_id.into(),
+            host_id: self.config.host_id.to_string(),
+            observed_at: Some(protobuf_timestamp_now()),
+            capabilities: self.grpc_capabilities(),
+        }
     }
 
     pub fn heartbeat(&self) -> AgentEvent {

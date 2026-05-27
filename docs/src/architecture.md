@@ -15,9 +15,9 @@ flowchart LR
 
 The control plane is authoritative for desired state, task lifecycle, approvals, and audit history. Agents are authoritative for local host observations and local execution results.
 
-Agents connect outbound to the control plane over WebSocket at `/api/v1/agent/connect`. This keeps the model compatible with NAT and home networks where inbound access to every host is undesirable.
+Agents connect outbound to the control plane over gRPC using the `doro.agent.v1.AgentControlPlane` service. This keeps the model compatible with NAT and home networks where inbound access to every host is undesirable.
 
-The UI uses REST APIs for query and mutation, plus SSE at `/api/v1/events` for realtime updates. Agent traffic uses a separate WebSocket channel because agents need bidirectional task dispatch and event reporting.
+The UI uses REST APIs for query and mutation, plus SSE at `/api/v1/events` for realtime browser updates. Agent traffic uses a separate gRPC/Protobuf contract because agents need typed enrollment, heartbeat, event streaming, and command dispatch.
 
 Trust boundaries:
 

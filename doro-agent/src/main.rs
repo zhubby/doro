@@ -5,7 +5,7 @@ use doro_agent::AgentConfig;
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Doro host agent")]
 struct Cli {
-    #[arg(long, default_value = "ws://127.0.0.1:8787/api/v1/agent/connect")]
+    #[arg(long, default_value = "http://127.0.0.1:8788")]
     control_plane_url: String,
 }
 
@@ -16,6 +16,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("{}", serde_json::to_string_pretty(&agent.host())?);
     println!("{}", serde_json::to_string_pretty(&agent.heartbeat())?);
+    println!("{:?}", agent.grpc_heartbeat("local-agent"));
 
     Ok(())
 }

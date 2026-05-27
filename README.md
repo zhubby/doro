@@ -5,7 +5,7 @@ Doro is an AI-native home server control plane.
 The project is built around one central control panel and many host agents:
 
 - `doro-control-plane` exposes the API, stores state, orchestrates tasks, handles approvals, and provides the AI entrypoint.
-- `doro-agent` runs on each host and exposes host capabilities such as metrics, logs, services, containers, files, and command execution.
+- `doro-agent` runs on each host and exposes host capabilities over gRPC such as metrics, logs, services, containers, files, and command execution.
 - `doro-ui` is the Next.js operations console for hosts, tasks, approvals, applications, resources, logs, and settings.
 
 Doro is not a Codex CLI fork. The previous Codex-derived files were removed from the active workspace and the remaining project surface is being rebuilt around the home-server control-plane model.
@@ -35,6 +35,8 @@ Run the control-plane API:
 ```bash
 cargo run -p doro-control-plane
 ```
+
+The control plane listens on `127.0.0.1:8787` for HTTP and `127.0.0.1:8788` for Agent gRPC.
 
 Run the agent skeleton:
 

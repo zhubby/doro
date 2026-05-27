@@ -1,49 +1,178 @@
-# Doro Agent Instructions
+# Repository Guidelines
 
 ## Project Identity
 
 Doro is an AI-native home server control plane. It is not a Codex CLI fork.
 
-Do not reintroduce removed Codex crates, Codex command names, Codex README/config language, or Codex protocol terminology unless a task explicitly asks for migration research. Active work should use Doro terms: control plane, agent, host, task, approval, event, capability, and policy.
+Do not reintroduce removed Codex crates, Codex command names, Codex README/config language, or Codex protocol terminology unless a task explicitly asks for migration research. Active work should use Doro terms: control plane, agent, host, task, approval, event, capability, policy, and agent protocol.
 
-## Architecture
+## Project Structure & Module Organization
 
-- `doro-control-plane` owns API, orchestration, approvals, event streaming, and AI entrypoints.
-- `doro-agent` runs on hosts and executes host capabilities only after policy checks.
-- `doro-protocol` owns shared public types used across control plane, UI, CLI, store, and agent.
-- `doro-store` owns persistence and schema migrations.
-- `doro-ai` owns model/provider abstraction and planning, but it must not bypass policy or approval.
-- `doro-ui` is an operations console that talks to the control-plane API.
+This repository is a Rust workspace plus a Next.js frontend.
 
-## Rust Rules
+- `doro-protocol`: shared domain protocol types plus generated tonic/prost gRPC types.
+- `doro-control-plane`: Axum HTTP API, tonic gRPC Agent service, task orchestration, approvals, event stream, and AI entrypoints.
+- `doro-agent`: host daemon skeleton for enrollment, capability declaration, heartbeat, metrics, and future task execution.
+- `doro-store`: SQLite persistence boundary and schema ownership through `sqlx`.
+- `doro-ai`: AI provider abstraction and planning helpers. AI output is advisory and must not bypass policy or approval.
+- `doro-cli`: local operations CLI for status, enrollment-token workflows, diagnostics, and future administrative commands.
+- `doro-ui`: Next.js operations console that talks to the control-plane API.
+- `docs/`: mdBook sources under `docs/src`.
 
-- Keep shared protocol structs in `doro-protocol`; do not duplicate wire shapes in other crates.
-- Use Tokio for async Rust and Axum for the control-plane HTTP surface.
-- Use SQLite through `sqlx` for persistence unless a task explicitly changes storage direction.
-- Do not use `unwrap` or `expect` in production code. Return `anyhow::Result` at binary boundaries and domain errors in libraries when useful.
-- High-risk host operations must be represented as capabilities and must support approval before execution.
+Keep code in the crate that owns the domain concern. Do not leak CLI-specific logic into protocol, store, agent runtime, or control-plane orchestration crates.
+
+## Build, Test, and Development Commands
+
+Run workspace-level commands from the repository root:
+
+- `cargo metadata --no-deps`: validate workspace membership and dependency wiring.
+- `cargo check --workspace`: fast Rust compile verification.
+- `cargo test --workspace`: run Rust unit and integration tests.
+- `cargo fmt --all`: apply Rust formatting.
+- `cargo clippy --workspace --all-targets -- -D warnings`: strict Rust linting when touching production Rust.
+- `cargo run -p doro-control-plane`: run HTTP on `127.0.0.1:8787` and Agent gRPC on `127.0.0.1:8788`.
+- `cargo run -p doro-agent`: run the local Agent skeleton.
+- `cargo run -p doro-cli -- status`: run the Doro CLI.
+- `cd doro-ui && bun run build`: verify frontend production build.
+- `mdbook build docs`: verify documentation structure and links.
+
+The existing `justfile` wraps common commands. Keep it aligned with actual crate and binary names.
+
+## Workspace Dependency Management
+
+All Rust dependencies must be declared once in root `Cargo.toml` under `[workspace.dependencies]`.
+
+- Internal crates must use `{ workspace = true }`.
+- External dependencies in member crates must also use `{ workspace = true }`.
+- Feature additions should be specified at the crate boundary only when that crate needs the feature.
+- Do not pin a second version of a dependency in a member crate without a clear compatibility reason.
+
+For gRPC dependencies, keep tonic/prost/prost-types/tonic-build versions coordinated in the root workspace dependency list.
+
+## Rust Style and Idioms
+
+- Target Rust 2024 for new Rust code and examples.
+- Keep public API surfaces small and crate ownership explicit.
+- Use concrete `struct`/`enum` types over `serde_json::Value` when shape is known. JSON values are acceptable for open-ended task metadata at boundaries.
+- Match on types, not strings. Convert to strings only at serialization, display, CLI, or generated protocol boundaries.
+- Prefer `From`/`Into`/`TryFrom`/`TryInto` for conversions between domain and generated protocol types.
+- Prefer guard clauses and `let-else` over deeply nested branching.
+- Prefer streaming for long-lived Agent/control-plane communication.
+- Run independent async work concurrently with `tokio::join!`, `tokio::try_join!`, or `futures` helpers when it improves latency and clarity.
+- Never call `block_on` inside async context.
+- Do not use `Mutex<()>` or `Arc<Mutex<()>>`; a mutex must guard actual state.
+- Use `anyhow::Result` at binary/app boundaries and `thiserror` for reusable library/domain errors.
+- Never use `.unwrap()` or `.expect()` in production code. Workspace lints deny these. Use `?`, `ok_or_else`, `unwrap_or_default`, or explicit recovery.
+- Prefer crates over subprocesses. Use `std::process::Command` only when no mature crate/API exists.
+- For a single SQLite database file, reuse the same store/connection pool across the process. Do not open independent pools to the same DB for background writers or sidecar tasks.
+
+## Agent Protocol Rules
+
+Agent-to-control-plane communication is gRPC with Protobuf generated by tonic/prost.
+
+- Source `.proto` files live under `doro-protocol/proto/`.
+- Generated Rust types are exposed through `doro_protocol::grpc`.
+- Do not add a parallel WebSocket Agent protocol.
+- Avoid RPC names that collide with tonic client helpers, such as a service RPC named `Connect`.
+- gRPC services belong in `doro-control-plane`; Agent client/runtime helpers belong in `doro-agent`; shared wire definitions belong in `doro-protocol`.
+- Any protocol shape change must update `docs/src/agent-protocol.md` and, when module boundaries change, `docs/src/modules.md`.
 
 ## Agent Safety
 
 Every host action must be auditable. Agent code must preserve these invariants:
 
-- The agent declares capabilities before executing tasks.
+- The Agent declares capabilities before receiving executable tasks.
 - The control plane validates capability and risk before task dispatch.
 - Shell execution, file writes, service stop/restart, container deletion, network exposure, and database restore are high risk.
-- High-risk steps require `ApprovalRequest` support.
+- High-risk steps require `ApprovalRequest` support before execution.
+- AI may propose plans, but policy and approval decide whether a task can run.
 - Agents should prefer least-privilege local execution and explicit error reporting over implicit fallback.
+
+## Store and Config Safety
+
+- Treat SQLite as the MVP source of truth unless a task explicitly changes storage direction.
+- Keep schema ownership in `doro-store`; avoid ad hoc database access from UI, CLI, or Agent code.
+- Reload current persisted config/state before targeted writes when multiple subsystems may edit the same data.
+- Never commit API keys, enrollment secrets, model credentials, or local tokens.
+- Redact secrets in examples and logs.
 
 ## UI Rules
 
 - Build a dense operations console, not a marketing site.
-- Chinese UI text is the default.
-- Keep navigation aligned to the control-plane model: overview, hosts, tasks, approvals, apps, resources, logs, AI, settings.
-- Prefer typed API data from `doro-control-plane`; keep mock data temporary and centralized.
+- Chinese UI text is the default unless the task explicitly asks otherwise.
+- Keep navigation aligned to the control-plane model: overview, hosts, tasks, approvals, apps, websites, containers, databases, logs, AI, and settings.
+- `doro-ui` must call `doro-control-plane`; it must not shell out, talk directly to Agents, or own durable operational state.
+- Prefer typed API data from the control plane. Keep mock data temporary and centralized.
+- Do not block the UI on slow operations. Use pending states and async request flows.
+- Use existing UI primitives and layout conventions before adding new component patterns.
 
-## Docs Rules
+## Documentation Guidelines
 
 Docs are managed with mdBook under `docs/`.
 
-- Update `docs/src/SUMMARY.md` when adding or moving documentation.
-- Architecture and product decisions belong in `docs/src/`.
-- New Rust crates or major module changes must be reflected in `docs/src/modules.md`.
+- Every new page under `docs/src` must be linked from `docs/src/SUMMARY.md`.
+- Use clear heading hierarchy and stable section names.
+- Prefer fenced code blocks with language tags for commands, TOML, JSON, Rust, and protobuf snippets.
+- Use relative links for internal pages and full URLs for external references.
+- Keep examples executable and consistent with current binary names: `doro`, `doro-agent`, and `doro-control-plane`.
+- Architecture and product decisions belong in `docs/src`.
+- New Rust crates, protocol changes, or major module boundary changes must be reflected in `docs/src/modules.md`.
+- Validate doc structure with `mdbook build docs` when documentation changes.
+
+## Testing Guidelines
+
+- Place unit tests next to implementation in `mod tests`.
+- Place integration tests under crate-local `tests/` directories when behavior crosses module boundaries.
+- Name tests by behavior, for example `heartbeat_fails_when_agent_id_missing`.
+- Add regression tests for bug fixes and protocol edge cases.
+- Protocol changes should at least compile generated tonic/prost types and test any domain conversion helpers.
+- Store changes should include migration or persistence tests when practical.
+- UI changes should run `bun run build`; add focused component or flow tests when the project gains a test runner.
+
+## Crate Documentation
+
+Each long-lived workspace crate should maintain crate-local documentation as it matures:
+
+- `README.md`: purpose, responsibilities, important APIs, and local examples.
+- `CHANGELOG.md`: user-facing or module-significant changes, grouped by date and type (`Added`, `Changed`, `Fixed`, `Removed`).
+
+When a crate changes behavior materially, update its README/changelog alongside the code unless the crate is still a documented skeleton and the root/mdBook docs already cover the change.
+
+## Commit & Pull Request Guidelines
+
+Use Conventional Commits. Keep each commit to one logical change.
+
+Format:
+
+```text
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+- Subject line is imperative, lowercase, no trailing period, and at most 72 characters.
+- Body explains what and why, not a line-by-line implementation transcript.
+- Use `BREAKING CHANGE:` in the footer when required.
+
+Common types:
+
+- `feat`: new feature.
+- `fix`: bug fix.
+- `docs`: documentation changes.
+- `style`: formatting-only changes.
+- `refactor`: restructuring without behavior change.
+- `perf`: performance work.
+- `test`: test additions or corrections.
+- `chore`: maintenance tasks.
+- `ci`: CI/CD changes.
+- `build`: build system or dependency changes.
+- `revert`: revert a previous commit.
+
+PRs should include:
+
+- Purpose and impacted crates/apps.
+- Test evidence with commands run and results.
+- Config/doc updates when behavior changes.
+- Sample CLI/API output when user-facing behavior changes.

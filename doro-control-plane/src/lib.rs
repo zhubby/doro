@@ -1,10 +1,6 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::State;
-use axum::extract::ws::Message;
-use axum::extract::ws::WebSocket;
-use axum::extract::ws::WebSocketUpgrade;
-use axum::response::IntoResponse;
 use axum::response::Sse;
 use axum::response::sse::Event;
 use axum::routing::get;
@@ -13,7 +9,6 @@ use doro_ai::AiPlanRequest;
 use doro_ai::DeterministicPlanner;
 use doro_ai::PlanProvider;
 use doro_protocol::AgentCapability;
-use doro_protocol::AgentEvent;
 use doro_protocol::ApprovalRequest;
 use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
@@ -22,13 +17,21 @@ use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
+use doro_protocol::grpc;
+use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use futures_util::StreamExt;
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tokio_stream::wrappers::IntervalStream;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::Request;
+use tonic::Response;
+use tonic::Status;
+use tonic::Streaming;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
@@ -51,10 +54,83 @@ pub fn app() -> Router {
         .route("/api/v1/apps", get(list_apps))
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/events", get(events))
-        .route("/api/v1/agent/connect", get(agent_connect))
         .with_state(state)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
+}
+
+#[derive(Debug, Default)]
+pub struct GrpcAgentService;
+
+#[tonic::async_trait]
+impl AgentControlPlane for GrpcAgentService {
+    type OpenAgentStreamStream = ReceiverStream<Result<grpc::ControlPlaneCommand, Status>>;
+
+    async fn enroll(
+        &self,
+        request: Request<grpc::EnrollRequest>,
+    ) -> Result<Response<grpc::EnrollResponse>, Status> {
+        let request = request.into_inner();
+        if request.enrollment_token.trim().is_empty() {
+            return Err(Status::invalid_argument("enrollment token is required"));
+        }
+
+        Ok(Response::new(grpc::EnrollResponse {
+            agent_id: Uuid::new_v4().to_string(),
+            host_id: Uuid::new_v4().to_string(),
+            control_plane_id: "doro-control-plane-local".to_string(),
+        }))
+    }
+
+    async fn report_heartbeat(
+        &self,
+        request: Request<grpc::HeartbeatRequest>,
+    ) -> Result<Response<grpc::HeartbeatResponse>, Status> {
+        let request = request.into_inner();
+        if request.agent_id.trim().is_empty() || request.host_id.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "agent_id and host_id are required",
+            ));
+        }
+
+        Ok(Response::new(grpc::HeartbeatResponse {
+            accepted: true,
+            message: "heartbeat accepted".to_string(),
+        }))
+    }
+
+    async fn open_agent_stream(
+        &self,
+        request: Request<Streaming<grpc::AgentEvent>>,
+    ) -> Result<Response<Self::OpenAgentStreamStream>, Status> {
+        let mut inbound = request.into_inner();
+        tokio::spawn(async move {
+            while let Ok(Some(event)) = inbound.message().await {
+                tracing::info!(
+                    event_id = %event.event_id,
+                    host_id = %event.host_id,
+                    kind = %event.kind,
+                    "agent event received"
+                );
+            }
+        });
+
+        let (sender, receiver) = mpsc::channel(8);
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            kind: "ack".to_string(),
+            payload_json: serde_json::json!({
+                "message": "grpc agent stream connected"
+            })
+            .to_string(),
+            requires_approval: false,
+        };
+        if sender.send(Ok(command)).await.is_err() {
+            tracing::warn!("failed to enqueue initial grpc command");
+        }
+
+        Ok(Response::new(ReceiverStream::new(receiver)))
+    }
 }
 
 impl AppState {
@@ -139,7 +215,7 @@ async fn list_apps() -> Json<serde_json::Value> {
 async fn settings() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "approval_policy": "policy_and_human_approval",
-        "agent_transport": "websocket_json",
+        "agent_transport": "grpc_protobuf",
         "database": "sqlite"
     }))
 }
@@ -155,20 +231,6 @@ async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallib
         ))
     });
     Sse::new(stream)
-}
-
-async fn agent_connect(ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(handle_agent_socket)
-}
-
-async fn handle_agent_socket(mut socket: WebSocket) {
-    let welcome = AgentEvent::Heartbeat {
-        host_id: Uuid::nil(),
-        at: Utc::now(),
-    };
-    if let Ok(body) = serde_json::to_string(&welcome) {
-        let _ = socket.send(Message::Text(body)).await;
-    }
 }
 
 fn default_capabilities() -> Vec<AgentCapability> {

@@ -27,7 +27,7 @@ fn main() -> anyhow::Result<()> {
         Command::Status => {
             println!("Doro control plane workspace");
             println!("api: /api/v1");
-            println!("agent transport: websocket /api/v1/agent/connect");
+            println!("agent transport: grpc doro.agent.v1.AgentControlPlane on 127.0.0.1:8788");
             println!("docs: docs/");
         }
         Command::EnrollmentToken { label } => {

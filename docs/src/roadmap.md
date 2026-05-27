@@ -14,7 +14,7 @@
 - Durable enrollment flow.
 - Authenticated UI sessions.
 - Real SQLite task, host, approval, and event persistence.
-- Agent task dispatch over WebSocket.
+- Agent task dispatch over gRPC streaming.
 - Container, service, log, and metrics integrations.
 - Human approval UI.
 
