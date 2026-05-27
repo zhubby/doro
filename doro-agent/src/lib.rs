@@ -16,6 +16,7 @@ use doro_protocol::protobuf_timestamp_now;
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 use uuid::Uuid;
@@ -189,9 +190,30 @@ pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()>
     let mut persisted_config = loaded_config.config;
     let mut agent = Agent::new(AgentConfig::from_config(&persisted_config.agent));
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        tracing::info!("shutdown signal received, stopping agent");
+        let _ = shutdown_tx.send(true);
+    });
 
     loop {
-        match run_session(&loaded_config.path, &mut persisted_config, &mut agent).await {
+        let session_result = tokio::select! {
+            result = run_session(
+                &loaded_config.path,
+                &mut persisted_config,
+                &mut agent,
+                shutdown_rx.clone(),
+            ) => result,
+            () = wait_for_shutdown(shutdown_rx.clone()) => return Ok(()),
+        };
+
+        if shutdown_requested(&shutdown_rx) {
+            return session_result;
+        }
+
+        match session_result {
             Ok(()) => {
                 reconnect_delay = INITIAL_RECONNECT_DELAY;
                 tracing::warn!(
@@ -208,7 +230,10 @@ pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()>
             }
         }
 
-        tokio::time::sleep(reconnect_delay).await;
+        tokio::select! {
+            () = tokio::time::sleep(reconnect_delay) => {}
+            () = wait_for_shutdown(shutdown_rx.clone()) => return Ok(()),
+        }
         reconnect_delay = next_reconnect_delay(reconnect_delay);
     }
 }
@@ -217,13 +242,14 @@ async fn run_session(
     config_path: &Path,
     persisted_config: &mut doro_config::DoroConfig,
     agent: &mut Agent,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let mut client =
         AgentControlPlaneClient::connect(agent.config.control_plane_url.clone()).await?;
     let agent_id = ensure_registered(client.clone(), persisted_config, config_path, agent).await?;
 
     report_heartbeat(&mut client, agent, agent_id).await?;
-    open_agent_stream(client, agent.clone(), agent_id).await
+    open_agent_stream(client, agent.clone(), agent_id, shutdown_rx).await
 }
 
 async fn ensure_registered(
@@ -278,6 +304,7 @@ async fn open_agent_stream(
     mut client: AgentControlPlaneClient<Channel>,
     agent: Agent,
     agent_id: Uuid,
+    shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let (sender, receiver) = mpsc::channel(8);
     sender
@@ -293,10 +320,14 @@ async fn open_agent_stream(
 
     let heartbeat_agent = agent.clone();
     let heartbeat_sender = sender.clone();
+    let heartbeat_shutdown = shutdown_rx.clone();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(heartbeat_agent.config.heartbeat_interval);
         loop {
-            interval.tick().await;
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = wait_for_shutdown(heartbeat_shutdown.clone()) => break,
+            }
             let event = heartbeat_agent.grpc_event(
                 agent_id,
                 "heartbeat",
@@ -313,6 +344,7 @@ async fn open_agent_stream(
     if agent.config.metrics_enabled {
         let metrics_agent = agent.clone();
         let metrics_sender = sender.clone();
+        let metrics_shutdown = shutdown_rx.clone();
         tokio::spawn(async move {
             let collector_config = CollectorConfig {
                 process_names: metrics_agent.config.process_names.clone(),
@@ -323,7 +355,10 @@ async fn open_agent_stream(
             let mut collectors = LocalCollectors::new(collector_config);
             let mut interval = tokio::time::interval(metrics_agent.config.metrics_interval);
             loop {
-                interval.tick().await;
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    () = wait_for_shutdown(metrics_shutdown.clone()) => return,
+                }
                 for collector_event in collectors.collect(metrics_agent.config.host_id).await {
                     let (kind, payload) = match collector_event {
                         CollectorEvent::Metrics(metrics) => (
@@ -363,11 +398,64 @@ async fn open_agent_stream(
         .open_agent_stream(ReceiverStream::new(receiver))
         .await?
         .into_inner();
-    while let Some(command) = commands.message().await? {
-        handle_command(command);
+    loop {
+        tokio::select! {
+            command = commands.message() => {
+                let Some(command) = command? else {
+                    anyhow::bail!("agent stream closed");
+                };
+                handle_command(command);
+            }
+            () = wait_for_shutdown(shutdown_rx.clone()) => return Ok(()),
+        }
+    }
+}
+
+fn shutdown_requested(shutdown_rx: &watch::Receiver<bool>) -> bool {
+    *shutdown_rx.borrow()
+}
+
+async fn wait_for_shutdown(mut shutdown_rx: watch::Receiver<bool>) {
+    while !*shutdown_rx.borrow_and_update() {
+        if shutdown_rx.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn wait_for_shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(%error, "failed to listen for ctrl-c shutdown signal");
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+
+        let terminate = async {
+            match tokio::signal::unix::signal(SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "failed to listen for terminate shutdown signal");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        tokio::select! {
+            () = ctrl_c => {}
+            () = terminate => {}
+        }
     }
 
-    anyhow::bail!("agent stream closed")
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await;
+    }
 }
 
 fn next_reconnect_delay(current: Duration) -> Duration {

@@ -76,6 +76,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
@@ -186,10 +187,20 @@ pub async fn run(config: doro_config::DoroConfig) -> anyhow::Result<()> {
     tracing::info!("doro control-plane http listening on http://{http_addr}");
     tracing::info!("doro control-plane grpc listening on http://{grpc_addr}");
 
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    tokio::spawn(async move {
+        wait_for_shutdown_signal().await;
+        tracing::info!("shutdown signal received, stopping control-plane services");
+        let _ = shutdown_tx.send(true);
+    });
+
     let http_store = store.clone();
     let grpc_store = store.clone();
+    let http_shutdown = shutdown_rx.clone();
+    let grpc_shutdown = shutdown_rx;
     let http_server = async move {
         axum::serve(http_listener, app_with_auth(http_store, auth))
+            .with_graceful_shutdown(wait_for_shutdown(http_shutdown))
             .await
             .map_err(anyhow::Error::from)
     };
@@ -198,13 +209,56 @@ pub async fn run(config: doro_config::DoroConfig) -> anyhow::Result<()> {
             .add_service(AgentControlPlaneServer::new(GrpcAgentService {
                 store: grpc_store,
             }))
-            .serve(grpc_addr)
+            .serve_with_shutdown(grpc_addr, wait_for_shutdown(grpc_shutdown))
             .await
             .map_err(anyhow::Error::from)
     };
 
     tokio::try_join!(http_server, grpc_server)?;
     Ok(())
+}
+
+async fn wait_for_shutdown(mut shutdown_rx: watch::Receiver<bool>) {
+    while !*shutdown_rx.borrow_and_update() {
+        if shutdown_rx.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn wait_for_shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::warn!(%error, "failed to listen for ctrl-c shutdown signal");
+        }
+    };
+
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+
+        let terminate = async {
+            match tokio::signal::unix::signal(SignalKind::terminate()) {
+                Ok(mut signal) => {
+                    signal.recv().await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "failed to listen for terminate shutdown signal");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+
+        tokio::select! {
+            () = ctrl_c => {}
+            () = terminate => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        ctrl_c.await;
+    }
 }
 
 #[derive(Debug, Clone)]
