@@ -4,7 +4,20 @@ The first protocol version is `v1`.
 
 ## Enrollment
 
-The control plane creates a one-time enrollment token. An agent uses that token to obtain a durable agent identity. After enrollment, the token should be invalidated.
+The control plane creates a one-time enrollment token. `doro enrollment-token <label>` stores only the token hash in `enrollment_tokens` and prints the plaintext token once. An agent uses that token to obtain a durable agent identity. After enrollment, the token is marked as used and cannot enroll another agent.
+
+Agents keep their bootstrap and durable identity in `~/.doro/config.toml` under `[agent]`:
+
+```toml
+control_plane_url = "http://127.0.0.1:8788"
+hostname = "doro-local-agent"
+enrollment_token = "redacted"
+agent_id = "00000000-0000-0000-0000-000000000000"
+host_id = "00000000-0000-0000-0000-000000000000"
+heartbeat_interval_seconds = 30
+```
+
+On first run, `doro agent` requires `enrollment_token`. If `agent_id` and `host_id` are missing, the agent calls `Enroll`, writes the returned identifiers back to the config file, and uses those identifiers for subsequent heartbeats and streams.
 
 ## Connection
 
@@ -22,16 +35,20 @@ The initial service surface is:
 - `ReportHeartbeat`: report liveness and current capability declarations.
 - `OpenAgentStream`: bidirectional stream where agents send `AgentEvent` messages and receive `ControlPlaneCommand` messages.
 
+The first stream implementation sends `connected` and periodic `heartbeat` events. The control plane responds with an `ack` command and persists inbound events. Task dispatch over this stream is intentionally deferred until task routing and command acknowledgements are implemented.
+
 ## Persistence
 
 Agent protocol traffic is persisted by `doro-store`:
 
-- Enrollment creates or updates `hosts`, `agents`, and `agent_capabilities`, then appends an `agent_events` record.
+- Enrollment validates and consumes an active enrollment token, creates or updates `hosts`, `agents`, and `agent_capabilities`, then appends an `agent_events` record.
 - Heartbeats update agent and host `last_seen_at`, replace declared capabilities for that agent, and append a heartbeat event.
 - Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
 - Metric payloads should be normalized into `metric_snapshots` when agents start sending structured metrics.
 
 Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
+
+The `agents` table is the durable identity table. The initial status values are `enrolled`, `online`, and `offline`; enrollment writes `enrolled`, while heartbeats and active streams write `online`.
 
 ## Lifecycle
 

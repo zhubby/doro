@@ -6,15 +6,25 @@ use doro_protocol::CapabilityRisk;
 use doro_protocol::Host;
 use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
+use doro_protocol::PROTOCOL_VERSION;
 use doro_protocol::grpc;
+use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use doro_protocol::protobuf_timestamp_now;
+use std::path::PathBuf;
+use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tonic::transport::Channel;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
+    pub agent_id: Option<Uuid>,
     pub host_id: Uuid,
     pub hostname: String,
     pub control_plane_url: String,
+    pub enrollment_token: Option<String>,
+    pub heartbeat_interval: Duration,
 }
 
 impl AgentConfig {
@@ -24,14 +34,24 @@ impl AgentConfig {
 
     pub fn new(hostname: impl Into<String>, control_plane_url: impl Into<String>) -> Self {
         Self {
+            agent_id: None,
             host_id: Uuid::new_v4(),
             hostname: hostname.into(),
             control_plane_url: control_plane_url.into(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
         }
     }
 
     pub fn from_config(config: &doro_config::AgentConfig) -> Self {
-        Self::new(config.hostname.clone(), config.control_plane_url.clone())
+        Self {
+            agent_id: config.agent_id,
+            host_id: config.host_id.unwrap_or_else(Uuid::new_v4),
+            hostname: config.hostname.clone(),
+            control_plane_url: config.control_plane_url.clone(),
+            enrollment_token: config.enrollment_token.clone(),
+            heartbeat_interval: Duration::from_secs(config.heartbeat_interval_seconds.max(1)),
+        }
     }
 }
 
@@ -87,12 +107,36 @@ impl Agent {
             .collect()
     }
 
-    pub fn grpc_heartbeat(&self, agent_id: impl Into<String>) -> grpc::HeartbeatRequest {
+    pub fn grpc_heartbeat(&self, agent_id: Uuid) -> grpc::HeartbeatRequest {
         grpc::HeartbeatRequest {
-            agent_id: agent_id.into(),
+            agent_id: agent_id.to_string(),
             host_id: self.config.host_id.to_string(),
             observed_at: Some(protobuf_timestamp_now()),
             capabilities: self.grpc_capabilities(),
+        }
+    }
+
+    pub fn grpc_enroll(&self, enrollment_token: String) -> grpc::EnrollRequest {
+        grpc::EnrollRequest {
+            enrollment_token,
+            hostname: self.config.hostname.clone(),
+            capabilities: self.grpc_capabilities(),
+        }
+    }
+
+    pub fn grpc_event(
+        &self,
+        agent_id: Uuid,
+        kind: &str,
+        payload: serde_json::Value,
+    ) -> grpc::AgentEvent {
+        grpc::AgentEvent {
+            event_id: Uuid::new_v4().to_string(),
+            agent_id: agent_id.to_string(),
+            host_id: self.config.host_id.to_string(),
+            kind: kind.to_string(),
+            payload_json: payload.to_string(),
+            recorded_at: Some(protobuf_timestamp_now()),
         }
     }
 
@@ -115,12 +159,197 @@ impl Agent {
     }
 }
 
-pub async fn run(config: doro_config::AgentConfig) -> anyhow::Result<()> {
-    let agent = Agent::new(AgentConfig::from_config(&config));
+pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()> {
+    let mut persisted_config = loaded_config.config;
+    let mut agent = Agent::new(AgentConfig::from_config(&persisted_config.agent));
+    let mut client =
+        AgentControlPlaneClient::connect(agent.config.control_plane_url.clone()).await?;
+    let agent_id = ensure_registered(
+        &mut client,
+        &mut persisted_config,
+        &loaded_config.path,
+        &mut agent,
+    )
+    .await?;
 
-    println!("{}", serde_json::to_string_pretty(&agent.host())?);
-    println!("{}", serde_json::to_string_pretty(&agent.heartbeat())?);
-    println!("{:?}", agent.grpc_heartbeat("local-agent"));
+    report_heartbeat(&mut client, &agent, agent_id).await?;
+    open_agent_stream(client, agent, agent_id).await?;
 
     Ok(())
+}
+
+async fn ensure_registered(
+    client: &mut AgentControlPlaneClient<Channel>,
+    persisted_config: &mut doro_config::DoroConfig,
+    config_path: &PathBuf,
+    agent: &mut Agent,
+) -> anyhow::Result<Uuid> {
+    if let (Some(agent_id), Some(host_id)) = (
+        persisted_config.agent.agent_id,
+        persisted_config.agent.host_id,
+    ) {
+        agent.config.agent_id = Some(agent_id);
+        agent.config.host_id = host_id;
+        return Ok(agent_id);
+    }
+
+    let token = persisted_config
+        .agent
+        .enrollment_token
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("agent enrollment_token is required before first run"))?;
+    let response = client.enroll(agent.grpc_enroll(token)).await?.into_inner();
+    let agent_id = parse_uuid(&response.agent_id, "agent_id")?;
+    let host_id = parse_uuid(&response.host_id, "host_id")?;
+
+    persisted_config.agent.agent_id = Some(agent_id);
+    persisted_config.agent.host_id = Some(host_id);
+    doro_config::write_config(config_path, persisted_config)?;
+    agent.config.agent_id = Some(agent_id);
+    agent.config.host_id = host_id;
+
+    Ok(agent_id)
+}
+
+async fn report_heartbeat(
+    client: &mut AgentControlPlaneClient<Channel>,
+    agent: &Agent,
+    agent_id: Uuid,
+) -> anyhow::Result<()> {
+    let response = client
+        .report_heartbeat(agent.grpc_heartbeat(agent_id))
+        .await?
+        .into_inner();
+    if !response.accepted {
+        anyhow::bail!("control plane rejected heartbeat: {}", response.message);
+    }
+    Ok(())
+}
+
+async fn open_agent_stream(
+    mut client: AgentControlPlaneClient<Channel>,
+    agent: Agent,
+    agent_id: Uuid,
+) -> anyhow::Result<()> {
+    let (sender, receiver) = mpsc::channel(8);
+    sender
+        .send(agent.grpc_event(
+            agent_id,
+            "connected",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "hostname": agent.config.hostname
+            }),
+        ))
+        .await?;
+
+    let heartbeat_agent = agent.clone();
+    let heartbeat_sender = sender.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(heartbeat_agent.config.heartbeat_interval);
+        loop {
+            interval.tick().await;
+            let event = heartbeat_agent.grpc_event(
+                agent_id,
+                "heartbeat",
+                serde_json::json!({
+                    "protocol_version": PROTOCOL_VERSION
+                }),
+            );
+            if heartbeat_sender.send(event).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let mut commands = client
+        .open_agent_stream(ReceiverStream::new(receiver))
+        .await?
+        .into_inner();
+    while let Some(command) = commands.message().await? {
+        handle_command(command);
+    }
+
+    anyhow::bail!("agent stream closed by control plane")
+}
+
+fn handle_command(command: grpc::ControlPlaneCommand) {
+    match command.kind.as_str() {
+        "ack" => {
+            tracing::info!(command_id = %command.command_id, "control-plane acknowledged stream")
+        }
+        kind => {
+            tracing::warn!(command_id = %command.command_id, kind, "unsupported control-plane command")
+        }
+    }
+}
+
+fn parse_uuid(value: &str, field: &str) -> anyhow::Result<Uuid> {
+    value
+        .parse()
+        .map_err(|error| anyhow::anyhow!("{field} must be a uuid: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_config_uses_persisted_identity() {
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let config = doro_config::AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Some(host_id),
+            heartbeat_interval_seconds: 0,
+            ..Default::default()
+        };
+
+        let agent_config = AgentConfig::from_config(&config);
+
+        assert_eq!(agent_config.agent_id, Some(agent_id));
+        assert_eq!(agent_config.host_id, host_id);
+        assert_eq!(agent_config.heartbeat_interval, Duration::from_secs(1));
+    }
+
+    #[test]
+    fn grpc_event_includes_durable_identity_and_payload() {
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let agent = Agent::new(AgentConfig {
+            agent_id: Some(agent_id),
+            host_id,
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+        });
+
+        let event = agent.grpc_event(
+            agent_id,
+            "connected",
+            serde_json::json!({"protocol_version": PROTOCOL_VERSION}),
+        );
+
+        assert_eq!(event.agent_id, agent_id.to_string());
+        assert_eq!(event.host_id, host_id.to_string());
+        assert_eq!(event.kind, "connected");
+        assert!(event.payload_json.contains(PROTOCOL_VERSION));
+    }
+
+    #[test]
+    fn handle_command_accepts_ack_and_unknown_commands() {
+        handle_command(grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            kind: "ack".to_string(),
+            payload_json: "{}".to_string(),
+            requires_approval: false,
+        });
+        handle_command(grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            kind: "future_command".to_string(),
+            payload_json: "{}".to_string(),
+            requires_approval: false,
+        });
+    }
 }

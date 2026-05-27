@@ -6,7 +6,7 @@
 
 `doro-control-plane` exposes `/api/v1`, owns task orchestration, serves UI-facing state, receives agent connections, and emits events.
 
-`doro-agent` runs on each managed host. It declares capabilities, reports heartbeat and metrics, and executes approved tasks.
+`doro-agent` runs on each managed host. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and metrics, and executes approved tasks.
 
 `doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, approvals, events, app catalog state, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
 
@@ -17,7 +17,7 @@ The first durable schema is organized into table families:
 - Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`.
 - Configuration and resource directory: `settings`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
 
-The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agents remain authoritative for local observations; the store records those observations as snapshots and audit events.
+The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as snapshots and audit events.
 
 `doro-ai` owns provider abstraction and planning. It can draft task steps, but the control plane still decides dispatch and approval.
 

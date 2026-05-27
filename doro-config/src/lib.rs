@@ -6,6 +6,7 @@ use std::io;
 use std::path::Path;
 use std::path::PathBuf;
 use thiserror::Error;
+use uuid::Uuid;
 
 pub const CONFIG_DIR_NAME: &str = ".doro";
 pub const CONFIG_FILE_NAME: &str = "config.toml";
@@ -130,6 +131,10 @@ impl Default for SecurityConfig {
 pub struct AgentConfig {
     pub control_plane_url: String,
     pub hostname: String,
+    pub enrollment_token: Option<String>,
+    pub agent_id: Option<Uuid>,
+    pub host_id: Option<Uuid>,
+    pub heartbeat_interval_seconds: u64,
 }
 
 impl Default for AgentConfig {
@@ -137,6 +142,10 @@ impl Default for AgentConfig {
         Self {
             control_plane_url: "http://127.0.0.1:8788".to_string(),
             hostname: "doro-local-agent".to_string(),
+            enrollment_token: None,
+            agent_id: None,
+            host_id: None,
+            heartbeat_interval_seconds: 30,
         }
     }
 }
@@ -242,6 +251,10 @@ mod tests {
             loaded.config.agent.control_plane_url,
             "http://127.0.0.1:8788"
         );
+        assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 30);
+        assert!(loaded.config.agent.enrollment_token.is_none());
+        assert!(loaded.config.agent.agent_id.is_none());
+        assert!(loaded.config.agent.host_id.is_none());
 
         Ok(())
     }

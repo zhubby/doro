@@ -63,7 +63,7 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Agent => {
             init_logging(cli.log_level)?;
-            doro_agent::run(loaded_config.config.agent).await?;
+            doro_agent::run(loaded_config).await?;
         }
         Command::ControlPlane => {
             init_logging(cli.log_level)?;
@@ -100,6 +100,18 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::EnrollmentToken { label } => {
             let token = doro_cli::generate_enrollment_token(label);
+            let store = doro_store::Store::connect_with_config(&loaded_config.config.store).await?;
+            store.migrate().await?;
+            store
+                .enrollment_tokens()
+                .create(doro_store::NewEnrollmentToken {
+                    id: token.id,
+                    label: token.label.clone(),
+                    token: token.token.clone(),
+                    expires_at: None,
+                    created_at: chrono::Utc::now(),
+                })
+                .await?;
             println!("{}", serde_json::to_string_pretty(&token)?);
         }
     }

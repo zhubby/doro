@@ -5,5 +5,6 @@ pub fn generate_enrollment_token(label: impl Into<String>) -> EnrollmentToken {
     EnrollmentToken {
         id: Uuid::new_v4(),
         label: label.into(),
+        token: Uuid::new_v4().to_string(),
     }
 }

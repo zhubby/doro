@@ -884,6 +884,10 @@ dependencies = [
  "doro-config",
  "doro-protocol",
  "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
  "uuid",
 ]
 
@@ -903,11 +907,13 @@ name = "doro-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "clap",
  "doro-agent",
  "doro-config",
  "doro-control-plane",
  "doro-protocol",
+ "doro-store",
  "serde_json",
  "tokio",
  "tracing-subscriber",
@@ -923,6 +929,7 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "uuid",
 ]
 
 [[package]]

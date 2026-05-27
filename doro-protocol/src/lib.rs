@@ -25,6 +25,7 @@ pub fn protobuf_timestamp_now() -> prost_types::Timestamp {
 pub struct EnrollmentToken {
     pub id: Uuid,
     pub label: String,
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]

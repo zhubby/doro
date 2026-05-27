@@ -1,6 +1,11 @@
+use argon2::Argon2;
+use argon2::PasswordHash;
+use argon2::PasswordHasher;
+use argon2::PasswordVerifier;
+use argon2::password_hash::SaltString;
+use axum::Extension;
 use axum::Json;
 use axum::Router;
-use axum::Extension;
 use axum::extract::State;
 use axum::http::Request as HttpRequest;
 use axum::http::StatusCode;
@@ -12,11 +17,6 @@ use axum::response::Response as AxumResponse;
 use axum::response::Sse;
 use axum::response::sse::Event;
 use axum::routing::get;
-use argon2::Argon2;
-use argon2::PasswordHash;
-use argon2::PasswordHasher;
-use argon2::PasswordVerifier;
-use argon2::password_hash::SaltString;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::DateTime;
@@ -30,14 +30,14 @@ use doro_protocol::AgentCapability;
 use doro_protocol::AuthStatusResponse;
 use doro_protocol::AuthTokenResponse;
 use doro_protocol::CapabilityRisk;
-use doro_protocol::CurrentUserResponse;
 use doro_protocol::CreateTaskRequest;
+use doro_protocol::CurrentUserResponse;
 use doro_protocol::HealthResponse;
-use doro_protocol::LoginRequest;
 use doro_protocol::ListApprovalsResponse;
 use doro_protocol::ListAppsResponse;
 use doro_protocol::ListHostsResponse;
 use doro_protocol::ListTasksResponse;
+use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::RefreshTokenRequest;
 use doro_protocol::RegisterRequest;
@@ -50,8 +50,8 @@ use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
 use doro_store::AgentHeartbeat;
 use doro_store::AgentRegistration;
-use doro_store::NewRefreshToken;
 use doro_store::NewAgentEvent;
+use doro_store::NewRefreshToken;
 use doro_store::NewTask;
 use doro_store::NewUser;
 use doro_store::Store;
@@ -140,7 +140,10 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
         .route("/api/v1/events", get(events))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/logout", axum::routing::post(logout))
-        .route_layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
 
     Router::new()
         .route("/health", get(health))
@@ -228,27 +231,13 @@ impl AgentControlPlane for GrpcAgentService {
             .register(AgentRegistration {
                 agent_id,
                 host_id,
+                enrollment_token: request.enrollment_token,
                 hostname,
                 capabilities,
                 observed_at,
             })
             .await
-            .map_err(store_status)?;
-        self.store
-            .events()
-            .record(NewAgentEvent {
-                agent_id: Some(agent_id),
-                host_id: Some(host_id),
-                event_type: "agent_enrolled".to_string(),
-                event_json: serde_json::json!({
-                    "agent_id": agent_id,
-                    "host_id": host_id
-                }),
-                recorded_at: observed_at,
-            })
-            .await
-            .map_err(store_status)?;
-
+            .map_err(enrollment_status)?;
         Ok(Response::new(grpc::EnrollResponse {
             agent_id: agent_id.to_string(),
             host_id: host_id.to_string(),
@@ -425,10 +414,16 @@ async fn login(
 ) -> Result<Json<AuthTokenResponse>, AppError> {
     let username = request.username.trim().to_lowercase();
     let Some(user) = state.store.users().find_by_username(&username).await? else {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid credentials"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid credentials",
+        ));
     };
     if user.status != "active" || !verify_password(&request.password, &user.password_hash)? {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid credentials"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid credentials",
+        ));
     }
 
     let now = Utc::now();
@@ -447,7 +442,10 @@ async fn refresh(
         .find_by_token(&request.refresh_token)
         .await?
     else {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid refresh token"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid refresh token",
+        ));
     };
     if stored_token.status != "active" || stored_token.revoked_at.is_some() {
         state
@@ -455,16 +453,28 @@ async fn refresh(
             .refresh_tokens()
             .revoke_all_for_user(stored_token.user_id, now)
             .await?;
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid refresh token"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid refresh token",
+        ));
     }
     if stored_token.expires_at <= now {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "refresh token expired"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "refresh token expired",
+        ));
     }
     let Some(user) = state.store.users().find_by_id(stored_token.user_id).await? else {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid refresh token"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid refresh token",
+        ));
     };
     if user.status != "active" {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "user is disabled"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "user is disabled",
+        ));
     }
 
     let refresh_token = generate_refresh_token();
@@ -569,13 +579,19 @@ async fn auth_middleware(
     next: Next,
 ) -> Result<AxumResponse, AppError> {
     let Some(header) = request.headers().get(AUTHORIZATION) else {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "missing bearer token"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "missing bearer token",
+        ));
     };
     let header = header
         .to_str()
         .map_err(|_| AppError::status(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
     let Some(token) = header.strip_prefix("Bearer ") else {
-        return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid bearer token"));
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid bearer token",
+        ));
     };
     let current_user = state.auth.verify_access_token(token)?;
     request.extensions_mut().insert(current_user);
@@ -598,8 +614,12 @@ async fn list_apps(State(state): State<AppState>) -> Result<Json<ListAppsRespons
 
 async fn settings(State(state): State<AppState>) -> Result<Json<SettingsResponse>, AppError> {
     Ok(Json(SettingsResponse {
-        approval_policy: setting_string(&state.store, "approval_policy", "policy_and_human_approval")
-            .await?,
+        approval_policy: setting_string(
+            &state.store,
+            "approval_policy",
+            "policy_and_human_approval",
+        )
+        .await?,
         agent_transport: setting_string(&state.store, "agent_transport", "grpc_protobuf").await?,
         database: setting_string(&state.store, "database", "postgres").await?,
     }))
@@ -655,6 +675,19 @@ fn parse_event_payload(payload_json: &str) -> Value {
 fn store_status(error: sea_orm::DbErr) -> Status {
     tracing::error!(%error, "store operation failed");
     Status::internal("store operation failed")
+}
+
+fn enrollment_status(error: sea_orm::DbErr) -> Status {
+    match &error {
+        sea_orm::DbErr::Custom(message)
+            if message.contains("enrollment token is invalid")
+                || message.contains("enrollment token is not active")
+                || message.contains("enrollment token is expired") =>
+        {
+            Status::permission_denied(message.clone())
+        }
+        _ => store_status(error),
+    }
 }
 
 impl AppError {
@@ -715,7 +748,10 @@ impl IntoResponse for AppError {
 }
 
 impl AuthService {
-    async fn load_or_create(store: &Store, configured_secret: Option<&str>) -> anyhow::Result<Self> {
+    async fn load_or_create(
+        store: &Store,
+        configured_secret: Option<&str>,
+    ) -> anyhow::Result<Self> {
         if let Some(secret) = configured_secret {
             if !secret.trim().is_empty() {
                 return Ok(Self {
@@ -781,7 +817,10 @@ impl AuthService {
         )
         .map_err(|_| AppError::status(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
         if data.claims.typ != "access" {
-            return Err(AppError::status(StatusCode::UNAUTHORIZED, "invalid bearer token"));
+            return Err(AppError::status(
+                StatusCode::UNAUTHORIZED,
+                "invalid bearer token",
+            ));
         }
         let id = doro_store::parse_uuid(&data.claims.sub)
             .map_err(|_| AppError::status(StatusCode::UNAUTHORIZED, "invalid bearer token"))?;
@@ -831,20 +870,29 @@ fn user_summary(user: &StoredUser) -> UserSummary {
 fn validate_username(username: &str) -> Result<(), AppError> {
     let username = username.trim();
     if username.len() < 3 || username.len() > 64 {
-        return Err(AppError::status(StatusCode::BAD_REQUEST, "invalid username"));
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "invalid username",
+        ));
     }
     if !username
         .chars()
         .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.'))
     {
-        return Err(AppError::status(StatusCode::BAD_REQUEST, "invalid username"));
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "invalid username",
+        ));
     }
     Ok(())
 }
 
 fn validate_password(password: &str) -> Result<(), AppError> {
     if password.chars().count() < 10 {
-        return Err(AppError::status(StatusCode::BAD_REQUEST, "password is too short"));
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "password is too short",
+        ));
     }
     Ok(())
 }
@@ -996,5 +1044,14 @@ mod tests {
         assert!(expires_at > Utc::now());
 
         Ok(())
+    }
+
+    #[test]
+    fn enrollment_errors_map_to_permission_denied() {
+        let status = enrollment_status(sea_orm::DbErr::Custom(
+            "enrollment token is expired".to_string(),
+        ));
+
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
     }
 }

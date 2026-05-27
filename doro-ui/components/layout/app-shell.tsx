@@ -3,6 +3,7 @@
 import { usePathname } from "next/navigation";
 
 import { DashboardHeader } from "@/components/layout/dashboard-header";
+import { PageTransition } from "@/components/layout/page-transition";
 import { Sidebar } from "@/components/layout/sidebar";
 import { getNavigationItem } from "@/lib/navigation";
 import { useTheme } from "@/hooks/use-theme";
@@ -29,7 +30,7 @@ export function AppShell({
             isDark={isDark}
             onToggleTheme={toggleTheme}
           />
-          {children}
+          <PageTransition pathname={pathname}>{children}</PageTransition>
         </main>
       </div>
     </div>

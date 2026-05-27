@@ -61,6 +61,7 @@ pub struct NewTask {
 pub struct AgentRegistration {
     pub agent_id: Uuid,
     pub host_id: Uuid,
+    pub enrollment_token: String,
     pub hostname: String,
     pub capabilities: Vec<AgentCapability>,
     pub observed_at: DateTime<Utc>,
@@ -130,6 +131,27 @@ pub struct StoredRefreshToken {
     pub status: String,
     pub expires_at: DateTime<Utc>,
     pub revoked_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewEnrollmentToken {
+    pub id: Uuid,
+    pub label: String,
+    pub token: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredEnrollmentToken {
+    pub id: Uuid,
+    pub label: String,
+    pub token_hash: String,
+    pub status: String,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub used_at: Option<DateTime<Utc>>,
+    pub used_by_agent_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
 }
 
 impl Store {
@@ -214,6 +236,10 @@ impl Store {
 
     pub fn refresh_tokens(&self) -> RefreshTokenRepository<'_> {
         RefreshTokenRepository { store: self }
+    }
+
+    pub fn enrollment_tokens(&self) -> EnrollmentTokenRepository<'_> {
+        EnrollmentTokenRepository { store: self }
     }
 
     async fn execute_sql(&self, sql: &str) -> Result<(), DbErr> {
@@ -323,6 +349,12 @@ pub struct AgentRepository<'a> {
 impl AgentRepository<'_> {
     pub async fn register(&self, registration: AgentRegistration) -> Result<(), DbErr> {
         let transaction = self.store.connection().begin().await?;
+        let token = find_active_enrollment_token(
+            &transaction,
+            &registration.enrollment_token,
+            registration.observed_at,
+        )
+        .await?;
         upsert_host(
             &transaction,
             registration.host_id,
@@ -335,6 +367,7 @@ impl AgentRepository<'_> {
             registration.agent_id,
             registration.host_id,
             registration.observed_at,
+            "enrolled",
         )
         .await?;
         replace_capabilities(
@@ -343,6 +376,27 @@ impl AgentRepository<'_> {
             registration.host_id,
             registration.capabilities,
             registration.observed_at,
+        )
+        .await?;
+        consume_enrollment_token(
+            &transaction,
+            token.id,
+            registration.agent_id,
+            registration.observed_at,
+        )
+        .await?;
+        insert_agent_event(
+            &transaction,
+            NewAgentEvent {
+                agent_id: Some(registration.agent_id),
+                host_id: Some(registration.host_id),
+                event_type: "agent_enrolled".to_string(),
+                event_json: json!({
+                    "agent_id": registration.agent_id,
+                    "host_id": registration.host_id
+                }),
+                recorded_at: registration.observed_at,
+            },
         )
         .await?;
         transaction.commit().await?;
@@ -356,6 +410,7 @@ impl AgentRepository<'_> {
             heartbeat.agent_id,
             heartbeat.host_id,
             heartbeat.observed_at,
+            "online",
         )
         .await?;
         entities::hosts::Entity::update_many()
@@ -529,17 +584,7 @@ pub struct EventRepository<'a> {
 
 impl EventRepository<'_> {
     pub async fn record(&self, event: NewAgentEvent) -> Result<(), DbErr> {
-        entities::agent_events::ActiveModel {
-            id: sea_orm::ActiveValue::NotSet,
-            host_id: Set(event.host_id),
-            agent_id: Set(event.agent_id),
-            event_type: Set(event.event_type),
-            event_json: Set(event.event_json),
-            recorded_at: Set(event.recorded_at.into()),
-        }
-        .insert(self.store.connection())
-        .await?;
-        Ok(())
+        insert_agent_event(self.store.connection(), event).await
     }
 }
 
@@ -694,6 +739,49 @@ impl UserRepository<'_> {
 
 pub struct RefreshTokenRepository<'a> {
     store: &'a Store,
+}
+
+pub struct EnrollmentTokenRepository<'a> {
+    store: &'a Store,
+}
+
+impl EnrollmentTokenRepository<'_> {
+    pub async fn create(&self, token: NewEnrollmentToken) -> Result<StoredEnrollmentToken, DbErr> {
+        let model = entities::enrollment_tokens::ActiveModel {
+            id: Set(token.id),
+            label: Set(token.label),
+            token_hash: Set(hash_token(&token.token)),
+            status: Set("active".to_string()),
+            expires_at: Set(token.expires_at.map(Into::into)),
+            used_at: Set(None),
+            used_by_agent_id: Set(None),
+            created_at: Set(token.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(stored_enrollment_token(model))
+    }
+
+    pub async fn find_by_token(&self, token: &str) -> Result<Option<StoredEnrollmentToken>, DbErr> {
+        let row = entities::enrollment_tokens::Entity::find()
+            .filter(entities::enrollment_tokens::Column::TokenHash.eq(hash_token(token)))
+            .one(self.store.connection())
+            .await?;
+        Ok(row.map(stored_enrollment_token))
+    }
+
+    pub async fn consume(
+        &self,
+        token: &str,
+        agent_id: Uuid,
+        at: DateTime<Utc>,
+    ) -> Result<StoredEnrollmentToken, DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        let model = find_active_enrollment_token(&transaction, token, at).await?;
+        consume_enrollment_token(&transaction, model.id, agent_id, at).await?;
+        transaction.commit().await?;
+        Ok(stored_enrollment_token(model))
+    }
 }
 
 impl RefreshTokenRepository<'_> {
@@ -859,6 +947,7 @@ async fn upsert_agent<C>(
     agent_id: Uuid,
     host_id: Uuid,
     observed_at: DateTime<Utc>,
+    status: &str,
 ) -> Result<(), DbErr>
 where
     C: ConnectionTrait,
@@ -866,7 +955,7 @@ where
     entities::agents::Entity::insert(entities::agents::ActiveModel {
         id: Set(agent_id),
         host_id: Set(host_id),
-        status: Set("online".to_string()),
+        status: Set(status.to_string()),
         version: Set(None),
         protocol_version: Set(Some(doro_protocol::PROTOCOL_VERSION.to_string())),
         last_seen_at: Set(Some(observed_at.into())),
@@ -1317,6 +1406,95 @@ fn stored_refresh_token(token: entities::refresh_tokens::Model) -> StoredRefresh
     }
 }
 
+fn stored_enrollment_token(token: entities::enrollment_tokens::Model) -> StoredEnrollmentToken {
+    StoredEnrollmentToken {
+        id: token.id,
+        label: token.label,
+        token_hash: token.token_hash,
+        status: token.status,
+        expires_at: token.expires_at.map(Into::into),
+        used_at: token.used_at.map(Into::into),
+        used_by_agent_id: token.used_by_agent_id,
+        created_at: token.created_at.into(),
+    }
+}
+
+async fn find_active_enrollment_token<C>(
+    connection: &C,
+    token: &str,
+    at: DateTime<Utc>,
+) -> Result<entities::enrollment_tokens::Model, DbErr>
+where
+    C: ConnectionTrait,
+{
+    let Some(model) = entities::enrollment_tokens::Entity::find()
+        .filter(entities::enrollment_tokens::Column::TokenHash.eq(hash_token(token)))
+        .one(connection)
+        .await?
+    else {
+        return Err(DbErr::Custom("enrollment token is invalid".to_string()));
+    };
+
+    if model.status != "active" || model.used_at.is_some() || model.used_by_agent_id.is_some() {
+        return Err(DbErr::Custom("enrollment token is not active".to_string()));
+    }
+
+    if model
+        .expires_at
+        .map(DateTime::<Utc>::from)
+        .is_some_and(|expires_at| expires_at <= at)
+    {
+        return Err(DbErr::Custom("enrollment token is expired".to_string()));
+    }
+
+    Ok(model)
+}
+
+async fn consume_enrollment_token<C>(
+    connection: &C,
+    token_id: Uuid,
+    agent_id: Uuid,
+    at: DateTime<Utc>,
+) -> Result<(), DbErr>
+where
+    C: ConnectionTrait,
+{
+    entities::enrollment_tokens::Entity::update_many()
+        .col_expr(
+            entities::enrollment_tokens::Column::Status,
+            sea_orm::sea_query::Expr::value("used"),
+        )
+        .col_expr(
+            entities::enrollment_tokens::Column::UsedAt,
+            sea_orm::sea_query::Expr::value(at),
+        )
+        .col_expr(
+            entities::enrollment_tokens::Column::UsedByAgentId,
+            sea_orm::sea_query::Expr::value(agent_id),
+        )
+        .filter(entities::enrollment_tokens::Column::Id.eq(token_id))
+        .exec(connection)
+        .await?;
+    Ok(())
+}
+
+async fn insert_agent_event<C>(connection: &C, event: NewAgentEvent) -> Result<(), DbErr>
+where
+    C: ConnectionTrait,
+{
+    entities::agent_events::ActiveModel {
+        id: sea_orm::ActiveValue::NotSet,
+        host_id: Set(event.host_id),
+        agent_id: Set(event.agent_id),
+        event_type: Set(event.event_type),
+        event_json: Set(event.event_json),
+        recorded_at: Set(event.recorded_at.into()),
+    }
+    .insert(connection)
+    .await?;
+    Ok(())
+}
+
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -1537,10 +1715,93 @@ mod tests {
         assert!(statements[0].ends_with(';'));
     }
 
+    #[test]
+    fn enrollment_token_hash_does_not_store_plaintext() {
+        let token = "enroll-secret";
+        let hash = hash_token(token);
+
+        assert_ne!(hash, token);
+        assert_eq!(hash.len(), 64);
+    }
+
+    #[tokio::test]
+    async fn rejects_used_enrollment_token() {
+        let model = enrollment_token_model(
+            "active",
+            None,
+            Some(Utc::now().into()),
+            Some(Uuid::new_v4()),
+        );
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .into_connection();
+
+        let error = find_active_enrollment_token(&connection, "token", Utc::now())
+            .await
+            .expect_err("used token should be rejected");
+
+        assert!(error.to_string().contains("not active"));
+    }
+
+    #[tokio::test]
+    async fn rejects_expired_enrollment_token() {
+        let model = enrollment_token_model(
+            "active",
+            Some((Utc::now() - chrono::Duration::seconds(1)).into()),
+            None,
+            None,
+        );
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .into_connection();
+
+        let error = find_active_enrollment_token(&connection, "token", Utc::now())
+            .await
+            .expect_err("expired token should be rejected");
+
+        assert!(error.to_string().contains("expired"));
+    }
+
+    #[tokio::test]
+    async fn consumes_active_enrollment_token() -> anyhow::Result<()> {
+        let model = enrollment_token_model("active", None, None, None);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .append_exec_results([mock_exec_result()])
+            .into_connection();
+
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+        let consumed = store
+            .enrollment_tokens()
+            .consume("token", Uuid::new_v4(), Utc::now())
+            .await?;
+
+        assert_eq!(consumed.status, "active");
+        Ok(())
+    }
+
     fn mock_exec_result() -> MockExecResult {
         MockExecResult {
             last_insert_id: 0,
             rows_affected: 0,
+        }
+    }
+
+    fn enrollment_token_model(
+        status: &str,
+        expires_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+        used_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+        used_by_agent_id: Option<Uuid>,
+    ) -> entities::enrollment_tokens::Model {
+        entities::enrollment_tokens::Model {
+            id: Uuid::new_v4(),
+            label: "local-agent".to_string(),
+            token_hash: hash_token("token"),
+            status: status.to_string(),
+            expires_at,
+            used_at,
+            used_by_agent_id,
+            created_at: Utc::now().into(),
         }
     }
 }
