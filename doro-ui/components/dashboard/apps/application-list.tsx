@@ -53,6 +53,8 @@ type ApplicationListProps = {
   applications: Application[];
   filter?: "all" | "installed" | "upgrade";
   compact?: boolean;
+  className?: string;
+  contentClassName?: string;
 };
 
 export function ApplicationList({
@@ -61,6 +63,8 @@ export function ApplicationList({
   applications,
   filter = "all",
   compact = false,
+  className,
+  contentClassName,
 }: ApplicationListProps) {
   const [applicationStates, setApplicationStates] = useState(
     () => new Map(applications.map((application) => [application.id, application.state])),
@@ -85,6 +89,8 @@ export function ApplicationList({
     <PageSection
       title={title}
       description={description}
+      className={className}
+      contentClassName={contentClassName}
       toolbar={
         compact ? (
           <Button size="sm" variant="outline">
