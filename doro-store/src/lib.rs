@@ -37,6 +37,8 @@ use std::str::FromStr;
 use std::time::Duration;
 use uuid::Uuid;
 
+const HOST_ONLINE_TTL_SECONDS: i64 = 90;
+
 pub mod entities;
 
 #[derive(Debug, Clone)]
@@ -331,12 +333,15 @@ impl HostRepository<'_> {
             })
             .collect();
 
+        let status = current_host_status(&host);
+        let last_seen_at = host.last_seen_at.map(Into::into);
+
         Ok(Host {
             id: host.id,
             hostname: host.hostname,
             labels: json_array_strings(host.labels),
-            status: parse_host_status(&host.status).unwrap_or(HostStatus::Pending),
-            last_seen_at: host.last_seen_at.map(Into::into),
+            status,
+            last_seen_at,
             capabilities,
         })
     }
@@ -437,6 +442,69 @@ impl AgentRepository<'_> {
             heartbeat.observed_at,
         )
         .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn mark_online(
+        &self,
+        agent_id: Uuid,
+        host_id: Uuid,
+        observed_at: DateTime<Utc>,
+    ) -> Result<(), DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        upsert_agent(&transaction, agent_id, host_id, observed_at, "online").await?;
+        entities::hosts::Entity::update_many()
+            .col_expr(
+                entities::hosts::Column::Status,
+                sea_orm::sea_query::Expr::value(serialize_host_status(HostStatus::Online)),
+            )
+            .col_expr(
+                entities::hosts::Column::LastSeenAt,
+                sea_orm::sea_query::Expr::value(observed_at),
+            )
+            .col_expr(
+                entities::hosts::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(Utc::now()),
+            )
+            .filter(entities::hosts::Column::Id.eq(host_id))
+            .exec(&transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    pub async fn mark_offline(
+        &self,
+        agent_id: Uuid,
+        host_id: Uuid,
+        observed_at: DateTime<Utc>,
+    ) -> Result<(), DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        entities::agents::Entity::update_many()
+            .col_expr(
+                entities::agents::Column::Status,
+                sea_orm::sea_query::Expr::value("offline"),
+            )
+            .col_expr(
+                entities::agents::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(Utc::now()),
+            )
+            .filter(entities::agents::Column::Id.eq(agent_id))
+            .exec(&transaction)
+            .await?;
+        entities::hosts::Entity::update_many()
+            .col_expr(
+                entities::hosts::Column::Status,
+                sea_orm::sea_query::Expr::value(serialize_host_status(HostStatus::Offline)),
+            )
+            .col_expr(
+                entities::hosts::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(observed_at),
+            )
+            .filter(entities::hosts::Column::Id.eq(host_id))
+            .exec(&transaction)
+            .await?;
         transaction.commit().await?;
         Ok(())
     }
@@ -1533,6 +1601,23 @@ fn parse_host_status(value: &str) -> Option<HostStatus> {
     }
 }
 
+fn current_host_status(host: &entities::hosts::Model) -> HostStatus {
+    let status = parse_host_status(&host.status).unwrap_or(HostStatus::Pending);
+    if status != HostStatus::Online {
+        return status;
+    }
+
+    let Some(last_seen_at) = host.last_seen_at.map(DateTime::<Utc>::from) else {
+        return HostStatus::Offline;
+    };
+
+    if Utc::now().signed_duration_since(last_seen_at).num_seconds() > HOST_ONLINE_TTL_SECONDS {
+        return HostStatus::Offline;
+    }
+
+    HostStatus::Online
+}
+
 fn serialize_task_status(status: TaskStatus) -> String {
     match status {
         TaskStatus::Draft => "draft",
@@ -1716,6 +1801,16 @@ mod tests {
     }
 
     #[test]
+    fn online_host_expires_when_last_seen_is_stale() {
+        let mut host = host_model("online", Some(Utc::now().into()));
+        assert_eq!(current_host_status(&host), HostStatus::Online);
+
+        host.last_seen_at =
+            Some((Utc::now() - chrono::Duration::seconds(HOST_ONLINE_TTL_SECONDS + 1)).into());
+        assert_eq!(current_host_status(&host), HostStatus::Offline);
+    }
+
+    #[test]
     fn enrollment_token_hash_does_not_store_plaintext() {
         let token = "enroll-secret";
         let hash = hash_token(token);
@@ -1784,6 +1879,22 @@ mod tests {
         MockExecResult {
             last_insert_id: 0,
             rows_affected: 0,
+        }
+    }
+
+    fn host_model(
+        status: &str,
+        last_seen_at: Option<chrono::DateTime<chrono::FixedOffset>>,
+    ) -> entities::hosts::Model {
+        entities::hosts::Model {
+            id: Uuid::new_v4(),
+            hostname: "homelab-node".to_string(),
+            display_name: "homelab-node".to_string(),
+            status: status.to_string(),
+            labels: json!(["agent"]),
+            last_seen_at,
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
         }
     }
 

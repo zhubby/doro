@@ -915,6 +915,7 @@ dependencies = [
  "doro-protocol",
  "doro-store",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing-subscriber",
  "uuid",

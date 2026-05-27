@@ -35,7 +35,7 @@ The initial service surface is:
 - `ReportHeartbeat`: report liveness and current capability declarations.
 - `OpenAgentStream`: bidirectional stream where agents send `AgentEvent` messages and receive `ControlPlaneCommand` messages.
 
-The first stream implementation sends `connected` and periodic `heartbeat` events. The control plane responds with an `ack` command and persists inbound events. Task dispatch over this stream is intentionally deferred until task routing and command acknowledgements are implemented.
+The first stream implementation is a long-lived outbound session. The agent sends `connected` and periodic `heartbeat` events. The control plane responds with an `ack` command and persists inbound events. If the connection fails or the stream closes, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds. Task dispatch over this stream is intentionally deferred until task routing and command acknowledgements are implemented.
 
 ## Persistence
 

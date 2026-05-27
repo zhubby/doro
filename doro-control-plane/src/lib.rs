@@ -309,8 +309,32 @@ impl AgentControlPlane for GrpcAgentService {
     ) -> Result<Response<Self::OpenAgentStreamStream>, Status> {
         let store = self.store.clone();
         let mut inbound = request.into_inner();
+        let (sender, receiver) = mpsc::channel(8);
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            kind: "ack".to_string(),
+            payload_json: serde_json::json!({
+                "message": "grpc agent stream connected"
+            })
+            .to_string(),
+            requires_approval: false,
+        };
+        if sender.send(Ok(command)).await.is_err() {
+            tracing::warn!("failed to enqueue initial grpc command");
+        }
+
         tokio::spawn(async move {
-            while let Ok(Some(event)) = inbound.message().await {
+            let _keep_command_stream_open = sender;
+            let mut connected_agent: Option<(Uuid, Uuid)> = None;
+            loop {
+                let event = match inbound.message().await {
+                    Ok(Some(event)) => event,
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::warn!(%error, "agent stream receive failed");
+                        break;
+                    }
+                };
                 let recorded_at = event
                     .recorded_at
                     .as_ref()
@@ -324,6 +348,18 @@ impl AgentControlPlane for GrpcAgentService {
                 } else {
                     event.kind.clone()
                 };
+                if matches!(event_type.as_str(), "connected" | "heartbeat") {
+                    if let (Some(agent_id), Some(host_id)) = (agent_id, host_id) {
+                        connected_agent = Some((agent_id, host_id));
+                        if let Err(error) = store
+                            .agents()
+                            .mark_online(agent_id, host_id, recorded_at)
+                            .await
+                        {
+                            tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
+                        }
+                    }
+                }
 
                 if let Err(error) = store
                     .events()
@@ -343,21 +379,34 @@ impl AgentControlPlane for GrpcAgentService {
                     tracing::warn!(%error, "failed to persist agent stream event");
                 }
             }
-        });
 
-        let (sender, receiver) = mpsc::channel(8);
-        let command = grpc::ControlPlaneCommand {
-            command_id: Uuid::new_v4().to_string(),
-            kind: "ack".to_string(),
-            payload_json: serde_json::json!({
-                "message": "grpc agent stream connected"
-            })
-            .to_string(),
-            requires_approval: false,
-        };
-        if sender.send(Ok(command)).await.is_err() {
-            tracing::warn!("failed to enqueue initial grpc command");
-        }
+            if let Some((agent_id, host_id)) = connected_agent {
+                let recorded_at = Utc::now();
+                if let Err(error) = store
+                    .agents()
+                    .mark_offline(agent_id, host_id, recorded_at)
+                    .await
+                {
+                    tracing::warn!(%error, "failed to mark disconnected agent offline");
+                }
+                if let Err(error) = store
+                    .events()
+                    .record(NewAgentEvent {
+                        agent_id: Some(agent_id),
+                        host_id: Some(host_id),
+                        event_type: "agent_disconnected".to_string(),
+                        event_json: serde_json::json!({
+                            "agent_id": agent_id,
+                            "host_id": host_id
+                        }),
+                        recorded_at,
+                    })
+                    .await
+                {
+                    tracing::warn!(%error, "failed to persist agent disconnect event");
+                }
+            }
+        });
 
         Ok(Response::new(ReceiverStream::new(receiver)))
     }

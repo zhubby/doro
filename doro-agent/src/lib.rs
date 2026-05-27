@@ -17,6 +17,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
+const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
     pub agent_id: Option<Uuid>,
@@ -162,24 +165,46 @@ impl Agent {
 pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()> {
     let mut persisted_config = loaded_config.config;
     let mut agent = Agent::new(AgentConfig::from_config(&persisted_config.agent));
+    let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
+
+    loop {
+        match run_session(&loaded_config.path, &mut persisted_config, &mut agent).await {
+            Ok(()) => {
+                reconnect_delay = INITIAL_RECONNECT_DELAY;
+                tracing::warn!(
+                    delay_seconds = reconnect_delay.as_secs(),
+                    "agent session ended; reconnecting"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    delay_seconds = reconnect_delay.as_secs(),
+                    "agent session failed; reconnecting"
+                );
+            }
+        }
+
+        tokio::time::sleep(reconnect_delay).await;
+        reconnect_delay = next_reconnect_delay(reconnect_delay);
+    }
+}
+
+async fn run_session(
+    config_path: &PathBuf,
+    persisted_config: &mut doro_config::DoroConfig,
+    agent: &mut Agent,
+) -> anyhow::Result<()> {
     let mut client =
         AgentControlPlaneClient::connect(agent.config.control_plane_url.clone()).await?;
-    let agent_id = ensure_registered(
-        &mut client,
-        &mut persisted_config,
-        &loaded_config.path,
-        &mut agent,
-    )
-    .await?;
+    let agent_id = ensure_registered(client.clone(), persisted_config, config_path, agent).await?;
 
-    report_heartbeat(&mut client, &agent, agent_id).await?;
-    open_agent_stream(client, agent, agent_id).await?;
-
-    Ok(())
+    report_heartbeat(&mut client, agent, agent_id).await?;
+    open_agent_stream(client, agent.clone(), agent_id).await
 }
 
 async fn ensure_registered(
-    client: &mut AgentControlPlaneClient<Channel>,
+    mut client: AgentControlPlaneClient<Channel>,
     persisted_config: &mut doro_config::DoroConfig,
     config_path: &PathBuf,
     agent: &mut Agent,
@@ -270,7 +295,11 @@ async fn open_agent_stream(
         handle_command(command);
     }
 
-    anyhow::bail!("agent stream closed by control plane")
+    anyhow::bail!("agent stream closed")
+}
+
+fn next_reconnect_delay(current: Duration) -> Duration {
+    (current * 2).min(MAX_RECONNECT_DELAY)
 }
 
 fn handle_command(command: grpc::ControlPlaneCommand) {
@@ -351,5 +380,21 @@ mod tests {
             payload_json: "{}".to_string(),
             requires_approval: false,
         });
+    }
+
+    #[test]
+    fn reconnect_delay_backs_off_to_cap() {
+        assert_eq!(
+            next_reconnect_delay(Duration::from_secs(2)),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            next_reconnect_delay(Duration::from_secs(20)),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            next_reconnect_delay(Duration::from_secs(30)),
+            Duration::from_secs(30)
+        );
     }
 }

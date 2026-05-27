@@ -21,7 +21,26 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Run the local host agent.
-    Agent,
+    Agent {
+        /// Control-plane gRPC URL, for example http://127.0.0.1:8788.
+        #[arg(long, value_name = "URL")]
+        control_plane_url: Option<String>,
+        /// Hostname to declare during enrollment and heartbeats.
+        #[arg(long, value_name = "NAME")]
+        hostname: Option<String>,
+        /// One-time enrollment token printed by `doro enrollment-token`.
+        #[arg(long, value_name = "TOKEN")]
+        enrollment_token: Option<String>,
+        /// Previously enrolled agent id.
+        #[arg(long, value_name = "UUID")]
+        agent_id: Option<uuid::Uuid>,
+        /// Previously enrolled host id.
+        #[arg(long, value_name = "UUID")]
+        host_id: Option<uuid::Uuid>,
+        /// Heartbeat interval in seconds.
+        #[arg(long, value_name = "SECONDS")]
+        heartbeat_interval_seconds: Option<u64>,
+    },
     /// Run the control-plane HTTP API and Agent gRPC service.
     ControlPlane,
     /// Print local development status and configured project surfaces.
@@ -61,9 +80,27 @@ async fn main() -> anyhow::Result<()> {
     let loaded_config = doro_config::load_or_create(cli.config.as_deref())?;
 
     match cli.command {
-        Command::Agent => {
+        Command::Agent {
+            control_plane_url,
+            hostname,
+            enrollment_token,
+            agent_id,
+            host_id,
+            heartbeat_interval_seconds,
+        } => {
             init_logging(cli.log_level)?;
-            doro_agent::run(loaded_config).await?;
+            doro_agent::run(apply_agent_overrides(
+                loaded_config,
+                AgentOverrides {
+                    control_plane_url,
+                    hostname,
+                    enrollment_token,
+                    agent_id,
+                    host_id,
+                    heartbeat_interval_seconds,
+                },
+            ))
+            .await?;
         }
         Command::ControlPlane => {
             init_logging(cli.log_level)?;
@@ -119,6 +156,42 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Default)]
+struct AgentOverrides {
+    control_plane_url: Option<String>,
+    hostname: Option<String>,
+    enrollment_token: Option<String>,
+    agent_id: Option<uuid::Uuid>,
+    host_id: Option<uuid::Uuid>,
+    heartbeat_interval_seconds: Option<u64>,
+}
+
+fn apply_agent_overrides(
+    mut loaded_config: doro_config::LoadedConfig,
+    overrides: AgentOverrides,
+) -> doro_config::LoadedConfig {
+    if let Some(control_plane_url) = overrides.control_plane_url {
+        loaded_config.config.agent.control_plane_url = control_plane_url;
+    }
+    if let Some(hostname) = overrides.hostname {
+        loaded_config.config.agent.hostname = hostname;
+    }
+    if let Some(enrollment_token) = overrides.enrollment_token {
+        loaded_config.config.agent.enrollment_token = Some(enrollment_token);
+    }
+    if let Some(agent_id) = overrides.agent_id {
+        loaded_config.config.agent.agent_id = Some(agent_id);
+    }
+    if let Some(host_id) = overrides.host_id {
+        loaded_config.config.agent.host_id = Some(host_id);
+    }
+    if let Some(heartbeat_interval_seconds) = overrides.heartbeat_interval_seconds {
+        loaded_config.config.agent.heartbeat_interval_seconds = heartbeat_interval_seconds;
+    }
+
+    loaded_config
+}
+
 fn init_logging(log_level: Option<LogLevel>) -> anyhow::Result<()> {
     let env_filter = match log_level {
         Some(log_level) => tracing_subscriber::EnvFilter::try_new(default_log_filter(log_level))?,
@@ -164,8 +237,92 @@ mod tests {
             Err(error) => panic!("agent command should parse: {error}"),
         };
 
-        assert!(matches!(cli.command, Command::Agent));
+        assert!(matches!(cli.command, Command::Agent { .. }));
         assert!(cli.log_level.is_none());
+    }
+
+    #[test]
+    fn parses_agent_cli_overrides() {
+        let agent_id = uuid::Uuid::new_v4();
+        let host_id = uuid::Uuid::new_v4();
+        let cli = match Cli::try_parse_from([
+            "doro",
+            "agent",
+            "--control-plane-url",
+            "http://127.0.0.1:9001",
+            "--hostname",
+            "edge-node",
+            "--enrollment-token",
+            "token-value",
+            "--agent-id",
+            &agent_id.to_string(),
+            "--host-id",
+            &host_id.to_string(),
+            "--heartbeat-interval-seconds",
+            "15",
+        ]) {
+            Ok(cli) => cli,
+            Err(error) => panic!("agent command with overrides should parse: {error}"),
+        };
+
+        let Command::Agent {
+            control_plane_url,
+            hostname,
+            enrollment_token,
+            agent_id: parsed_agent_id,
+            host_id: parsed_host_id,
+            heartbeat_interval_seconds,
+        } = cli.command
+        else {
+            panic!("expected agent command");
+        };
+
+        assert_eq!(control_plane_url.as_deref(), Some("http://127.0.0.1:9001"));
+        assert_eq!(hostname.as_deref(), Some("edge-node"));
+        assert_eq!(enrollment_token.as_deref(), Some("token-value"));
+        assert_eq!(parsed_agent_id, Some(agent_id));
+        assert_eq!(parsed_host_id, Some(host_id));
+        assert_eq!(heartbeat_interval_seconds, Some(15));
+    }
+
+    #[test]
+    fn applies_agent_cli_overrides_to_loaded_config() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("config.toml");
+        let agent_id = uuid::Uuid::new_v4();
+        let host_id = uuid::Uuid::new_v4();
+        let loaded_config = doro_config::LoadedConfig {
+            path,
+            config: doro_config::DoroConfig::default(),
+            created: false,
+        };
+
+        let loaded_config = apply_agent_overrides(
+            loaded_config,
+            AgentOverrides {
+                control_plane_url: Some("http://control-plane:8788".to_string()),
+                hostname: Some("edge-node".to_string()),
+                enrollment_token: Some("token-value".to_string()),
+                agent_id: Some(agent_id),
+                host_id: Some(host_id),
+                heartbeat_interval_seconds: Some(15),
+            },
+        );
+
+        assert_eq!(
+            loaded_config.config.agent.control_plane_url,
+            "http://control-plane:8788"
+        );
+        assert_eq!(loaded_config.config.agent.hostname, "edge-node");
+        assert_eq!(
+            loaded_config.config.agent.enrollment_token.as_deref(),
+            Some("token-value")
+        );
+        assert_eq!(loaded_config.config.agent.agent_id, Some(agent_id));
+        assert_eq!(loaded_config.config.agent.host_id, Some(host_id));
+        assert_eq!(loaded_config.config.agent.heartbeat_interval_seconds, 15);
+
+        Ok(())
     }
 
     #[test]
