@@ -9,18 +9,25 @@ use doro_ai::AiPlanRequest;
 use doro_ai::DeterministicPlanner;
 use doro_ai::PlanProvider;
 use doro_protocol::AgentCapability;
+use doro_protocol::AppSummary;
 use doro_protocol::ApprovalRequest;
 use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
+use doro_protocol::CreateTaskRequest;
+use doro_protocol::HealthResponse;
 use doro_protocol::Host;
 use doro_protocol::HostStatus;
+use doro_protocol::ListApprovalsResponse;
+use doro_protocol::ListAppsResponse;
+use doro_protocol::ListHostsResponse;
+use doro_protocol::ListTasksResponse;
 use doro_protocol::MetricSnapshot;
+use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use futures_util::StreamExt;
-use serde::Deserialize;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
@@ -151,23 +158,23 @@ impl AppState {
     }
 }
 
-async fn health() -> Json<serde_json::Value> {
-    Json(serde_json::json!({ "status": "ok", "service": "doro-control-plane" }))
+async fn health() -> Json<HealthResponse> {
+    Json(HealthResponse {
+        status: "ok".to_string(),
+        service: "doro-control-plane".to_string(),
+    })
 }
 
-async fn list_hosts(State(state): State<AppState>) -> Json<Vec<Host>> {
-    Json(state.hosts.read().await.clone())
+async fn list_hosts(State(state): State<AppState>) -> Json<ListHostsResponse> {
+    Json(ListHostsResponse {
+        items: state.hosts.read().await.clone(),
+    })
 }
 
-async fn list_tasks(State(state): State<AppState>) -> Json<Vec<Task>> {
-    Json(state.tasks.read().await.clone())
-}
-
-#[derive(Debug, Deserialize)]
-struct CreateTaskRequest {
-    title: String,
-    host_id: Option<Uuid>,
-    prompt: Option<String>,
+async fn list_tasks(State(state): State<AppState>) -> Json<ListTasksResponse> {
+    Json(ListTasksResponse {
+        items: state.tasks.read().await.clone(),
+    })
 }
 
 async fn create_task(
@@ -198,26 +205,43 @@ async fn create_task(
     Json(task)
 }
 
-async fn list_approvals(State(state): State<AppState>) -> Json<Vec<ApprovalRequest>> {
-    Json(state.approvals.read().await.clone())
+async fn list_approvals(State(state): State<AppState>) -> Json<ListApprovalsResponse> {
+    Json(ListApprovalsResponse {
+        items: state.approvals.read().await.clone(),
+    })
 }
 
-async fn list_apps() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "items": [
-            { "id": "openresty", "name": "OpenResty", "category": "website", "status": "planned" },
-            { "id": "mysql", "name": "MySQL", "category": "database", "status": "planned" },
-            { "id": "redis", "name": "Redis", "category": "database", "status": "planned" }
-        ]
-    }))
+async fn list_apps() -> Json<ListAppsResponse> {
+    Json(ListAppsResponse {
+        items: vec![
+            AppSummary {
+                id: "openresty".to_string(),
+                name: "OpenResty".to_string(),
+                category: "website".to_string(),
+                status: "planned".to_string(),
+            },
+            AppSummary {
+                id: "mysql".to_string(),
+                name: "MySQL".to_string(),
+                category: "database".to_string(),
+                status: "planned".to_string(),
+            },
+            AppSummary {
+                id: "redis".to_string(),
+                name: "Redis".to_string(),
+                category: "database".to_string(),
+                status: "planned".to_string(),
+            },
+        ],
+    })
 }
 
-async fn settings() -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "approval_policy": "policy_and_human_approval",
-        "agent_transport": "grpc_protobuf",
-        "database": "sqlite"
-    }))
+async fn settings() -> Json<SettingsResponse> {
+    Json(SettingsResponse {
+        approval_policy: "policy_and_human_approval".to_string(),
+        agent_transport: "grpc_protobuf".to_string(),
+        database: "sqlite".to_string(),
+    })
 }
 
 async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {

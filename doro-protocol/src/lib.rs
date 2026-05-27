@@ -3,6 +3,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use ts_rs::TS;
 use uuid::Uuid;
 
 pub const PROTOCOL_VERSION: &str = "v1";
@@ -19,13 +20,15 @@ pub fn protobuf_timestamp_now() -> prost_types::Timestamp {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "EnrollmentToken.ts")]
 pub struct EnrollmentToken {
     pub id: Uuid,
     pub label: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "Host.ts")]
 pub struct Host {
     pub id: Uuid,
     pub hostname: String,
@@ -35,8 +38,9 @@ pub struct Host {
     pub capabilities: Vec<AgentCapability>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "HostStatus.ts")]
 pub enum HostStatus {
     Pending,
     Online,
@@ -44,15 +48,17 @@ pub enum HostStatus {
     Offline,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AgentCapability.ts")]
 pub struct AgentCapability {
     pub name: CapabilityName,
     pub risk: CapabilityRisk,
     pub description: String,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "CapabilityName.ts")]
 pub enum CapabilityName {
     MetricsRead,
     LogsRead,
@@ -65,15 +71,17 @@ pub enum CapabilityName {
     DatabaseRestore,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "CapabilityRisk.ts")]
 pub enum CapabilityRisk {
     Low,
     Medium,
     High,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "Task.ts")]
 pub struct Task {
     pub id: Uuid,
     pub host_id: Option<Uuid>,
@@ -83,8 +91,9 @@ pub struct Task {
     pub steps: Vec<TaskStep>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "TaskStatus.ts")]
 pub enum TaskStatus {
     Draft,
     WaitingApproval,
@@ -95,7 +104,8 @@ pub enum TaskStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "TaskStep.ts")]
 pub struct TaskStep {
     pub id: Uuid,
     pub capability: CapabilityName,
@@ -104,7 +114,8 @@ pub struct TaskStep {
     pub payload: Value,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ApprovalRequest.ts")]
 pub struct ApprovalRequest {
     pub id: Uuid,
     pub task_id: Uuid,
@@ -114,8 +125,9 @@ pub struct ApprovalRequest {
     pub requested_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "ApprovalStatus.ts")]
 pub enum ApprovalStatus {
     Pending,
     Approved,
@@ -123,7 +135,8 @@ pub enum ApprovalStatus {
     Expired,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "MetricSnapshot.ts")]
 pub struct MetricSnapshot {
     pub host_id: Uuid,
     pub captured_at: DateTime<Utc>,
@@ -133,8 +146,9 @@ pub struct MetricSnapshot {
     pub load_average: f32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
+#[ts(export_to = "AgentEvent.ts")]
 pub enum AgentEvent {
     Connected {
         host_id: Uuid,
@@ -158,6 +172,62 @@ pub enum AgentEvent {
     ApprovalRequired(ApprovalRequest),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateTaskRequest.ts")]
+pub struct CreateTaskRequest {
+    pub title: String,
+    pub host_id: Option<Uuid>,
+    pub prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListHostsResponse.ts")]
+pub struct ListHostsResponse {
+    pub items: Vec<Host>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListTasksResponse.ts")]
+pub struct ListTasksResponse {
+    pub items: Vec<Task>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListApprovalsResponse.ts")]
+pub struct ListApprovalsResponse {
+    pub items: Vec<ApprovalRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AppSummary.ts")]
+pub struct AppSummary {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListAppsResponse.ts")]
+pub struct ListAppsResponse {
+    pub items: Vec<AppSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "SettingsResponse.ts")]
+pub struct SettingsResponse {
+    pub approval_policy: String,
+    pub agent_transport: String,
+    pub database: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "HealthResponse.ts")]
+pub struct HealthResponse {
+    pub status: String,
+    pub service: String,
+}
+
 pub fn high_risk_capabilities() -> Vec<CapabilityName> {
     vec![
         CapabilityName::ShellExecute,
@@ -172,6 +242,8 @@ pub fn high_risk_capabilities() -> Vec<CapabilityName> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ts_rs::Config;
+    use ts_rs::TS;
 
     #[test]
     fn high_risk_capabilities_include_shell_execution() {
@@ -193,5 +265,32 @@ mod tests {
     #[test]
     fn protobuf_timestamp_uses_current_epoch_time() {
         assert!(protobuf_timestamp_now().seconds > 0);
+    }
+
+    #[test]
+    fn exports_typescript_bindings_for_ui_rest_contract() {
+        let cfg = Config::new().with_out_dir("../doro-ui/types/generated");
+
+        assert!(EnrollmentToken::export_all(&cfg).is_ok());
+        assert!(Host::export_all(&cfg).is_ok());
+        assert!(HostStatus::export_all(&cfg).is_ok());
+        assert!(AgentCapability::export_all(&cfg).is_ok());
+        assert!(CapabilityName::export_all(&cfg).is_ok());
+        assert!(CapabilityRisk::export_all(&cfg).is_ok());
+        assert!(Task::export_all(&cfg).is_ok());
+        assert!(TaskStatus::export_all(&cfg).is_ok());
+        assert!(TaskStep::export_all(&cfg).is_ok());
+        assert!(ApprovalRequest::export_all(&cfg).is_ok());
+        assert!(ApprovalStatus::export_all(&cfg).is_ok());
+        assert!(MetricSnapshot::export_all(&cfg).is_ok());
+        assert!(AgentEvent::export_all(&cfg).is_ok());
+        assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(ListHostsResponse::export_all(&cfg).is_ok());
+        assert!(ListTasksResponse::export_all(&cfg).is_ok());
+        assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
+        assert!(AppSummary::export_all(&cfg).is_ok());
+        assert!(ListAppsResponse::export_all(&cfg).is_ok());
+        assert!(SettingsResponse::export_all(&cfg).is_ok());
+        assert!(HealthResponse::export_all(&cfg).is_ok());
     }
 }

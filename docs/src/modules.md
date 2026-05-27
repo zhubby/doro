@@ -2,7 +2,7 @@
 
 ## Rust Crates
 
-`doro-protocol` contains shared wire types and lifecycle vocabulary. Public protocol changes should start here.
+`doro-protocol` contains shared wire types, lifecycle vocabulary, generated tonic/prost gRPC types, and ts-rs TypeScript bindings for UI REST contracts. Public protocol changes should start here.
 
 `doro-control-plane` exposes `/api/v1`, owns task orchestration, serves UI-facing state, receives agent connections, and emits events.
 
@@ -18,4 +18,4 @@
 
 `doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, apps, websites, containers, databases, logs, AI, and settings.
 
-The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state.
+The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state. UI API types should come from `doro-ui/types/api.ts`, which re-exports ts-rs bindings generated from `doro-protocol`.
