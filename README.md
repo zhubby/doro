@@ -16,7 +16,7 @@ Doro is not a Codex CLI fork. The previous Codex-derived files were removed from
 - `doro-control-plane` - console API, event stream, and agent connection surface.
 - `doro-agent` - host daemon skeleton for registration, heartbeat, metrics, and task execution.
 - `doro-store` - Postgres persistence boundary using SeaORM.
-- `doro-config` - TOML configuration loading, defaults, and `~/.doro/config.toml` creation.
+- `doro-config` - TOML configuration loading and defaults for `~/.doro/control-plane.toml` and `~/.doro/agent.toml`.
 - `doro-ai` - AI planning/provider abstraction that never bypasses policy or approval.
 - `doro-cli` - Doro operations CLI.
 - `doro-ui` - Next.js frontend.

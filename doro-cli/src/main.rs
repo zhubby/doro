@@ -1,12 +1,13 @@
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+use std::fmt::Write;
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Doro home-server control-plane CLI")]
 struct Cli {
-    /// Path to the config file. Defaults to ~/.doro/config.toml.
+    /// Path to this subcommand's config file.
     #[arg(long, global = true, value_name = "PATH")]
     config: Option<PathBuf>,
 
@@ -71,7 +72,6 @@ impl LogLevel {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let loaded_config = doro_config::load_or_create(cli.config.as_deref())?;
 
     match cli.command {
         Command::Agent {
@@ -83,6 +83,7 @@ async fn main() -> anyhow::Result<()> {
             heartbeat_interval_seconds,
         } => {
             init_logging(cli.log_level)?;
+            let loaded_config = doro_config::load_or_create_agent_config(cli.config.as_deref())?;
             doro_agent::run(apply_agent_overrides(
                 loaded_config,
                 AgentOverrides {
@@ -98,36 +99,15 @@ async fn main() -> anyhow::Result<()> {
         }
         Command::ControlPlane => {
             init_logging(cli.log_level)?;
+            let loaded_config =
+                doro_config::load_or_create_control_plane_config(cli.config.as_deref())?;
             doro_control_plane::run(loaded_config.config).await?;
         }
         Command::Status => {
-            println!("Doro control plane workspace");
-            println!("config: {}", loaded_config.path.display());
-            if loaded_config.created {
-                println!("config_created: true");
-            }
-            println!("api: /api/v1");
-            println!("console: {}", loaded_config.config.server.console_bind);
-            println!("agent: {}", loaded_config.config.server.agent_bind);
-            println!("store backend: {}", loaded_config.config.store.backend);
-            println!(
-                "store database_url: {}",
-                redact_database_url(&loaded_config.config.store.database_url)
-            );
-            println!(
-                "store pool: min={} max={}",
-                loaded_config.config.store.min_connections,
-                loaded_config.config.store.max_connections
-            );
-            println!(
-                "agent protocol: doro.agent.v1.AgentControlPlane on {}",
-                loaded_config.config.server.agent_bind
-            );
-            println!(
-                "agent default: {}",
-                loaded_config.config.agent.control_plane_url
-            );
-            println!("docs: docs/");
+            let control_plane_config =
+                doro_config::load_or_create_control_plane_config(cli.config.as_deref())?;
+            let agent_config = doro_config::load_or_create_agent_config(None)?;
+            print!("{}", status_output(&control_plane_config, &agent_config)?);
         }
     }
 
@@ -145,9 +125,9 @@ struct AgentOverrides {
 }
 
 fn apply_agent_overrides(
-    mut loaded_config: doro_config::LoadedConfig,
+    mut loaded_config: doro_config::LoadedAgentConfig,
     overrides: AgentOverrides,
-) -> doro_config::LoadedConfig {
+) -> doro_config::LoadedAgentConfig {
     if let Some(control_plane_url) = overrides.control_plane_url {
         loaded_config.config.agent.control_plane_url = control_plane_url;
     }
@@ -190,6 +170,75 @@ fn init_logging(log_level: Option<LogLevel>) -> anyhow::Result<()> {
 fn default_log_filter(log_level: LogLevel) -> String {
     let level = log_level.as_str();
     format!("doro_cli={level},doro_agent={level},doro_control_plane={level},tower_http={level}")
+}
+
+fn status_output(
+    control_plane_config: &doro_config::LoadedControlPlaneConfig,
+    agent_config: &doro_config::LoadedAgentConfig,
+) -> anyhow::Result<String> {
+    let mut output = String::new();
+    writeln!(output, "Doro control plane workspace")?;
+    writeln!(
+        output,
+        "control_plane_config: {}",
+        control_plane_config.path.display()
+    )?;
+    if control_plane_config.created {
+        writeln!(output, "control_plane_config_created: true")?;
+    }
+    writeln!(output, "api: /api/v1")?;
+    writeln!(
+        output,
+        "console: {}",
+        control_plane_config.config.server.console_bind
+    )?;
+    writeln!(
+        output,
+        "agent: {}",
+        control_plane_config.config.server.agent_bind
+    )?;
+    writeln!(
+        output,
+        "store backend: {}",
+        control_plane_config.config.store.backend
+    )?;
+    writeln!(
+        output,
+        "store database_url: {}",
+        redact_database_url(&control_plane_config.config.store.database_url)
+    )?;
+    writeln!(
+        output,
+        "store pool: min={} max={}",
+        control_plane_config.config.store.min_connections,
+        control_plane_config.config.store.max_connections
+    )?;
+    writeln!(
+        output,
+        "agent protocol: doro.agent.v1.AgentControlPlane on {}",
+        control_plane_config.config.server.agent_bind
+    )?;
+    writeln!(output, "agent_config: {}", agent_config.path.display())?;
+    if agent_config.created {
+        writeln!(output, "agent_config_created: true")?;
+    }
+    writeln!(
+        output,
+        "agent control_plane_url: {}",
+        agent_config.config.agent.control_plane_url
+    )?;
+    writeln!(
+        output,
+        "agent hostname: {}",
+        agent_config.config.agent.hostname
+    )?;
+    writeln!(
+        output,
+        "agent enrolled: {}",
+        agent_config.config.agent.agent_id.is_some() && agent_config.config.agent.host_id.is_some()
+    )?;
+    writeln!(output, "docs: docs/")?;
+    Ok(output)
 }
 
 fn redact_database_url(database_url: &str) -> String {
@@ -268,12 +317,12 @@ mod tests {
     #[test]
     fn applies_agent_cli_overrides_to_loaded_config() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("config.toml");
+        let path = dir.path().join("agent.toml");
         let agent_id = uuid::Uuid::new_v4();
         let host_id = uuid::Uuid::new_v4();
-        let loaded_config = doro_config::LoadedConfig {
+        let loaded_config = doro_config::LoadedAgentConfig {
             path,
-            config: doro_config::DoroConfig::default(),
+            config: doro_config::AgentFileConfig::default(),
             created: false,
         };
 
@@ -308,17 +357,16 @@ mod tests {
     #[test]
     fn enrollment_token_override_resets_persisted_identity() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("config.toml");
-        let loaded_config = doro_config::LoadedConfig {
+        let path = dir.path().join("agent.toml");
+        let loaded_config = doro_config::LoadedAgentConfig {
             path,
-            config: doro_config::DoroConfig {
+            config: doro_config::AgentFileConfig {
                 agent: doro_config::AgentConfig {
                     enrollment_token: Some("old-token".to_string()),
                     agent_id: Some(uuid::Uuid::new_v4()),
                     host_id: Some(uuid::Uuid::new_v4()),
                     ..doro_config::AgentConfig::default()
                 },
-                ..doro_config::DoroConfig::default()
             },
             created: false,
         };
@@ -360,6 +408,49 @@ mod tests {
     #[test]
     fn rejects_enrollment_token_subcommand() {
         assert!(Cli::try_parse_from(["doro", "enrollment-token", "edge-node"]).is_err());
+    }
+
+    #[test]
+    fn parses_config_path_as_subcommand_config() {
+        let cli = match Cli::try_parse_from(["doro", "--config", "/tmp/custom-agent.toml", "agent"])
+        {
+            Ok(cli) => cli,
+            Err(error) => panic!("agent command with config should parse: {error}"),
+        };
+
+        assert_eq!(cli.config, Some(PathBuf::from("/tmp/custom-agent.toml")));
+        assert!(matches!(cli.command, Command::Agent { .. }));
+    }
+
+    #[test]
+    fn status_output_reports_split_configs() -> anyhow::Result<()> {
+        let control_plane_config = doro_config::LoadedControlPlaneConfig {
+            path: PathBuf::from("/tmp/control-plane.toml"),
+            config: doro_config::ControlPlaneConfig::default(),
+            created: true,
+        };
+        let agent_id = uuid::Uuid::new_v4();
+        let host_id = uuid::Uuid::new_v4();
+        let agent_config = doro_config::LoadedAgentConfig {
+            path: PathBuf::from("/tmp/agent.toml"),
+            config: doro_config::AgentFileConfig {
+                agent: doro_config::AgentConfig {
+                    agent_id: Some(agent_id),
+                    host_id: Some(host_id),
+                    ..doro_config::AgentConfig::default()
+                },
+            },
+            created: false,
+        };
+
+        let output = status_output(&control_plane_config, &agent_config)?;
+
+        assert!(output.contains("control_plane_config: /tmp/control-plane.toml"));
+        assert!(output.contains("control_plane_config_created: true"));
+        assert!(output.contains("agent_config: /tmp/agent.toml"));
+        assert!(output.contains("agent enrolled: true"));
+
+        Ok(())
     }
 
     #[test]

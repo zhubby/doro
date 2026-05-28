@@ -190,7 +190,7 @@ impl Agent {
     }
 }
 
-pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()> {
+pub async fn run(loaded_config: doro_config::LoadedAgentConfig) -> anyhow::Result<()> {
     let mut persisted_config = loaded_config.config;
     let mut agent = Agent::new(AgentConfig::from_config(&persisted_config.agent));
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
@@ -244,7 +244,7 @@ pub async fn run(loaded_config: doro_config::LoadedConfig) -> anyhow::Result<()>
 
 async fn run_session(
     config_path: &Path,
-    persisted_config: &mut doro_config::DoroConfig,
+    persisted_config: &mut doro_config::AgentFileConfig,
     agent: &mut Agent,
     shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
@@ -258,7 +258,7 @@ async fn run_session(
 
 async fn ensure_registered(
     mut client: AgentControlPlaneClient<Channel>,
-    persisted_config: &mut doro_config::DoroConfig,
+    persisted_config: &mut doro_config::AgentFileConfig,
     config_path: &Path,
     agent: &mut Agent,
 ) -> anyhow::Result<Uuid> {
@@ -282,7 +282,7 @@ async fn ensure_registered(
 
     persisted_config.agent.agent_id = Some(agent_id);
     persisted_config.agent.host_id = Some(host_id);
-    doro_config::write_config(config_path, persisted_config)?;
+    doro_config::write_agent_config(config_path, persisted_config)?;
     agent.config.agent_id = Some(agent_id);
     agent.config.host_id = host_id;
 

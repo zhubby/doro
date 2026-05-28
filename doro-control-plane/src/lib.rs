@@ -193,7 +193,7 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
         .layer(TraceLayer::new_for_http())
 }
 
-pub async fn run(config: doro_config::DoroConfig) -> anyhow::Result<()> {
+pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> {
     let console_addr: SocketAddr = config.server.console_bind.parse()?;
     let agent_addr: SocketAddr = config.server.agent_bind.parse()?;
     let store = Store::connect_with_config(&config.store).await?;

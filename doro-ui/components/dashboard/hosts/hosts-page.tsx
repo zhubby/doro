@@ -445,7 +445,7 @@ export function HostsPage({
                   <p className="mb-3 font-medium">2. 后续重启可直接使用已写回的配置</p>
                   <pre className="max-w-full overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
                     <code className="block min-w-max">
-                      doro agent --config ~/.doro/config.toml
+                      doro agent --config ~/.doro/agent.toml
                     </code>
                   </pre>
                 </div>
