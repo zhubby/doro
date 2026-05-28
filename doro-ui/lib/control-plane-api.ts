@@ -1,6 +1,8 @@
 import type {
   AuthStatusResponse,
   AuthTokenResponse,
+  CreateEnrollmentTokenRequest,
+  CreateEnrollmentTokenResponse,
   CurrentUserResponse,
   LatestMetricResponse,
   ListAppsResponse,
@@ -246,6 +248,18 @@ export async function currentUser() {
 
 export async function getHosts() {
   return getJson<ListHostsResponse>("/api/v1/hosts");
+}
+
+export async function createEnrollmentToken(
+  request: CreateEnrollmentTokenRequest = { label: null },
+) {
+  return authedRequest<CreateEnrollmentTokenResponse>(
+    "/api/v1/hosts/enrollment-token",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export async function deleteHost(hostId: string) {

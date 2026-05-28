@@ -6,7 +6,7 @@
 - mdBook product and architecture documentation.
 - Control-plane API skeleton for hosts, tasks, approvals, apps, settings, and events.
 - Agent skeleton for identity, capabilities, heartbeat, and metrics.
-- CLI skeleton for status, enrollment-token workflows, and service entrypoints.
+- CLI skeleton for status, diagnostics, and service entrypoints.
 - UI navigation aligned with the Doro control-plane model.
 
 ## Beta

@@ -32,8 +32,11 @@ use doro_protocol::AgentCapability;
 use doro_protocol::AuthStatusResponse;
 use doro_protocol::AuthTokenResponse;
 use doro_protocol::CapabilityRisk;
+use doro_protocol::CreateEnrollmentTokenRequest;
+use doro_protocol::CreateEnrollmentTokenResponse;
 use doro_protocol::CreateTaskRequest;
 use doro_protocol::CurrentUserResponse;
+use doro_protocol::EnrollmentToken;
 use doro_protocol::HealthResponse;
 use doro_protocol::LatestMetricResponse;
 use doro_protocol::ListApprovalsResponse;
@@ -57,6 +60,7 @@ use doro_store::AgentHeartbeat;
 use doro_store::AgentRegistration;
 use doro_store::NewAgentEvent;
 use doro_store::NewContainerObservation;
+use doro_store::NewEnrollmentToken;
 use doro_store::NewMetricSnapshot;
 use doro_store::NewRefreshToken;
 use doro_store::NewTask;
@@ -146,6 +150,10 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
 
     let protected_routes = Router::new()
         .route("/api/v1/hosts", get(list_hosts))
+        .route(
+            "/api/v1/hosts/enrollment-token",
+            axum::routing::post(create_enrollment_token),
+        )
         .route("/api/v1/hosts/:host_id", axum::routing::delete(delete_host))
         .route(
             "/api/v1/hosts/:host_id/metrics/latest",
@@ -673,6 +681,39 @@ async fn delete_host(
     }
 
     Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+}
+
+async fn create_enrollment_token(
+    State(state): State<AppState>,
+    Json(request): Json<CreateEnrollmentTokenRequest>,
+) -> Result<Json<CreateEnrollmentTokenResponse>, AppError> {
+    let now = Utc::now();
+    let token = generate_enrollment_token();
+    let label = request
+        .label
+        .map(|label| label.trim().to_string())
+        .filter(|label| !label.is_empty())
+        .unwrap_or_else(|| format!("new-host-{}", now.format("%Y%m%d%H%M%S")));
+
+    let stored = state
+        .store
+        .enrollment_tokens()
+        .create(NewEnrollmentToken {
+            id: Uuid::new_v4(),
+            label: label.clone(),
+            token: token.clone(),
+            expires_at: None,
+            created_at: now,
+        })
+        .await?;
+
+    Ok(Json(CreateEnrollmentTokenResponse {
+        item: EnrollmentToken {
+            id: stored.id,
+            label,
+            token,
+        },
+    }))
 }
 
 async fn latest_host_metric(
@@ -1223,6 +1264,12 @@ fn generate_refresh_token() -> String {
     let mut bytes = [0_u8; 32];
     OsRng.fill_bytes(&mut bytes);
     format!("doro_refresh_{}", URL_SAFE_NO_PAD.encode(bytes))
+}
+
+fn generate_enrollment_token() -> String {
+    let mut bytes = [0_u8; 32];
+    OsRng.fill_bytes(&mut bytes);
+    format!("doro_enroll_{}", URL_SAFE_NO_PAD.encode(bytes))
 }
 
 fn generate_secret() -> String {

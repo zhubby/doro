@@ -18,10 +18,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { deleteHost } from "@/lib/control-plane-api";
-import type { Host, MetricSnapshot } from "@/types/api";
+import { createEnrollmentToken, deleteHost } from "@/lib/control-plane-api";
+import type { EnrollmentToken, Host, MetricSnapshot } from "@/types/api";
 import type { ResourceColumn } from "@/types/dashboard";
-import { Activity, Cpu, Plus, Server, Trash2 } from "lucide-react";
+import {
+  Activity,
+  Clipboard,
+  Cpu,
+  Plus,
+  RefreshCw,
+  Server,
+  Trash2,
+} from "lucide-react";
 
 type HostsPageProps = {
   hosts: Host[];
@@ -258,6 +266,12 @@ export function HostsPage({
   apiError,
   onHostDeleted,
 }: HostsPageProps) {
+  const [hostDialogOpen, setHostDialogOpen] = useState(false);
+  const [enrollmentToken, setEnrollmentToken] =
+    useState<EnrollmentToken | null>(null);
+  const [tokenPending, setTokenPending] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -266,15 +280,49 @@ export function HostsPage({
     (total, host) => total + host.capabilities.length,
     0,
   );
-  const enrollmentCommands = [
-    "doro enrollment-token homelab-node",
-    [
-      "doro agent",
-      "--control-plane-url http://CONTROL_PLANE_HOST:8788",
-      "--hostname homelab-node",
-      "--enrollment-token PASTE_TOKEN_HERE",
-    ].join(" \\\n  "),
-  ];
+  const enrollmentCommand = [
+    "doro agent",
+    "--control-plane-url http://CONTROL_PLANE_HOST:8788",
+    "--hostname homelab-node",
+    `--enrollment-token ${enrollmentToken?.token ?? "TOKEN_LOADING"}`,
+  ].join(" \\\n  ");
+
+  async function generateHostToken() {
+    setTokenPending(true);
+    setTokenError(null);
+    setEnrollmentToken(null);
+    setCopiedCommand(null);
+    const result = await createEnrollmentToken();
+    setTokenPending(false);
+
+    if (result.error || !result.data) {
+      setTokenError(result.error ?? "创建接入令牌失败");
+      return;
+    }
+
+    setEnrollmentToken(result.data.item);
+  }
+
+  function handleHostDialogOpen(open: boolean) {
+    setHostDialogOpen(open);
+    if (!open) {
+      setEnrollmentToken(null);
+      setTokenError(null);
+      setCopiedCommand(null);
+      return;
+    }
+
+    void generateHostToken();
+  }
+
+  async function copyText(value: string, copiedKey: string) {
+    if (!navigator.clipboard) {
+      return;
+    }
+
+    await navigator.clipboard.writeText(value);
+    setCopiedCommand(copiedKey);
+  }
 
   async function handleDeleteHost() {
     if (!deleteTarget) {
@@ -306,7 +354,7 @@ export function HostsPage({
         title="主机"
         description="来自控制平面的 Agent 注册状态、能力声明和心跳。"
         toolbar={
-          <Dialog>
+          <Dialog open={hostDialogOpen} onOpenChange={handleHostDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
                 <Plus className="size-4" />
@@ -317,30 +365,59 @@ export function HostsPage({
               <DialogHeader>
                 <DialogTitle>接入新主机</DialogTitle>
                 <DialogDescription>
-                  在目标主机上安装并运行 Doro Agent，通过命令行参数把一次性
-                  enrollment token 传给当前控制平面。
+                  控制平面已为这次接入生成一次性 enrollment
+                  token。复制命令到目标主机运行。
                 </DialogDescription>
               </DialogHeader>
 
               <div className="space-y-4 text-sm">
                 <div className="rounded-md border bg-muted/30 p-4">
-                  <p className="mb-3 font-medium">1. 在控制平面生成接入令牌</p>
-                  <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
-                    <code>{enrollmentCommands[0]}</code>
-                  </pre>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-medium">1. 在目标主机启动 Agent</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        令牌仅显示这一次，首次接入成功后会自动失效。
+                      </p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        title="重新生成令牌"
+                        disabled={tokenPending}
+                        onClick={generateHostToken}
+                      >
+                        <RefreshCw className="size-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        title="复制命令"
+                        disabled={!enrollmentToken}
+                        onClick={() => void copyText(enrollmentCommand, "agent")}
+                      >
+                        <Clipboard className="size-4" />
+                      </Button>
+                    </div>
+                  </div>
+                  {tokenError ? (
+                    <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
+                      创建失败：{tokenError}
+                    </div>
+                  ) : (
+                    <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
+                      <code>{tokenPending ? "正在生成接入令牌..." : enrollmentCommand}</code>
+                    </pre>
+                  )}
+                  {copiedCommand === "agent" ? (
+                    <p className="mt-2 text-xs text-muted-foreground">命令已复制</p>
+                  ) : null}
                 </div>
 
                 <div className="rounded-md border bg-muted/30 p-4">
-                  <p className="mb-3 font-medium">
-                    2. 在目标主机启动 Agent
-                  </p>
-                  <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
-                    <code>{enrollmentCommands[1]}</code>
-                  </pre>
-                </div>
-
-                <div className="rounded-md border bg-muted/30 p-4">
-                  <p className="mb-3 font-medium">3. 后续重启可直接使用已写回的配置</p>
+                  <p className="mb-3 font-medium">2. 后续重启可直接使用已写回的配置</p>
                   <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
                     <code>doro agent --config ~/.doro/config.toml</code>
                   </pre>

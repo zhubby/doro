@@ -42,6 +42,7 @@ use uuid::Uuid;
 const HOST_ONLINE_TTL_SECONDS: i64 = 90;
 
 pub mod entities;
+mod migrations;
 
 #[derive(Debug, Clone)]
 pub struct Store {
@@ -204,7 +205,13 @@ impl Store {
     }
 
     pub async fn migrate(&self) -> anyhow::Result<()> {
-        for migration in migrations() {
+        self.execute_sql_batch(migrations::SCHEMA_MIGRATIONS.sql)
+            .await?;
+
+        for migration in migrations::all() {
+            if self.migration_applied(migration.id).await? {
+                continue;
+            }
             self.execute_sql_batch(migration.sql).await?;
             self.record_migration(migration.id).await?;
         }
@@ -271,10 +278,22 @@ impl Store {
     }
 
     async fn execute_sql_batch(&self, sql: &str) -> Result<(), DbErr> {
-        for statement in split_sql_statements(sql) {
+        for statement in migrations::split_sql_statements(sql) {
             self.execute_sql(&statement).await?;
         }
         Ok(())
+    }
+
+    async fn migration_applied(&self, id: &str) -> Result<bool, DbErr> {
+        let sql = format!(
+            "SELECT 1 AS applied FROM doro_schema_migrations WHERE id = '{}' LIMIT 1;",
+            id.replace('\'', "''")
+        );
+        let statement = Statement::from_string(self.backend, sql);
+        self.connection
+            .query_one_raw(statement)
+            .await
+            .map(|row| row.is_some())
     }
 
     async fn record_migration(&self, id: &str) -> Result<(), DbErr> {
@@ -1235,411 +1254,6 @@ fn database_backend(backend: StoreBackend) -> DatabaseBackend {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-struct Migration {
-    id: &'static str,
-    sql: &'static str,
-}
-
-fn migrations() -> &'static [Migration] {
-    &[
-        Migration {
-            id: "202605270001_schema_migrations",
-            sql: r#"
-                CREATE TABLE IF NOT EXISTS doro_schema_migrations (
-                    id TEXT PRIMARY KEY,
-                    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-            "#,
-        },
-        Migration {
-            id: "202605270002_core_store_schema",
-            sql: CORE_SCHEMA_SQL,
-        },
-        Migration {
-            id: "202605270002_timescale_hypertables",
-            sql: TIMESCALE_HYPERTABLE_SQL,
-        },
-        Migration {
-            id: "202605270003_seed_apps_settings",
-            sql: SEED_SQL,
-        },
-        Migration {
-            id: "202605270004_users_refresh_tokens",
-            sql: AUTH_SCHEMA_SQL,
-        },
-        Migration {
-            id: "202605280001_host_system_profile",
-            sql: HOST_SYSTEM_PROFILE_SQL,
-        },
-    ]
-}
-
-#[cfg(test)]
-fn migration_statements() -> Vec<&'static str> {
-    migrations().iter().map(|migration| migration.sql).collect()
-}
-
-fn split_sql_statements(sql: &str) -> Vec<String> {
-    sql.split(';')
-        .map(str::trim)
-        .filter(|statement| !statement.is_empty())
-        .map(|statement| format!("{statement};"))
-        .collect()
-}
-
-const CORE_SCHEMA_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS hosts (
-    id UUID PRIMARY KEY,
-    hostname TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    labels JSONB NOT NULL DEFAULT '[]'::jsonb,
-    system_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
-    last_seen_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS agents (
-    id UUID PRIMARY KEY,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    status TEXT NOT NULL,
-    version TEXT,
-    protocol_version TEXT,
-    last_seen_at TIMESTAMPTZ,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_agents_host_id ON agents(host_id);
-
-CREATE TABLE IF NOT EXISTS enrollment_tokens (
-    id UUID PRIMARY KEY,
-    label TEXT NOT NULL,
-    token_hash TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL,
-    expires_at TIMESTAMPTZ,
-    used_at TIMESTAMPTZ,
-    used_by_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS agent_capabilities (
-    id UUID PRIMARY KEY,
-    agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    risk TEXT NOT NULL,
-    description TEXT NOT NULL,
-    declared_at TIMESTAMPTZ NOT NULL,
-    UNIQUE(agent_id, name)
-);
-CREATE INDEX IF NOT EXISTS idx_agent_capabilities_host_id ON agent_capabilities(host_id);
-
-CREATE TABLE IF NOT EXISTS metric_snapshots (
-    id BIGSERIAL,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    captured_at TIMESTAMPTZ NOT NULL,
-    cpu_percent REAL NOT NULL,
-    memory_percent REAL NOT NULL,
-    disk_percent REAL NOT NULL,
-    load_average REAL NOT NULL,
-    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
-    PRIMARY KEY (captured_at, id)
-);
-CREATE INDEX IF NOT EXISTS idx_metric_snapshots_host_captured_at ON metric_snapshots(host_id, captured_at DESC);
-
-CREATE TABLE IF NOT EXISTS agent_events (
-    id BIGSERIAL,
-    host_id UUID REFERENCES hosts(id) ON DELETE SET NULL,
-    agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-    event_type TEXT NOT NULL,
-    event_json JSONB NOT NULL,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (recorded_at, id)
-);
-CREATE INDEX IF NOT EXISTS idx_agent_events_recorded_at ON agent_events(recorded_at DESC);
-CREATE INDEX IF NOT EXISTS idx_agent_events_host_id ON agent_events(host_id);
-
-CREATE TABLE IF NOT EXISTS tasks (
-    id UUID PRIMARY KEY,
-    host_id UUID REFERENCES hosts(id) ON DELETE SET NULL,
-    title TEXT NOT NULL,
-    prompt TEXT,
-    status TEXT NOT NULL,
-    created_by TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    queued_at TIMESTAMPTZ,
-    started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    error_message TEXT,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_tasks_host_id ON tasks(host_id);
-
-CREATE TABLE IF NOT EXISTS task_steps (
-    id UUID PRIMARY KEY,
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    capability TEXT NOT NULL,
-    risk TEXT NOT NULL,
-    summary TEXT NOT NULL,
-    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    UNIQUE(task_id, position)
-);
-CREATE INDEX IF NOT EXISTS idx_task_steps_task_id ON task_steps(task_id);
-
-CREATE TABLE IF NOT EXISTS task_runs (
-    id UUID PRIMARY KEY,
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    step_id UUID REFERENCES task_steps(id) ON DELETE SET NULL,
-    agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    status TEXT NOT NULL,
-    command_id TEXT,
-    started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    error_message TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);
-CREATE INDEX IF NOT EXISTS idx_task_runs_agent_id ON task_runs(agent_id);
-
-CREATE TABLE IF NOT EXISTS approvals (
-    id UUID PRIMARY KEY,
-    task_id UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-    step_id UUID NOT NULL REFERENCES task_steps(id) ON DELETE CASCADE,
-    reason TEXT NOT NULL,
-    status TEXT NOT NULL,
-    requested_at TIMESTAMPTZ NOT NULL,
-    resolved_at TIMESTAMPTZ,
-    resolved_by TEXT,
-    decision_note TEXT
-);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_step_pending ON approvals(step_id) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS idx_approvals_requested_at ON approvals(requested_at DESC);
-
-CREATE TABLE IF NOT EXISTS operation_logs (
-    id BIGSERIAL PRIMARY KEY,
-    source TEXT NOT NULL,
-    actor TEXT,
-    method TEXT NOT NULL,
-    path TEXT NOT NULL,
-    status_code INTEGER NOT NULL,
-    latency_ms INTEGER NOT NULL,
-    message TEXT,
-    detail JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value JSONB NOT NULL,
-    description TEXT,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS resource_groups (
-    id UUID PRIMARY KEY,
-    kind TEXT NOT NULL,
-    name TEXT NOT NULL,
-    is_default BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(kind, name)
-);
-
-CREATE TABLE IF NOT EXISTS apps (
-    id UUID PRIMARY KEY,
-    key TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    category TEXT NOT NULL,
-    status TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS app_installs (
-    id UUID PRIMARY KEY,
-    app_id UUID NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    version TEXT NOT NULL,
-    status TEXT NOT NULL,
-    ports JSONB NOT NULL DEFAULT '[]'::jsonb,
-    config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    last_task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS websites (
-    id UUID PRIMARY KEY,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    primary_domain TEXT NOT NULL,
-    status TEXT NOT NULL,
-    protocol TEXT NOT NULL,
-    app_install_id UUID REFERENCES app_installs(id) ON DELETE SET NULL,
-    tls_certificate_id UUID,
-    config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS databases (
-    id UUID PRIMARY KEY,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    app_install_id UUID REFERENCES app_installs(id) ON DELETE SET NULL,
-    name TEXT NOT NULL,
-    engine TEXT NOT NULL,
-    version TEXT NOT NULL,
-    status TEXT NOT NULL,
-    endpoint JSONB NOT NULL DEFAULT '{}'::jsonb,
-    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS containers (
-    id UUID PRIMARY KEY,
-    host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
-    runtime TEXT NOT NULL,
-    container_ref TEXT NOT NULL,
-    name TEXT NOT NULL,
-    image TEXT NOT NULL,
-    status TEXT NOT NULL,
-    ports JSONB NOT NULL DEFAULT '[]'::jsonb,
-    labels JSONB NOT NULL DEFAULT '{}'::jsonb,
-    observed_at TIMESTAMPTZ NOT NULL,
-    UNIQUE(host_id, runtime, container_ref)
-);
-
-CREATE TABLE IF NOT EXISTS backup_accounts (
-    id UUID PRIMARY KEY,
-    name TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    is_public BOOLEAN NOT NULL DEFAULT FALSE,
-    config JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS backup_records (
-    id UUID PRIMARY KEY,
-    account_id UUID REFERENCES backup_accounts(id) ON DELETE SET NULL,
-    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-    resource_kind TEXT NOT NULL,
-    resource_name TEXT NOT NULL,
-    status TEXT NOT NULL,
-    file_path TEXT,
-    message TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS cron_jobs (
-    id UUID PRIMARY KEY,
-    host_id UUID REFERENCES hosts(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,
-    schedule TEXT NOT NULL,
-    status TEXT NOT NULL,
-    task_template JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS cron_job_runs (
-    id UUID PRIMARY KEY,
-    cron_job_id UUID NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
-    task_id UUID REFERENCES tasks(id) ON DELETE SET NULL,
-    status TEXT NOT NULL,
-    started_at TIMESTAMPTZ NOT NULL,
-    finished_at TIMESTAMPTZ,
-    message TEXT
-);
-"#;
-
-const TIMESCALE_HYPERTABLE_SQL: &str = r#"
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-
-SELECT create_hypertable(
-    'metric_snapshots',
-    'captured_at',
-    chunk_time_interval => INTERVAL '1 day',
-    if_not_exists => TRUE
-);
-SELECT create_hypertable(
-    'agent_events',
-    'recorded_at',
-    chunk_time_interval => INTERVAL '1 day',
-    if_not_exists => TRUE
-);
-
-SELECT add_retention_policy(
-    'metric_snapshots',
-    INTERVAL '30 days',
-    if_not_exists => TRUE
-);
-SELECT add_retention_policy(
-    'agent_events',
-    INTERVAL '30 days',
-    if_not_exists => TRUE
-);
-"#;
-
-const SEED_SQL: &str = r#"
-INSERT INTO apps (id, key, name, category, status, description, metadata)
-VALUES
-    ('00000000-0000-0000-0000-000000000101', 'mysql', 'MySQL', 'database', 'planned', 'Relational database service', '{}'::jsonb),
-    ('00000000-0000-0000-0000-000000000102', 'openresty', 'OpenResty', 'website', 'planned', 'Web server and reverse proxy', '{}'::jsonb),
-    ('00000000-0000-0000-0000-000000000103', 'redis', 'Redis', 'database', 'planned', 'In-memory data store', '{}'::jsonb)
-ON CONFLICT (key) DO NOTHING;
-
-INSERT INTO settings (key, value, description)
-VALUES
-    ('approval_policy', '"policy_and_human_approval"'::jsonb, 'Control-plane approval mode'),
-    ('agent_transport', '"grpc_protobuf"'::jsonb, 'Agent transport protocol'),
-    ('database', '"postgres"'::jsonb, 'Configured store backend')
-ON CONFLICT (key) DO NOTHING;
-"#;
-
-const AUTH_SCHEMA_SQL: &str = r#"
-CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY,
-    username TEXT NOT NULL UNIQUE,
-    display_name TEXT NOT NULL,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL,
-    last_login_at TIMESTAMPTZ
-);
-CREATE INDEX IF NOT EXISTS idx_users_status ON users(status);
-
-CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id UUID PRIMARY KEY,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash TEXT NOT NULL UNIQUE,
-    status TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ,
-    last_used_at TIMESTAMPTZ,
-    replaced_by_token_id UUID REFERENCES refresh_tokens(id) ON DELETE SET NULL
-);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
-CREATE INDEX IF NOT EXISTS idx_refresh_tokens_status ON refresh_tokens(status);
-"#;
-
-const HOST_SYSTEM_PROFILE_SQL: &str = r#"
-ALTER TABLE hosts
-    ADD COLUMN IF NOT EXISTS system_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
-"#;
-
 fn stored_user(user: entities::users::Model) -> StoredUser {
     StoredUser {
         id: user.id,
@@ -1940,11 +1554,15 @@ mod tests {
 
     #[tokio::test]
     async fn migrate_executes_versioned_postgres_schema_statements() -> anyhow::Result<()> {
-        let exec_count = migrations()
-            .iter()
-            .map(|migration| split_sql_statements(migration.sql).len() + 1)
-            .sum::<usize>();
+        let exec_count = migrations::split_sql_statements(migrations::SCHEMA_MIGRATIONS.sql).len()
+            + migrations::all()
+                .iter()
+                .map(|migration| migrations::split_sql_statements(migration.sql).len() + 1)
+                .sum::<usize>();
         let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results(
+                (0..migrations::all().len()).map(|_| Vec::<entities::settings::Model>::new()),
+            )
             .append_exec_results((0..exec_count).map(|_| mock_exec_result()))
             .into_connection();
         let store = Store::from_connection(connection, DatabaseBackend::Postgres);
@@ -1956,7 +1574,11 @@ mod tests {
 
     #[test]
     fn migration_sql_uses_postgres_native_types() {
-        let sql = migration_statements().join("\n");
+        let sql = migrations::all()
+            .iter()
+            .map(|migration| migration.sql)
+            .collect::<Vec<_>>()
+            .join("\n");
 
         assert!(sql.contains("UUID PRIMARY KEY"));
         assert!(sql.contains("JSONB NOT NULL"));
@@ -1988,7 +1610,8 @@ mod tests {
 
     #[test]
     fn splits_migration_batches_into_single_statements() {
-        let statements = split_sql_statements("CREATE TABLE a (id int);\nCREATE TABLE b (id int);");
+        let statements =
+            migrations::split_sql_statements("CREATE TABLE a (id int);\nCREATE TABLE b (id int);");
 
         assert_eq!(statements.len(), 2);
         assert!(statements[0].ends_with(';'));

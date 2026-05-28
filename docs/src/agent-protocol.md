@@ -4,7 +4,7 @@ The first protocol version is `v1`.
 
 ## Enrollment
 
-The control plane creates a one-time enrollment token. `doro enrollment-token <label>` stores only the token hash in `enrollment_tokens` and prints the plaintext token once. An agent uses that token to obtain a durable agent identity. After enrollment, the token is marked as used and cannot enroll another agent.
+The control plane creates a one-time enrollment token from the Hosts page. Only the token hash is stored in `enrollment_tokens`; the plaintext token is shown once so an agent can exchange it for a durable agent identity. After enrollment, the token is marked as used and cannot enroll another agent.
 
 Agents keep their bootstrap and durable identity in `~/.doro/config.toml` under `[agent]`. The `control_plane_url` points to the control-plane Agent endpoint:
 

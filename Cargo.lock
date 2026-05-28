@@ -984,14 +984,10 @@ name = "doro-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "chrono",
  "clap",
  "doro-agent",
  "doro-config",
  "doro-control-plane",
- "doro-protocol",
- "doro-store",
- "serde_json",
  "tempfile",
  "tokio",
  "tracing-subscriber",

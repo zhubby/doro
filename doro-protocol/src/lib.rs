@@ -29,6 +29,18 @@ pub struct EnrollmentToken {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateEnrollmentTokenRequest.ts")]
+pub struct CreateEnrollmentTokenRequest {
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateEnrollmentTokenResponse.ts")]
+pub struct CreateEnrollmentTokenResponse {
+    pub item: EnrollmentToken,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "Host.ts")]
 pub struct Host {
     pub id: Uuid,
@@ -373,6 +385,8 @@ mod tests {
         assert!(HostContainer::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(CreateEnrollmentTokenRequest::export_all(&cfg).is_ok());
+        assert!(CreateEnrollmentTokenResponse::export_all(&cfg).is_ok());
         assert!(AuthStatusResponse::export_all(&cfg).is_ok());
         assert!(RegisterRequest::export_all(&cfg).is_ok());
         assert!(LoginRequest::export_all(&cfg).is_ok());
