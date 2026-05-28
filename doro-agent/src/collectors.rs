@@ -1,6 +1,3 @@
-use anyhow::Context;
-use bollard::Docker;
-use bollard::container::ListContainersOptions;
 use chrono::Utc;
 use doro_protocol::MetricSnapshot;
 use serde_json::Value;
@@ -63,7 +60,7 @@ impl LocalCollectors {
         let mut events = vec![CollectorEvent::Metrics(self.collect_metrics(host_id))];
 
         if self.config.container_metrics_enabled {
-            match collect_containers(self.config.docker_socket_path.as_deref()).await {
+            match crate::docker::collect_snapshot(self.config.docker_socket_path.as_deref()).await {
                 Ok(payload) => events.push(CollectorEvent::Containers(payload)),
                 Err(error) => events.push(CollectorEvent::Error {
                     collector: "containers",
@@ -278,79 +275,6 @@ fn merge_extra(extra: &mut Value, key: &str, value: Value) {
     if let Some(map) = extra.as_object_mut() {
         map.insert(key.to_string(), value);
     }
-}
-
-async fn collect_containers(socket_path: Option<&str>) -> anyhow::Result<Value> {
-    let docker = match socket_path {
-        Some(path) => Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION),
-        None => Docker::connect_with_unix_defaults(),
-    }
-    .context("failed to connect to Docker socket")?;
-
-    let containers = docker
-        .list_containers::<String>(Some(ListContainersOptions {
-            all: true,
-            ..Default::default()
-        }))
-        .await
-        .context("failed to list Docker containers")?;
-    let system = docker.info().await.ok();
-    let networks = docker.list_networks::<String>(None).await.ok();
-    let volumes = docker.list_volumes::<String>(None).await.ok();
-
-    Ok(json!({
-        "runtime": "docker",
-        "daemon": system.map(|info| json!({
-            "id": info.id,
-            "containers": info.containers,
-            "containers_running": info.containers_running,
-            "containers_paused": info.containers_paused,
-            "containers_stopped": info.containers_stopped,
-            "images": info.images,
-            "driver": info.driver,
-            "docker_root_dir": info.docker_root_dir,
-            "kernel_version": info.kernel_version,
-            "operating_system": info.operating_system,
-            "architecture": info.architecture,
-            "ncpu": info.ncpu,
-            "mem_total": info.mem_total,
-            "server_version": info.server_version,
-        })),
-        "containers": containers.into_iter().map(|container| {
-            json!({
-                "id": container.id,
-                "names": container.names,
-                "image": container.image,
-                "image_id": container.image_id,
-                "command": container.command,
-                "created": container.created,
-                "ports": container.ports,
-                "labels": container.labels,
-                "state": container.state,
-                "status": container.status,
-            })
-        }).collect::<Vec<_>>(),
-        "networks": networks.unwrap_or_default().into_iter().map(|network| {
-            json!({
-                "id": network.id,
-                "name": network.name,
-                "driver": network.driver,
-                "scope": network.scope,
-                "internal": network.internal,
-                "attachable": network.attachable,
-                "ingress": network.ingress,
-            })
-        }).collect::<Vec<_>>(),
-        "volumes": volumes.and_then(|volumes| volumes.volumes).unwrap_or_default().into_iter().map(|volume| {
-            json!({
-                "name": volume.name,
-                "driver": volume.driver,
-                "mountpoint": volume.mountpoint,
-                "usage_size": volume.usage_data.as_ref().map(|usage| usage.size),
-                "usage_ref_count": volume.usage_data.as_ref().map(|usage| usage.ref_count),
-            })
-        }).collect::<Vec<_>>(),
-    }))
 }
 
 fn collect_gpu() -> anyhow::Result<Value> {

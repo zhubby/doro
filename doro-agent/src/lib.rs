@@ -23,6 +23,7 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 mod collectors;
+pub mod docker;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
@@ -40,6 +41,7 @@ pub struct AgentConfig {
     pub process_names: Vec<String>,
     pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
+    pub docker_manage_enabled: bool,
     pub gpu_metrics_enabled: bool,
 }
 
@@ -61,6 +63,7 @@ impl AgentConfig {
             process_names: Vec::new(),
             container_metrics_enabled: false,
             docker_socket_path: None,
+            docker_manage_enabled: false,
             gpu_metrics_enabled: false,
         }
     }
@@ -78,6 +81,7 @@ impl AgentConfig {
             process_names: config.process_names.clone(),
             container_metrics_enabled: config.container_metrics_enabled,
             docker_socket_path: config.docker_socket_path.clone(),
+            docker_manage_enabled: config.docker_manage_enabled,
             gpu_metrics_enabled: config.gpu_metrics_enabled,
         }
     }
@@ -106,7 +110,7 @@ impl Agent {
     }
 
     pub fn capabilities(&self) -> Vec<AgentCapability> {
-        vec![
+        let mut capabilities = vec![
             AgentCapability {
                 name: CapabilityName::MetricsRead,
                 risk: CapabilityRisk::Low,
@@ -122,7 +126,17 @@ impl Agent {
                 risk: CapabilityRisk::High,
                 description: "Execute approved shell commands".to_string(),
             },
-        ]
+        ];
+        if self.config.docker_manage_enabled {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::ContainersManage,
+                risk: CapabilityRisk::High,
+                description:
+                    "Manage Docker images, containers, networks, and volumes after approval"
+                        .to_string(),
+            });
+        }
+        capabilities
     }
 
     pub fn grpc_capabilities(&self) -> Vec<grpc::AgentCapability> {
@@ -536,6 +550,7 @@ mod tests {
             process_names: Vec::new(),
             container_metrics_enabled: false,
             docker_socket_path: None,
+            docker_manage_enabled: false,
             gpu_metrics_enabled: false,
         });
 
@@ -565,6 +580,43 @@ mod tests {
             payload_json: "{}".to_string(),
             requires_approval: false,
         });
+    }
+
+    #[test]
+    fn docker_manage_capability_is_declared_only_when_enabled() {
+        let base_config = AgentConfig {
+            agent_id: Some(Uuid::new_v4()),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            docker_manage_enabled: false,
+            gpu_metrics_enabled: false,
+        };
+        let agent = Agent::new(base_config.clone());
+
+        assert!(
+            !agent
+                .capabilities()
+                .iter()
+                .any(|capability| capability.name == CapabilityName::ContainersManage)
+        );
+
+        let agent = Agent::new(AgentConfig {
+            docker_manage_enabled: true,
+            ..base_config
+        });
+
+        assert!(agent.capabilities().iter().any(|capability| {
+            capability.name == CapabilityName::ContainersManage
+                && capability.risk == CapabilityRisk::High
+        }));
     }
 
     #[test]
