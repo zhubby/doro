@@ -186,15 +186,15 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
 }
 
 pub async fn run(config: doro_config::DoroConfig) -> anyhow::Result<()> {
-    let http_addr: SocketAddr = config.server.http_bind.parse()?;
-    let grpc_addr: SocketAddr = config.server.grpc_bind.parse()?;
+    let console_addr: SocketAddr = config.server.console_bind.parse()?;
+    let agent_addr: SocketAddr = config.server.agent_bind.parse()?;
     let store = Store::connect_with_config(&config.store).await?;
     store.migrate().await?;
     let auth = AuthService::load_or_create(&store, config.security.jwt_secret.as_deref()).await?;
 
-    let http_listener = tokio::net::TcpListener::bind(http_addr).await?;
-    tracing::info!("doro control-plane http listening on http://{http_addr}");
-    tracing::info!("doro control-plane grpc listening on http://{grpc_addr}");
+    let console_listener = tokio::net::TcpListener::bind(console_addr).await?;
+    tracing::info!("doro control-plane console listening on http://{console_addr}");
+    tracing::info!("doro control-plane agent listening on http://{agent_addr}");
 
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     tokio::spawn(async move {
@@ -203,27 +203,27 @@ pub async fn run(config: doro_config::DoroConfig) -> anyhow::Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
-    let http_store = store.clone();
-    let grpc_store = store.clone();
-    let http_shutdown = shutdown_rx.clone();
-    let grpc_shutdown = shutdown_rx;
-    let http_server = async move {
-        axum::serve(http_listener, app_with_auth(http_store, auth))
-            .with_graceful_shutdown(wait_for_shutdown(http_shutdown))
+    let console_store = store.clone();
+    let agent_store = store.clone();
+    let console_shutdown = shutdown_rx.clone();
+    let agent_shutdown = shutdown_rx;
+    let console_server = async move {
+        axum::serve(console_listener, app_with_auth(console_store, auth))
+            .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
             .await
             .map_err(anyhow::Error::from)
     };
-    let grpc_server = async move {
+    let agent_server = async move {
         Server::builder()
             .add_service(AgentControlPlaneServer::new(GrpcAgentService {
-                store: grpc_store,
+                store: agent_store,
             }))
-            .serve_with_shutdown(grpc_addr, wait_for_shutdown(grpc_shutdown))
+            .serve_with_shutdown(agent_addr, wait_for_shutdown(agent_shutdown))
             .await
             .map_err(anyhow::Error::from)
     };
 
-    tokio::try_join!(http_server, grpc_server)?;
+    tokio::try_join!(console_server, agent_server)?;
     Ok(())
 }
 

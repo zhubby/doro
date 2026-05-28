@@ -139,6 +139,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       tasks={data.tasks}
       approvals={data.approvals}
       apps={data.apps}
+      metricHistoryByHost={data.metricHistoryByHost}
       apiError={data.error}
     />
   );

@@ -1257,6 +1257,10 @@ fn migrations() -> &'static [Migration] {
             sql: CORE_SCHEMA_SQL,
         },
         Migration {
+            id: "202605270002_timescale_hypertables",
+            sql: TIMESCALE_HYPERTABLE_SQL,
+        },
+        Migration {
             id: "202605270003_seed_apps_settings",
             sql: SEED_SQL,
         },
@@ -1334,24 +1338,26 @@ CREATE TABLE IF NOT EXISTS agent_capabilities (
 CREATE INDEX IF NOT EXISTS idx_agent_capabilities_host_id ON agent_capabilities(host_id);
 
 CREATE TABLE IF NOT EXISTS metric_snapshots (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL,
     host_id UUID NOT NULL REFERENCES hosts(id) ON DELETE CASCADE,
     captured_at TIMESTAMPTZ NOT NULL,
     cpu_percent REAL NOT NULL,
     memory_percent REAL NOT NULL,
     disk_percent REAL NOT NULL,
     load_average REAL NOT NULL,
-    extra JSONB NOT NULL DEFAULT '{}'::jsonb
+    extra JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (captured_at, id)
 );
 CREATE INDEX IF NOT EXISTS idx_metric_snapshots_host_captured_at ON metric_snapshots(host_id, captured_at DESC);
 
 CREATE TABLE IF NOT EXISTS agent_events (
-    id BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL,
     host_id UUID REFERENCES hosts(id) ON DELETE SET NULL,
     agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
     event_type TEXT NOT NULL,
     event_json JSONB NOT NULL,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (recorded_at, id)
 );
 CREATE INDEX IF NOT EXISTS idx_agent_events_recorded_at ON agent_events(recorded_at DESC);
 CREATE INDEX IF NOT EXISTS idx_agent_events_host_id ON agent_events(host_id);
@@ -1553,6 +1559,34 @@ CREATE TABLE IF NOT EXISTS cron_job_runs (
     started_at TIMESTAMPTZ NOT NULL,
     finished_at TIMESTAMPTZ,
     message TEXT
+);
+"#;
+
+const TIMESCALE_HYPERTABLE_SQL: &str = r#"
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+
+SELECT create_hypertable(
+    'metric_snapshots',
+    'captured_at',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE
+);
+SELECT create_hypertable(
+    'agent_events',
+    'recorded_at',
+    chunk_time_interval => INTERVAL '1 day',
+    if_not_exists => TRUE
+);
+
+SELECT add_retention_policy(
+    'metric_snapshots',
+    INTERVAL '30 days',
+    if_not_exists => TRUE
+);
+SELECT add_retention_policy(
+    'agent_events',
+    INTERVAL '30 days',
+    if_not_exists => TRUE
 );
 "#;
 
@@ -1927,8 +1961,15 @@ mod tests {
         assert!(sql.contains("UUID PRIMARY KEY"));
         assert!(sql.contains("JSONB NOT NULL"));
         assert!(sql.contains("TIMESTAMPTZ"));
-        assert!(sql.contains("BIGSERIAL PRIMARY KEY"));
+        assert!(sql.contains("PRIMARY KEY (captured_at, id)"));
+        assert!(sql.contains("PRIMARY KEY (recorded_at, id)"));
         assert!(sql.contains("idx_metric_snapshots_host_captured_at"));
+        assert!(sql.contains("CREATE EXTENSION IF NOT EXISTS timescaledb"));
+        assert!(sql.contains("create_hypertable(\n    'metric_snapshots'"));
+        assert!(sql.contains("create_hypertable(\n    'agent_events'"));
+        assert!(sql.contains("add_retention_policy(\n    'metric_snapshots'"));
+        assert!(sql.contains("add_retention_policy(\n    'agent_events'"));
+        assert!(sql.contains("INTERVAL '30 days'"));
         assert!(!sql.contains("AUTOINCREMENT"));
         assert!(!sql.contains("sqlite_master"));
     }

@@ -13,7 +13,7 @@ Doro is not a Codex CLI fork. The previous Codex-derived files were removed from
 ## Workspace
 
 - `doro-protocol` - shared versioned protocol types for the UI, control plane, and agents.
-- `doro-control-plane` - Axum HTTP API, event stream, and agent connection surface.
+- `doro-control-plane` - console API, event stream, and agent connection surface.
 - `doro-agent` - host daemon skeleton for registration, heartbeat, metrics, and task execution.
 - `doro-store` - Postgres persistence boundary using SeaORM.
 - `doro-config` - TOML configuration loading, defaults, and `~/.doro/config.toml` creation.
@@ -37,7 +37,7 @@ Run the control-plane API:
 cargo run -p doro-cli -- control-plane
 ```
 
-The control plane listens on `127.0.0.1:8787` for HTTP and `127.0.0.1:8788` for Agent gRPC.
+The control plane listens on `127.0.0.1:8787` for the console and `127.0.0.1:8788` for agents.
 
 Run the agent skeleton:
 

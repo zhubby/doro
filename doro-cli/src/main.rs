@@ -22,7 +22,7 @@ struct Cli {
 enum Command {
     /// Run the local host agent.
     Agent {
-        /// Control-plane gRPC URL, for example http://127.0.0.1:8788.
+        /// Control-plane Agent endpoint URL, for example http://127.0.0.1:8788.
         #[arg(long, value_name = "URL")]
         control_plane_url: Option<String>,
         /// Hostname to declare during enrollment and heartbeats.
@@ -41,7 +41,7 @@ enum Command {
         #[arg(long, value_name = "SECONDS")]
         heartbeat_interval_seconds: Option<u64>,
     },
-    /// Run the control-plane HTTP API and Agent gRPC service.
+    /// Run the control-plane console and Agent endpoint.
     ControlPlane,
     /// Print local development status and configured project surfaces.
     Status,
@@ -113,8 +113,8 @@ async fn main() -> anyhow::Result<()> {
                 println!("config_created: true");
             }
             println!("api: /api/v1");
-            println!("http: {}", loaded_config.config.server.http_bind);
-            println!("grpc: {}", loaded_config.config.server.grpc_bind);
+            println!("console: {}", loaded_config.config.server.console_bind);
+            println!("agent: {}", loaded_config.config.server.agent_bind);
             println!("store backend: {}", loaded_config.config.store.backend);
             println!(
                 "store database_url: {}",
@@ -126,8 +126,8 @@ async fn main() -> anyhow::Result<()> {
                 loaded_config.config.store.max_connections
             );
             println!(
-                "agent transport: grpc doro.agent.v1.AgentControlPlane on {}",
-                loaded_config.config.server.grpc_bind
+                "agent protocol: doro.agent.v1.AgentControlPlane on {}",
+                loaded_config.config.server.agent_bind
             );
             println!(
                 "agent default: {}",

@@ -21,8 +21,8 @@ The control plane defaults to:
 
 ```toml
 [server]
-http_bind = "127.0.0.1:8787"
-grpc_bind = "127.0.0.1:8788"
+console_bind = "127.0.0.1:8787"
+agent_bind = "127.0.0.1:8788"
 
 [store]
 backend = "postgres"
@@ -41,7 +41,7 @@ Production deployments should enable TLS and store secrets outside the repositor
 
 ## Agent
 
-Agents connect outbound to the control plane:
+Agents connect outbound to the control-plane Agent endpoint:
 
 ```toml
 [agent]

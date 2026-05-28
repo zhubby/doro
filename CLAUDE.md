@@ -11,7 +11,7 @@ Do not reintroduce removed Codex crates, Codex command names, Codex README/confi
 This repository is a Rust workspace plus a Next.js frontend.
 
 - `doro-protocol`: shared domain protocol types plus generated tonic/prost gRPC types and ts-rs TypeScript bindings.
-- `doro-control-plane`: Axum HTTP API, tonic gRPC Agent service, task orchestration, approvals, event stream, and AI entrypoints.
+- `doro-control-plane`: console API, Agent endpoint, task orchestration, approvals, event stream, and AI entrypoints.
 - `doro-config`: TOML config schema, default config path resolution, and load-or-create behavior.
 - `doro-agent`: host daemon skeleton for enrollment, capability declaration, heartbeat, metrics, and future task execution.
 - `doro-store`: Postgres persistence boundary and schema ownership through SeaORM.
@@ -31,7 +31,7 @@ Run workspace-level commands from the repository root:
 - `cargo test --workspace`: run Rust unit and integration tests.
 - `cargo fmt --all`: apply Rust formatting.
 - `cargo clippy --workspace --all-targets -- -D warnings`: strict Rust linting when touching production Rust.
-- `cargo run -p doro-control-plane`: run HTTP on `127.0.0.1:8787` and Agent gRPC on `127.0.0.1:8788`.
+- `cargo run -p doro-control-plane`: run the console on `127.0.0.1:8787` and Agent endpoint on `127.0.0.1:8788`.
 - `cargo run -p doro-agent`: run the local Agent skeleton.
 - `cargo run -p doro-cli -- status`: run the Doro CLI and create `~/.doro/config.toml` if needed.
 - `cd doro-ui && bun run build`: verify frontend production build.

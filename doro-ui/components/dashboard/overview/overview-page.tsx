@@ -21,24 +21,200 @@ import {
   containers,
   diskMetrics,
   notes,
-  systemStats,
   trafficMetrics,
 } from "@/lib/mock-data";
-import type { AppSummary, ApprovalRequest, Host, Task } from "@/types/api";
+import type { AppSummary, ApprovalRequest, Host, MetricSnapshot, Task } from "@/types/api";
 
 type OverviewPageProps = {
   hosts?: Host[];
   tasks?: Task[];
   approvals?: ApprovalRequest[];
   apps?: AppSummary[];
+  metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
 };
+
+type ResourceStat = {
+  label: string;
+  value: string;
+  detail: string;
+  progress: number;
+};
+
+type DiskTotals = {
+  usedBytes: number;
+  totalBytes: number;
+};
+
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function formatPercent(value: number) {
+  return `${value.toFixed(2)}%`;
+}
+
+function formatBytes(bytes: number) {
+  const gib = bytes / 1024 ** 3;
+  return `${gib >= 10 ? gib.toFixed(1) : gib.toFixed(2)} GB`;
+}
+
+function coreCount(host: Host) {
+  const profile = objectValue(host.system_profile);
+  return numberValue(profile?.logical_core_count) ?? 0;
+}
+
+function totalMemoryBytes(host: Host) {
+  const profile = objectValue(host.system_profile);
+  const memory = objectValue(profile?.memory);
+  return numberValue(memory?.total_bytes) ?? 0;
+}
+
+function diskTotals(snapshot: MetricSnapshot): DiskTotals | null {
+  const extra = objectValue(snapshot.extra);
+  const disks = extra?.disks;
+  if (!Array.isArray(disks)) {
+    return null;
+  }
+
+  const totals = disks.reduce<DiskTotals>(
+    (current, disk) => {
+      const diskObject = objectValue(disk);
+      if (!diskObject) {
+        return current;
+      }
+
+      return {
+        usedBytes: current.usedBytes + (numberValue(diskObject.used_bytes) ?? 0),
+        totalBytes: current.totalBytes + (numberValue(diskObject.total_bytes) ?? 0),
+      };
+    },
+    { usedBytes: 0, totalBytes: 0 },
+  );
+
+  return totals.totalBytes > 0 ? totals : null;
+}
+
+function latestMetrics(
+  hosts: Host[],
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+) {
+  return hosts
+    .filter((host) => host.status === "online")
+    .map((host) => ({
+      host,
+      metric: metricHistoryByHost[host.id]?.at(-1) ?? null,
+    }))
+    .filter((item): item is { host: Host; metric: MetricSnapshot } => Boolean(item.metric));
+}
+
+function unavailableResourceStats(hasOnlineAgents: boolean): ResourceStat[] {
+  return ["负载", "CPU", "内存", "磁盘"].map((label) => ({
+    label,
+    value: "n/a",
+    detail: hasOnlineAgents ? "等待 Agent 上报" : "等待 Agent 连接",
+    progress: 0,
+  }));
+}
+
+function aggregateResourceStats(
+  hosts: Host[],
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+): ResourceStat[] {
+  const samples = latestMetrics(hosts, metricHistoryByHost);
+  if (samples.length === 0) {
+    return unavailableResourceStats(hosts.some((host) => host.status === "online"));
+  }
+
+  const totalCores = samples.reduce((sum, sample) => sum + coreCount(sample.host), 0);
+  const cpuWeightedUnits = samples.reduce((sum, sample) => {
+    const cores = coreCount(sample.host) || 1;
+    return sum + sample.metric.cpu_percent * cores;
+  }, 0);
+  const cpuWeight = samples.reduce((sum, sample) => sum + (coreCount(sample.host) || 1), 0);
+  const cpuPercent = cpuWeight > 0 ? cpuWeightedUnits / cpuWeight : 0;
+
+  const totalLoad = samples.reduce((sum, sample) => sum + sample.metric.load_average, 0);
+  const loadPercent = totalCores > 0 ? (totalLoad / totalCores) * 100 : totalLoad * 100;
+
+  const memoryTotals = samples.reduce(
+    (current, sample) => {
+      const totalBytes = totalMemoryBytes(sample.host);
+      if (totalBytes === 0) {
+        return current;
+      }
+      return {
+        usedBytes: current.usedBytes + (totalBytes * sample.metric.memory_percent) / 100,
+        totalBytes: current.totalBytes + totalBytes,
+      };
+    },
+    { usedBytes: 0, totalBytes: 0 },
+  );
+  const memoryPercent =
+    memoryTotals.totalBytes > 0 ? (memoryTotals.usedBytes / memoryTotals.totalBytes) * 100 : null;
+
+  const disk = samples.reduce(
+    (current, sample) => {
+      const totals = diskTotals(sample.metric);
+      if (!totals) {
+        return current;
+      }
+      return {
+        usedBytes: current.usedBytes + totals.usedBytes,
+        totalBytes: current.totalBytes + totals.totalBytes,
+      };
+    },
+    { usedBytes: 0, totalBytes: 0 },
+  );
+  const diskPercent = disk.totalBytes > 0 ? (disk.usedBytes / disk.totalBytes) * 100 : null;
+
+  return [
+    {
+      label: "负载",
+      value: formatPercent(Math.max(0, loadPercent)),
+      detail: totalCores > 0 ? `${totalLoad.toFixed(2)} / ${totalCores} 核` : "按在线 Agent 汇总",
+      progress: Math.min(100, Math.max(0, loadPercent)),
+    },
+    {
+      label: "CPU",
+      value: formatPercent(cpuPercent),
+      detail: totalCores > 0 ? `${totalLoad.toFixed(2)} / ${totalCores} 核` : "按在线 Agent 汇总",
+      progress: Math.min(100, Math.max(0, cpuPercent)),
+    },
+    {
+      label: "内存",
+      value: memoryPercent === null ? "n/a" : formatPercent(memoryPercent),
+      detail:
+        memoryPercent === null
+          ? "等待容量数据"
+          : `${formatBytes(memoryTotals.usedBytes)} / ${formatBytes(memoryTotals.totalBytes)}`,
+      progress: memoryPercent === null ? 0 : Math.min(100, Math.max(0, memoryPercent)),
+    },
+    {
+      label: "磁盘",
+      value: diskPercent === null ? "n/a" : formatPercent(diskPercent),
+      detail:
+        diskPercent === null
+          ? "等待容量数据"
+          : `${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}`,
+      progress: diskPercent === null ? 0 : Math.min(100, Math.max(0, diskPercent)),
+    },
+  ];
+}
 
 export function OverviewPage({
   hosts = [],
   tasks = [],
   approvals = [],
   apps = [],
+  metricHistoryByHost = {},
   apiError,
 }: OverviewPageProps) {
   const waitingApprovals = approvals.filter(
@@ -48,6 +224,9 @@ export function OverviewPage({
   const runningContainers = containers.filter(
     (container) => container.status === "running",
   ).length;
+  const systemStats = aggregateResourceStats(hosts, metricHistoryByHost);
+  const hasOnlineAgents = hosts.some((host) => host.status === "online");
+  const hasMetricSamples = latestMetrics(hosts, metricHistoryByHost).length > 0;
   const overviewStats = [
     {
       label: "智能体",
@@ -105,7 +284,13 @@ export function OverviewPage({
                   <CardTitle>系统状态</CardTitle>
                   <CardDescription>关键资源使用率与容量概览</CardDescription>
                 </div>
-                <Badge variant="outline">运行正常</Badge>
+                <Badge variant="outline">
+                  {hasMetricSamples
+                    ? "运行正常"
+                    : hasOnlineAgents
+                      ? "等待数据"
+                      : "等待 Agent"}
+                </Badge>
               </div>
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

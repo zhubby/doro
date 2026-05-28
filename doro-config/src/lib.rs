@@ -56,15 +56,15 @@ pub struct DoroConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct ServerConfig {
-    pub http_bind: String,
-    pub grpc_bind: String,
+    pub console_bind: String,
+    pub agent_bind: String,
 }
 
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            http_bind: "127.0.0.1:8787".to_string(),
-            grpc_bind: "127.0.0.1:8788".to_string(),
+            console_bind: "127.0.0.1:8787".to_string(),
+            agent_bind: "127.0.0.1:8788".to_string(),
         }
     }
 }
@@ -253,7 +253,7 @@ mod tests {
 
         assert!(loaded.created);
         assert!(path.exists());
-        assert_eq!(loaded.config.server.http_bind, "127.0.0.1:8787");
+        assert_eq!(loaded.config.server.console_bind, "127.0.0.1:8787");
         assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
         assert_eq!(
             loaded.config.store.database_url,
@@ -285,16 +285,16 @@ mod tests {
             &path,
             r#"
                 [server]
-                http_bind = "0.0.0.0:9000"
-                grpc_bind = "0.0.0.0:9001"
+                console_bind = "0.0.0.0:9000"
+                agent_bind = "0.0.0.0:9001"
             "#,
         )?;
 
         let loaded = load_or_create(Some(&path))?;
 
         assert!(!loaded.created);
-        assert_eq!(loaded.config.server.http_bind, "0.0.0.0:9000");
-        assert_eq!(loaded.config.server.grpc_bind, "0.0.0.0:9001");
+        assert_eq!(loaded.config.server.console_bind, "0.0.0.0:9000");
+        assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:9001");
         assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
         assert_eq!(
             loaded.config.store.database_url,
