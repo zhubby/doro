@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DataTable } from "@/components/admin/data-table";
 import { PageSection } from "@/components/admin/page-section";
@@ -37,6 +37,22 @@ type HostsPageProps = {
   apiError?: string | null;
   onHostDeleted?: (hostId: string) => void;
 };
+
+const DEFAULT_AGENT_CONTROL_PLANE_URL = "http://127.0.0.1:8788";
+
+function inferredAgentControlPlaneUrl() {
+  const configuredUrl =
+    process.env.NEXT_PUBLIC_DORO_AGENT_CONTROL_PLANE_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, "");
+  }
+
+  if (typeof window === "undefined" || !window.location.hostname) {
+    return DEFAULT_AGENT_CONTROL_PLANE_URL;
+  }
+
+  return `http://${window.location.hostname}:8788`;
+}
 
 function hostStatusLabel(status: Host["status"]) {
   if (status === "online") {
@@ -272,6 +288,9 @@ export function HostsPage({
   const [tokenPending, setTokenPending] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
+  const [agentControlPlaneUrl, setAgentControlPlaneUrl] = useState(
+    DEFAULT_AGENT_CONTROL_PLANE_URL,
+  );
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -282,10 +301,14 @@ export function HostsPage({
   );
   const enrollmentCommand = [
     "doro agent",
-    "--control-plane-url http://CONTROL_PLANE_HOST:8788",
+    `--control-plane-url ${agentControlPlaneUrl}`,
     "--hostname homelab-node",
     `--enrollment-token ${enrollmentToken?.token ?? "TOKEN_LOADING"}`,
   ].join(" \\\n  ");
+
+  useEffect(() => {
+    setAgentControlPlaneUrl(inferredAgentControlPlaneUrl());
+  }, []);
 
   async function generateHostToken() {
     setTokenPending(true);
@@ -361,7 +384,7 @@ export function HostsPage({
                 New Host
               </Button>
             </DialogTrigger>
-            <DialogContent className="sm:max-w-xl">
+            <DialogContent className="max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] overflow-y-auto sm:max-w-xl">
               <DialogHeader>
                 <DialogTitle>接入新主机</DialogTitle>
                 <DialogDescription>
@@ -370,10 +393,10 @@ export function HostsPage({
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-4 text-sm">
-                <div className="rounded-md border bg-muted/30 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-3">
-                    <div>
+              <div className="min-w-0 space-y-4 text-sm">
+                <div className="min-w-0 rounded-md border bg-muted/30 p-4">
+                  <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
                       <p className="font-medium">1. 在目标主机启动 Agent</p>
                       <p className="mt-1 text-xs text-muted-foreground">
                         令牌仅显示这一次，首次接入成功后会自动失效。
@@ -407,8 +430,10 @@ export function HostsPage({
                       创建失败：{tokenError}
                     </div>
                   ) : (
-                    <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
-                      <code>{tokenPending ? "正在生成接入令牌..." : enrollmentCommand}</code>
+                    <pre className="max-w-full overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
+                      <code className="block min-w-max">
+                        {tokenPending ? "正在生成接入令牌..." : enrollmentCommand}
+                      </code>
                     </pre>
                   )}
                   {copiedCommand === "agent" ? (
@@ -416,10 +441,12 @@ export function HostsPage({
                   ) : null}
                 </div>
 
-                <div className="rounded-md border bg-muted/30 p-4">
+                <div className="min-w-0 rounded-md border bg-muted/30 p-4">
                   <p className="mb-3 font-medium">2. 后续重启可直接使用已写回的配置</p>
-                  <pre className="overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
-                    <code>doro agent --config ~/.doro/config.toml</code>
+                  <pre className="max-w-full overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
+                    <code className="block min-w-max">
+                      doro agent --config ~/.doro/config.toml
+                    </code>
                   </pre>
                 </div>
 
