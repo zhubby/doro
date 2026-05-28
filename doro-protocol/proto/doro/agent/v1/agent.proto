@@ -14,6 +14,7 @@ message EnrollRequest {
   string enrollment_token = 1;
   string hostname = 2;
   repeated AgentCapability capabilities = 3;
+  string system_profile_json = 4;
 }
 
 message EnrollResponse {

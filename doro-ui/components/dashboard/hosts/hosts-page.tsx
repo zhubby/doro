@@ -89,22 +89,20 @@ function formatBytes(value: unknown) {
   return `${gib >= 10 ? gib.toFixed(0) : gib.toFixed(1)} GB`;
 }
 
-function machineSummary(history: MetricSnapshot[], fallback: string) {
-  const latest = history.at(-1);
-  const extra = objectValue(latest?.extra);
-  const system = objectValue(extra?.system);
-  if (!system) {
-    return fallback;
+function machineSummary(host: Host, history: MetricSnapshot[]) {
+  const profile = objectValue(host.system_profile);
+  if (!profile) {
+    return host.id;
   }
 
   const os =
-    stringValue(system.long_os_version) ??
-    stringValue(system.os_name) ??
-    stringValue(system.kernel_version);
-  const arch = stringValue(system.cpu_arch);
-  const physicalCores = numberValue(system.physical_core_count);
-  const logicalCores = numberValue(system.logical_core_count);
-  const memory = formatBytes(objectValue(system.memory)?.total_bytes);
+    stringValue(profile.long_os_version) ??
+    stringValue(profile.os_name) ??
+    stringValue(profile.kernel_version);
+  const arch = stringValue(profile.cpu_arch);
+  const physicalCores = numberValue(profile.physical_core_count);
+  const logicalCores = numberValue(profile.logical_core_count);
+  const memory = formatBytes(objectValue(profile.memory)?.total_bytes);
   const cores = physicalCores
     ? logicalCores && logicalCores !== physicalCores
       ? `${physicalCores}C/${logicalCores}T`
@@ -113,7 +111,7 @@ function machineSummary(history: MetricSnapshot[], fallback: string) {
       ? `${logicalCores}T`
       : null;
   const summary = [os, arch, cores, memory].filter(Boolean).join(" · ");
-  return summary || fallback;
+  return summary || host.id;
 }
 
 function latestPercent(
@@ -224,7 +222,7 @@ function hostColumns(
         <div>
           <p className="font-medium">{host.hostname}</p>
           <p className="text-xs text-muted-foreground">
-            {machineSummary(metricHistoryByHost[host.id] ?? [], host.id)}
+            {machineSummary(host, metricHistoryByHost[host.id] ?? [])}
           </p>
         </div>
       ),

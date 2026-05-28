@@ -2,6 +2,7 @@ use chrono::Utc;
 use collectors::CollectorConfig;
 use collectors::CollectorEvent;
 use collectors::LocalCollectors;
+use collectors::system_profile;
 use doro_protocol::AgentCapability;
 use doro_protocol::AgentEvent;
 use doro_protocol::CapabilityName;
@@ -100,6 +101,7 @@ impl Agent {
             status: HostStatus::Online,
             last_seen_at: Some(Utc::now()),
             capabilities: self.capabilities(),
+            system_profile: serde_json::json!({}),
         }
     }
 
@@ -148,6 +150,7 @@ impl Agent {
             enrollment_token,
             hostname: self.config.hostname.clone(),
             capabilities: self.grpc_capabilities(),
+            system_profile_json: system_profile().to_string(),
         }
     }
 

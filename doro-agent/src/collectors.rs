@@ -127,27 +127,6 @@ impl LocalCollectors {
                 extra: json!({}),
             },
             extra: json!({
-                "system": {
-                    "kernel_version": System::kernel_version(),
-                    "long_os_version": System::long_os_version(),
-                    "os_name": System::name(),
-                    "host_name": System::host_name(),
-                    "cpu_arch": System::cpu_arch(),
-                    "physical_core_count": System::physical_core_count(),
-                    "logical_core_count": self.system.cpus().len(),
-                    "uptime_seconds": System::uptime(),
-                    "process_count": self.system.processes().len(),
-                    "load_average": {
-                        "one": load_average.one,
-                        "five": load_average.five,
-                        "fifteen": load_average.fifteen,
-                    },
-                    "memory": {
-                        "total_bytes": total_memory,
-                        "used_bytes": used_memory,
-                        "available_bytes": self.system.available_memory(),
-                    }
-                },
                 "cpus": self.cpu_payload(),
                 "disks": self.disk_payload(),
                 "networks": self.network_payload(),
@@ -270,6 +249,22 @@ impl LocalCollectors {
                 .collect::<Vec<_>>()
         )
     }
+}
+
+pub fn system_profile() -> Value {
+    let system = System::new_all();
+    json!({
+        "kernel_version": System::kernel_version(),
+        "long_os_version": System::long_os_version(),
+        "os_name": System::name(),
+        "host_name": System::host_name(),
+        "cpu_arch": System::cpu_arch(),
+        "physical_core_count": System::physical_core_count(),
+        "logical_core_count": system.cpus().len(),
+        "memory": {
+            "total_bytes": system.total_memory(),
+        },
+    })
 }
 
 fn percent(used: u64, total: u64) -> f32 {
@@ -422,7 +417,16 @@ mod tests {
         assert!((0.0..=100.0).contains(&metrics.snapshot.cpu_percent));
         assert!((0.0..=100.0).contains(&metrics.snapshot.memory_percent));
         assert!((0.0..=100.0).contains(&metrics.snapshot.disk_percent));
-        assert!(metrics.extra.get("system").is_some());
+        assert!(metrics.extra.get("system").is_none());
+        assert!(metrics.extra.get("cpus").is_some());
+    }
+
+    #[test]
+    fn system_profile_is_collected_for_registration() {
+        let profile = system_profile();
+
+        assert!(profile.get("cpu_arch").is_some());
+        assert!(profile.get("memory").is_some());
     }
 
     #[tokio::test]

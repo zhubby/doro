@@ -37,6 +37,7 @@ pub struct Host {
     pub status: HostStatus,
     pub last_seen_at: Option<DateTime<Utc>>,
     pub capabilities: Vec<AgentCapability>,
+    pub system_profile: Value,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]

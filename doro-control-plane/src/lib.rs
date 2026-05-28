@@ -301,6 +301,7 @@ impl AgentControlPlane for GrpcAgentService {
             .into_iter()
             .filter_map(grpc_capability_to_protocol)
             .collect();
+        let system_profile = parse_event_payload(&request.system_profile_json);
 
         self.store
             .agents()
@@ -309,6 +310,7 @@ impl AgentControlPlane for GrpcAgentService {
                 host_id,
                 enrollment_token: request.enrollment_token,
                 hostname,
+                system_profile,
                 capabilities,
                 observed_at,
             })

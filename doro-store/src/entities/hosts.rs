@@ -11,6 +11,7 @@ pub struct Model {
     pub display_name: String,
     pub status: String,
     pub labels: Value,
+    pub system_profile: Value,
     pub last_seen_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,

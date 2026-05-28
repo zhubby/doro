@@ -67,6 +67,7 @@ pub struct AgentRegistration {
     pub host_id: Uuid,
     pub enrollment_token: String,
     pub hostname: String,
+    pub system_profile: Value,
     pub capabilities: Vec<AgentCapability>,
     pub observed_at: DateTime<Utc>,
 }
@@ -322,6 +323,7 @@ impl HostRepository<'_> {
             display_name: Set(hostname),
             status: Set(serialize_host_status(HostStatus::Online)),
             labels: Set(json!(["agent"])),
+            system_profile: Set(json!({})),
             last_seen_at: Set(Some(observed_at.into())),
             created_at: Set(now.into()),
             updated_at: Set(now.into()),
@@ -369,6 +371,7 @@ impl HostRepository<'_> {
             status,
             last_seen_at,
             capabilities,
+            system_profile: host.system_profile,
         })
     }
 }
@@ -390,6 +393,7 @@ impl AgentRepository<'_> {
             &transaction,
             registration.host_id,
             registration.hostname,
+            registration.system_profile.clone(),
             registration.observed_at,
         )
         .await?;
@@ -424,7 +428,8 @@ impl AgentRepository<'_> {
                 event_type: "agent_enrolled".to_string(),
                 event_json: json!({
                     "agent_id": registration.agent_id,
-                    "host_id": registration.host_id
+                    "host_id": registration.host_id,
+                    "system_profile": registration.system_profile
                 }),
                 recorded_at: registration.observed_at,
             },
@@ -1113,6 +1118,7 @@ async fn upsert_host<C>(
     connection: &C,
     host_id: Uuid,
     hostname: String,
+    system_profile: Value,
     observed_at: DateTime<Utc>,
 ) -> Result<(), DbErr>
 where
@@ -1125,6 +1131,7 @@ where
         display_name: Set(hostname),
         status: Set(serialize_host_status(HostStatus::Online)),
         labels: Set(json!(["agent"])),
+        system_profile: Set(system_profile),
         last_seen_at: Set(Some(observed_at.into())),
         created_at: Set(now.into()),
         updated_at: Set(now.into()),
@@ -1135,6 +1142,7 @@ where
                 entities::hosts::Column::Hostname,
                 entities::hosts::Column::DisplayName,
                 entities::hosts::Column::Status,
+                entities::hosts::Column::SystemProfile,
                 entities::hosts::Column::LastSeenAt,
                 entities::hosts::Column::UpdatedAt,
             ])
@@ -1256,6 +1264,10 @@ fn migrations() -> &'static [Migration] {
             id: "202605270004_users_refresh_tokens",
             sql: AUTH_SCHEMA_SQL,
         },
+        Migration {
+            id: "202605280001_host_system_profile",
+            sql: HOST_SYSTEM_PROFILE_SQL,
+        },
     ]
 }
 
@@ -1279,6 +1291,7 @@ CREATE TABLE IF NOT EXISTS hosts (
     display_name TEXT NOT NULL,
     status TEXT NOT NULL,
     labels JSONB NOT NULL DEFAULT '[]'::jsonb,
+    system_profile JSONB NOT NULL DEFAULT '{}'::jsonb,
     last_seen_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
@@ -1586,6 +1599,11 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_tokens_status ON refresh_tokens(status);
+"#;
+
+const HOST_SYSTEM_PROFILE_SQL: &str = r#"
+ALTER TABLE hosts
+    ADD COLUMN IF NOT EXISTS system_profile JSONB NOT NULL DEFAULT '{}'::jsonb;
 "#;
 
 fn stored_user(user: entities::users::Model) -> StoredUser {
@@ -2045,6 +2063,7 @@ mod tests {
             display_name: "homelab-node".to_string(),
             status: status.to_string(),
             labels: json!(["agent"]),
+            system_profile: json!({}),
             last_seen_at,
             created_at: Utc::now().into(),
             updated_at: Utc::now().into(),
