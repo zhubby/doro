@@ -156,6 +156,8 @@ fn apply_agent_overrides(
     }
     if let Some(enrollment_token) = overrides.enrollment_token {
         loaded_config.config.agent.enrollment_token = Some(enrollment_token);
+        loaded_config.config.agent.agent_id = None;
+        loaded_config.config.agent.host_id = None;
     }
     if let Some(agent_id) = overrides.agent_id {
         loaded_config.config.agent.agent_id = Some(agent_id);
@@ -299,6 +301,42 @@ mod tests {
         assert_eq!(loaded_config.config.agent.agent_id, Some(agent_id));
         assert_eq!(loaded_config.config.agent.host_id, Some(host_id));
         assert_eq!(loaded_config.config.agent.heartbeat_interval_seconds, 15);
+
+        Ok(())
+    }
+
+    #[test]
+    fn enrollment_token_override_resets_persisted_identity() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("config.toml");
+        let loaded_config = doro_config::LoadedConfig {
+            path,
+            config: doro_config::DoroConfig {
+                agent: doro_config::AgentConfig {
+                    enrollment_token: Some("old-token".to_string()),
+                    agent_id: Some(uuid::Uuid::new_v4()),
+                    host_id: Some(uuid::Uuid::new_v4()),
+                    ..doro_config::AgentConfig::default()
+                },
+                ..doro_config::DoroConfig::default()
+            },
+            created: false,
+        };
+
+        let loaded_config = apply_agent_overrides(
+            loaded_config,
+            AgentOverrides {
+                enrollment_token: Some("new-token".to_string()),
+                ..AgentOverrides::default()
+            },
+        );
+
+        assert_eq!(
+            loaded_config.config.agent.enrollment_token.as_deref(),
+            Some("new-token")
+        );
+        assert_eq!(loaded_config.config.agent.agent_id, None);
+        assert_eq!(loaded_config.config.agent.host_id, None);
 
         Ok(())
     }

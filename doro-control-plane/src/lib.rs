@@ -1011,6 +1011,13 @@ fn json_f32(payload: &Value, key: &str) -> Option<f32> {
 }
 
 fn store_status(error: sea_orm::DbErr) -> Status {
+    if let sea_orm::DbErr::Custom(message) = &error
+        && message.contains("is not enrolled")
+    {
+        tracing::warn!(%error, "agent identity is not enrolled");
+        return Status::failed_precondition(message.clone());
+    }
+
     tracing::error!(%error, "store operation failed");
     Status::internal("store operation failed")
 }

@@ -460,6 +460,7 @@ impl AgentRepository<'_> {
 
     pub async fn heartbeat(&self, heartbeat: AgentHeartbeat) -> Result<(), DbErr> {
         let transaction = self.store.connection().begin().await?;
+        ensure_host_exists(&transaction, heartbeat.host_id).await?;
         upsert_agent(
             &transaction,
             heartbeat.agent_id,
@@ -503,6 +504,7 @@ impl AgentRepository<'_> {
         observed_at: DateTime<Utc>,
     ) -> Result<(), DbErr> {
         let transaction = self.store.connection().begin().await?;
+        ensure_host_exists(&transaction, host_id).await?;
         upsert_agent(&transaction, agent_id, host_id, observed_at, "online").await?;
         entities::hosts::Entity::update_many()
             .col_expr(
@@ -1206,6 +1208,22 @@ where
     )
     .exec(connection)
     .await?;
+    Ok(())
+}
+
+async fn ensure_host_exists<C>(connection: &C, host_id: Uuid) -> Result<(), DbErr>
+where
+    C: ConnectionTrait,
+{
+    let exists = entities::hosts::Entity::find_by_id(host_id)
+        .one(connection)
+        .await?
+        .is_some();
+    if !exists {
+        return Err(DbErr::Custom(format!(
+            "agent host {host_id} is not enrolled"
+        )));
+    }
     Ok(())
 }
 
