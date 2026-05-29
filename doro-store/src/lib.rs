@@ -111,6 +111,7 @@ pub struct NewContainerObservation {
     pub status: String,
     pub ports: Value,
     pub labels: Value,
+    pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -803,6 +804,7 @@ impl ContainerRepository<'_> {
                 status: Set(container.status),
                 ports: Set(container.ports),
                 labels: Set(container.labels),
+                created_at: Set(container.created_at.map(Into::into)),
                 observed_at: Set(container.observed_at.into()),
             })
             .on_conflict(
@@ -817,6 +819,7 @@ impl ContainerRepository<'_> {
                     entities::containers::Column::Status,
                     entities::containers::Column::Ports,
                     entities::containers::Column::Labels,
+                    entities::containers::Column::CreatedAt,
                     entities::containers::Column::ObservedAt,
                 ])
                 .to_owned(),
@@ -845,6 +848,7 @@ impl ContainerRepository<'_> {
                 status: container.status,
                 ports: container.ports,
                 labels: container.labels,
+                created_at: container.created_at.map(Into::into),
                 observed_at: container.observed_at.into(),
             })
             .collect())

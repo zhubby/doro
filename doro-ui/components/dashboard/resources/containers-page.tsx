@@ -1,9 +1,22 @@
 "use client";
 
+import { Filter, RefreshCw, Search } from "lucide-react";
+import { useMemo, useState } from "react";
+
 import { ResourceStatusBadge, TruncatedText } from "@/components/admin/data-table";
 import { ResourceListPage } from "@/components/dashboard/resources/resource-list-page";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { HostContainer } from "@/types/api";
-import type { ContainerResource, ResourceColumn } from "@/types/dashboard";
+import type { ContainerResource, ResourceColumn, ResourceStatus } from "@/types/dashboard";
 
 const columns: ResourceColumn<ContainerResource>[] = [
   {
@@ -46,6 +59,13 @@ type ContainersPageProps = {
   apiError?: string | null;
 };
 
+const statusLabels: Record<ResourceStatus | "all", string> = {
+  all: "全部状态",
+  running: "运行中",
+  warning: "需关注",
+  stopped: "已停止",
+};
+
 function resourceStatus(status: string): ContainerResource["status"] {
   if (status === "running") {
     return "running";
@@ -86,7 +106,7 @@ function toContainerResource(container: HostContainer): ContainerResource {
     cpu: "-",
     memory: "-",
     ports: formatPorts(container.ports),
-    updatedAt: new Date(container.observed_at).toLocaleString("zh-CN"),
+    updatedAt: new Date(container.created_at ?? container.observed_at).toLocaleString("zh-CN"),
   };
 }
 
@@ -94,15 +114,77 @@ export function ContainersPage({
   containers = [],
   apiError,
 }: ContainersPageProps) {
-  const rows = containers.map(toContainerResource);
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<ResourceStatus | "all">("all");
+  const rows = useMemo(() => containers.map(toContainerResource), [containers]);
+  const filteredRows = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      const matchesStatus = status === "all" || row.status === status;
+      const matchesQuery =
+        normalizedQuery.length === 0 ||
+        row.name.toLowerCase().includes(normalizedQuery) ||
+        row.id.toLowerCase().includes(normalizedQuery);
+
+      return matchesStatus && matchesQuery;
+    });
+  }, [query, rows, status]);
+  const refresh = () => {
+    window.location.reload();
+  };
 
   return (
     <ResourceListPage
       title="容器"
       description="来自 Agent 单向采集的容器运行状态。"
       rows={rows}
+      filteredRows={filteredRows}
       columns={columns}
       rowActions={[]}
+      showStatusChips={false}
+      toolbarRight={
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <label className="relative min-w-0 sm:w-64">
+            <Search
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <span className="sr-only">搜索容器</span>
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索名称或 Hash"
+              className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </label>
+          <Button variant="outline" size="icon" aria-label="刷新" onClick={refresh}>
+            <RefreshCw className="size-4" aria-hidden="true" />
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="justify-start">
+                <Filter className="size-4" aria-hidden="true" />
+                {statusLabels[status]}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>状态筛选</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup
+                value={status}
+                onValueChange={(value) => setStatus(value as ResourceStatus | "all")}
+              >
+                {(["all", "running", "warning", "stopped"] as const).map((value) => (
+                  <DropdownMenuRadioItem key={value} value={value}>
+                    {statusLabels[value]}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      }
       notice={
         apiError ? (
           <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">

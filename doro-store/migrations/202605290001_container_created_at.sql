@@ -1,0 +1,2 @@
+ALTER TABLE containers
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ;

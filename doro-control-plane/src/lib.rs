@@ -1347,6 +1347,10 @@ fn container_observation(
             .get("labels")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        created_at: container
+            .get("created")
+            .and_then(Value::as_i64)
+            .and_then(|seconds| Utc.timestamp_opt(seconds, 0).single()),
         observed_at: recorded_at,
     })
 }

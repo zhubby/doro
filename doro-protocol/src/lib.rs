@@ -176,6 +176,7 @@ pub struct HostContainer {
     pub status: String,
     pub ports: Value,
     pub labels: Value,
+    pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
 }
 
