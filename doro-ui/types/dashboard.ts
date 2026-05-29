@@ -66,6 +66,7 @@ export type ResourceColumn<T> = {
   key: keyof T | string;
   label: string;
   className?: string;
+  width?: string;
   render?: (row: T) => React.ReactNode;
 };
 

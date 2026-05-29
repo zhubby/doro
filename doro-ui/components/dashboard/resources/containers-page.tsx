@@ -1,6 +1,6 @@
 "use client";
 
-import { ResourceStatusBadge } from "@/components/admin/data-table";
+import { ResourceStatusBadge, TruncatedText } from "@/components/admin/data-table";
 import { ResourceListPage } from "@/components/dashboard/resources/resource-list-page";
 import type { HostContainer } from "@/types/api";
 import type { ContainerResource, ResourceColumn } from "@/types/dashboard";
@@ -9,32 +9,36 @@ const columns: ResourceColumn<ContainerResource>[] = [
   {
     key: "name",
     label: "名称",
+    width: "34%",
     render: (row) => (
-      <div>
-        <p className="font-medium">{row.name}</p>
-        <p className="text-xs text-muted-foreground">{row.id}</p>
+      <div className="min-w-0">
+        <p className="truncate font-medium" title={row.name}>
+          {row.name}
+        </p>
+        <p className="truncate text-xs text-muted-foreground" title={row.id}>
+          {row.id}
+        </p>
       </div>
     ),
   },
-  { key: "image", label: "镜像" },
+  {
+    key: "image",
+    label: "镜像",
+    width: "34%",
+    render: (row) => <TruncatedText value={row.image} />,
+  },
   {
     key: "status",
     label: "状态",
+    width: "6rem",
     render: (row) => <ResourceStatusBadge status={row.status} />,
   },
-  { key: "source", label: "来源" },
   {
-    key: "resource",
-    label: "资源",
-    render: (row) => (
-      <div className="space-y-1 text-xs">
-        <p>CPU: {row.cpu}</p>
-        <p>内存: {row.memory}</p>
-      </div>
-    ),
+    key: "updatedAt",
+    label: "更新时间",
+    width: "9rem",
+    render: (row) => <TruncatedText value={row.updatedAt} />,
   },
-  { key: "ports", label: "端口" },
-  { key: "updatedAt", label: "更新时间" },
 ];
 
 type ContainersPageProps = {

@@ -13,10 +13,13 @@ pub mod grpc {
 }
 
 pub fn protobuf_timestamp_now() -> prost_types::Timestamp {
-    let now = Utc::now();
+    protobuf_timestamp_from_utc(Utc::now())
+}
+
+pub fn protobuf_timestamp_from_utc(value: DateTime<Utc>) -> prost_types::Timestamp {
     prost_types::Timestamp {
-        seconds: now.timestamp(),
-        nanos: now.timestamp_subsec_nanos() as i32,
+        seconds: value.timestamp(),
+        nanos: value.timestamp_subsec_nanos() as i32,
     }
 }
 
@@ -353,12 +356,18 @@ mod tests {
     fn generated_grpc_types_are_available() {
         let command = grpc::ControlPlaneCommand {
             command_id: "command-1".to_string(),
-            kind: "ack".to_string(),
-            payload_json: "{}".to_string(),
-            requires_approval: false,
+            issued_at: None,
+            command: Some(grpc::control_plane_command::Command::Shutdown(
+                grpc::ShutdownCommand {
+                    reason: "control-plane shutting down".to_string(),
+                },
+            )),
         };
 
-        assert_eq!(command.kind, "ack");
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::Shutdown(_))
+        ));
     }
 
     #[test]

@@ -67,7 +67,7 @@ impl LocalCollectors {
         let mut events = vec![CollectorEvent::Metrics(self.collect_metrics(host_id))];
 
         if self.config.container_metrics_enabled {
-            match collect_containers(self.config.docker_socket_path.as_deref()).await {
+            match collect_container_snapshot(self.config.docker_socket_path.as_deref()).await {
                 Ok(payload) => events.push(CollectorEvent::Containers(payload)),
                 Err(error) => events.push(CollectorEvent::Error {
                     collector: "containers",
@@ -327,7 +327,7 @@ fn merge_extra(extra: &mut Value, key: &str, value: Value) {
     }
 }
 
-async fn collect_containers(socket_path: Option<&str>) -> anyhow::Result<Value> {
+pub async fn collect_container_snapshot(socket_path: Option<&str>) -> anyhow::Result<Value> {
     let docker = match socket_path {
         Some(path) => Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION),
         None => Docker::connect_with_unix_defaults(),

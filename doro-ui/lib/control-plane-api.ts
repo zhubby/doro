@@ -282,6 +282,10 @@ export async function getHostContainers(hostId: string) {
   return getJson<ListHostContainersResponse>(`/api/v1/hosts/${hostId}/containers`);
 }
 
+export async function refreshContainers() {
+  return getJson<ListHostContainersResponse>("/api/v1/containers");
+}
+
 export async function getTasks() {
   return getJson<ListTasksResponse>("/api/v1/tasks");
 }
