@@ -1,10 +1,3 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 type PageSectionProps = {
@@ -25,29 +18,21 @@ export function PageSection({
   contentClassName,
 }: PageSectionProps) {
   return (
-    <Card className={cn("flex flex-col", className)}>
+    <section className={cn("flex flex-col", className)}>
       {(title || description || toolbar) && (
-        <CardHeader>
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-            <div>
-              {title ? <CardTitle>{title}</CardTitle> : null}
-              {description ? (
-                <CardDescription>{description}</CardDescription>
-              ) : null}
-            </div>
-            {toolbar ? <div className="flex flex-wrap gap-2">{toolbar}</div> : null}
+        <div className="mb-3 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            {title ? (
+              <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+            ) : null}
+            {description ? (
+              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+            ) : null}
           </div>
-        </CardHeader>
+          {toolbar ? <div className="flex flex-wrap gap-2">{toolbar}</div> : null}
+        </div>
       )}
-      <CardContent
-        className={cn(
-          "min-h-0",
-          !title && !description && "pt-6",
-          contentClassName,
-        )}
-      >
-        {children}
-      </CardContent>
-    </Card>
+      <div className={cn("min-h-0", contentClassName)}>{children}</div>
+    </section>
   );
 }

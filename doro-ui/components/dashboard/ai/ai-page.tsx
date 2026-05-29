@@ -47,11 +47,7 @@ export function AiPage() {
         </PageSection>
       }
     >
-      <PageSection
-        title="AI"
-        description="承接 1Panel AI 工具模块，展示智能体、模型和任务运行入口。"
-        contentClassName="space-y-4"
-      >
+      <PageSection contentClassName="space-y-4">
         <Toolbar
           left={
             <>

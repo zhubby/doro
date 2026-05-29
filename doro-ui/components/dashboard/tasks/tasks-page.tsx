@@ -70,10 +70,7 @@ export function TasksPage({ tasks, apiError }: TasksPageProps) {
           控制平面暂不可用：{apiError}
         </div>
       ) : null}
-      <PageSection
-        title="任务"
-        description="控制面下发的任务、步骤和执行状态。"
-      >
+      <PageSection>
         <DataTable
           columns={taskColumns}
           rows={tasks}
@@ -84,4 +81,3 @@ export function TasksPage({ tasks, apiError }: TasksPageProps) {
     </PageContainer>
   );
 }
-

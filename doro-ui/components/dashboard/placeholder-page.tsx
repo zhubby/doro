@@ -8,13 +8,13 @@ type PlaceholderPageProps = {
 };
 
 export function PlaceholderPage({
-  title,
-  description,
+  title: _title,
+  description: _description,
   items,
 }: PlaceholderPageProps) {
   return (
     <PageContainer>
-      <PageSection title={title} description={description}>
+      <PageSection>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {items.map((item) => (
             <div key={item} className="rounded-lg border p-4">

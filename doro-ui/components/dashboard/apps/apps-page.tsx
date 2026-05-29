@@ -162,11 +162,11 @@ export function AppsPage({ apiError }: AppsPageProps) {
           { label: "运行中", value: runningCount, helper: "可直接进入控制台" },
           { label: "需关注", value: warningCount, helper: "资源或快照策略异常" },
         ].map((stat) => (
-          <PageSection key={stat.label} contentClassName="pt-6">
+          <div key={stat.label} className="rounded-md bg-muted/35 px-4 py-3">
             <p className="text-sm text-muted-foreground">{stat.label}</p>
-            <p className="mt-2 text-3xl font-semibold">{stat.value}</p>
+            <p className="mt-1 text-lg font-semibold leading-6">{stat.value}</p>
             <p className="mt-1 text-sm text-muted-foreground">{stat.helper}</p>
-          </PageSection>
+          </div>
         ))}
       </div>
 
@@ -178,11 +178,7 @@ export function AppsPage({ apiError }: AppsPageProps) {
         />
       </PageSection>
 
-      <PageSection
-        title="虚拟机"
-        description="管理虚拟机生命周期、资源分配、控制台入口和快照状态。"
-        contentClassName="space-y-4"
-      >
+      <PageSection contentClassName="space-y-4">
         <Toolbar
           left={
             <>

@@ -64,10 +64,7 @@ export function ApprovalsPage({ approvals, apiError }: ApprovalsPageProps) {
           控制平面暂不可用：{apiError}
         </div>
       ) : null}
-      <PageSection
-        title="审批"
-        description="控制平面对高风险操作生成的审批请求。"
-      >
+      <PageSection>
         <DataTable
           columns={approvalColumns}
           rows={approvals}
@@ -78,4 +75,3 @@ export function ApprovalsPage({ approvals, apiError }: ApprovalsPageProps) {
     </PageContainer>
   );
 }
-

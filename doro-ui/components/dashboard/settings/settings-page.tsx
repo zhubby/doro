@@ -43,10 +43,7 @@ export function SettingsPage({ settings, apiError }: SettingsPageProps) {
           控制平面暂不可用：{apiError}
         </div>
       ) : null}
-      <PageSection
-        title="面板设置"
-        description="控制平面公开的运行配置。"
-      >
+      <PageSection>
         <SettingList settings={controlPlaneSettings} />
       </PageSection>
     </PageContainer>

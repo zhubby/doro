@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 
-import { PageSection } from "@/components/admin/page-section";
-import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -82,8 +80,51 @@ function formatTime(value: string) {
 }
 
 function LogViewer({ entries, state, error, emptyText }: LogViewerProps) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [height, setHeight] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    function updateHeight() {
+      const element = frameRef.current;
+      if (!element) {
+        return;
+      }
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      const top = element.getBoundingClientRect().top;
+      setHeight(Math.max(320, Math.floor(viewportHeight - top - 24)));
+    }
+
+    updateHeight();
+    window.addEventListener("resize", updateHeight);
+    window.visualViewport?.addEventListener("resize", updateHeight);
+
+    const observer = new ResizeObserver(updateHeight);
+    if (frameRef.current?.parentElement) {
+      observer.observe(frameRef.current.parentElement);
+    }
+
+    return () => {
+      window.removeEventListener("resize", updateHeight);
+      window.visualViewport?.removeEventListener("resize", updateHeight);
+      observer.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    element.scrollTop = element.scrollHeight;
+  }, [entries.length]);
+
   return (
-    <div className="flex min-h-[520px] flex-col overflow-hidden rounded-md border bg-background">
+    <div
+      className="flex min-h-0 flex-col overflow-hidden rounded-md border bg-background"
+      ref={frameRef}
+      style={height ? { height } : undefined}
+    >
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="text-sm text-muted-foreground">
           {entries.length} 条日志
@@ -97,29 +138,37 @@ function LogViewer({ entries, state, error, emptyText }: LogViewerProps) {
           {error}
         </div>
       ) : null}
-      <div className="min-h-0 flex-1 overflow-auto bg-zinc-950 p-3 text-zinc-100">
+      <div
+        className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-3 text-foreground dark:bg-zinc-950 dark:text-zinc-100"
+        ref={scrollRef}
+      >
         {entries.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-sm text-zinc-400">
+          <div className="flex h-full items-center justify-center text-sm text-muted-foreground dark:text-zinc-400">
             {emptyText}
           </div>
         ) : (
           <div className="space-y-1 font-mono text-xs leading-5">
             {entries.map((entry) => (
               <div
-                className="grid grid-cols-[72px_72px_minmax(120px,220px)_1fr] gap-3 rounded px-2 py-1 hover:bg-white/5"
+                className="grid grid-cols-[72px_72px_minmax(120px,220px)_1fr] gap-3 rounded px-2 py-1 hover:bg-muted/60 dark:hover:bg-white/5"
                 key={entry.id}
               >
-                <span className="text-zinc-400">{formatTime(entry.recorded_at)}</span>
+                <span className="text-muted-foreground dark:text-zinc-400">
+                  {formatTime(entry.recorded_at)}
+                </span>
                 <Badge
                   className="h-5 justify-center px-1.5 font-mono uppercase"
                   variant={levelVariant(entry.level)}
                 >
                   {entry.level}
                 </Badge>
-                <span className="truncate text-zinc-400" title={entry.target}>
+                <span
+                  className="truncate text-muted-foreground dark:text-zinc-400"
+                  title={entry.target}
+                >
                   {entry.target}
                 </span>
-                <span className="min-w-0 break-words text-zinc-100">
+                <span className="min-w-0 break-words text-foreground dark:text-zinc-100">
                   {entry.message || JSON.stringify(entry.fields)}
                 </span>
               </div>
@@ -264,64 +313,73 @@ export default function LogsRoute() {
   }, [selectedHostId]);
 
   return (
-    <PageContainer>
-      <PageSection
-        title="日志"
-        description="控制平面与 Agent 的实时程序日志。"
+    <div className="box-border min-h-0 flex-1 overflow-hidden p-6">
+      <Tabs
+        className="flex min-h-0 flex-col gap-2"
+        value={tab}
+        onValueChange={setTab}
       >
-        <Tabs value={tab} onValueChange={setTab}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <TabsList>
-              <TabsTrigger value="control-plane">控制平面日志</TabsTrigger>
-              <TabsTrigger value="agent">Agent 日志</TabsTrigger>
-            </TabsList>
-            {tab === "agent" ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline">
-                    {selectedHost?.display_name ?? "选择 Agent"}
-                    <ChevronDown />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-64">
-                  <DropdownMenuLabel>Agent</DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={selectedHostId}
-                    onValueChange={setSelectedHostId}
-                  >
-                    {hosts.map((host) => (
-                      <DropdownMenuRadioItem key={host.id} value={host.id}>
-                        {host.display_name}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-                <RefreshCw />
-                刷新
-              </Button>
-            )}
-          </div>
-          <TabsContent value="control-plane">
-            <LogViewer
-              entries={controlPlaneLogs}
-              state={controlPlaneState}
-              error={error}
-              emptyText="暂无控制平面日志"
-            />
-          </TabsContent>
-          <TabsContent value="agent">
-            <LogViewer
-              entries={agentLogs}
-              state={agentState}
-              error={error}
-              emptyText={selectedHostId ? "暂无 Agent 日志" : "请选择 Agent"}
-            />
-          </TabsContent>
-        </Tabs>
-      </PageSection>
-    </PageContainer>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList>
+            <TabsTrigger value="control-plane">控制平面日志</TabsTrigger>
+            <TabsTrigger value="agent">Agent 日志</TabsTrigger>
+          </TabsList>
+          {tab === "agent" ? (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline">
+                  {selectedHost?.display_name ?? "选择 Agent"}
+                  <ChevronDown />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Agent</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={selectedHostId}
+                  onValueChange={setSelectedHostId}
+                >
+                  {hosts.map((host) => (
+                    <DropdownMenuRadioItem key={host.id} value={host.id}>
+                      {host.display_name}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => window.location.reload()}
+            >
+              <RefreshCw />
+              刷新
+            </Button>
+          )}
+        </div>
+        <TabsContent
+          className="mt-0 min-h-0 overflow-hidden"
+          value="control-plane"
+        >
+          <LogViewer
+            entries={controlPlaneLogs}
+            state={controlPlaneState}
+            error={error}
+            emptyText="暂无控制平面日志"
+          />
+        </TabsContent>
+        <TabsContent
+          className="mt-0 min-h-0 overflow-hidden"
+          value="agent"
+        >
+          <LogViewer
+            entries={agentLogs}
+            state={agentState}
+            error={error}
+            emptyText={selectedHostId ? "暂无 Agent 日志" : "请选择 Agent"}
+          />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

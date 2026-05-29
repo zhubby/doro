@@ -14,6 +14,16 @@ import type { Host } from "@/types/api";
 const TERMINAL_COLS = 100;
 const TERMINAL_ROWS = 28;
 
+function fitTerminal(fitAddon: FitAddon | null) {
+  try {
+    fitAddon?.fit();
+  } catch (error) {
+    if (!(error instanceof TypeError)) {
+      throw error;
+    }
+  }
+}
+
 function hostLabel(host: Host) {
   return host.display_name || host.hostname;
 }
@@ -54,11 +64,11 @@ export function TerminalPage() {
     fitAddonRef.current = fitAddon;
     if (terminalNode.current) {
       terminal.open(terminalNode.current);
-      fitAddon.fit();
+      requestAnimationFrame(() => fitTerminal(fitAddon));
       terminal.writeln("选择 Agent 后连接终端。");
     }
     function handleResize() {
-      fitAddon.fit();
+      fitTerminal(fitAddon);
       const socket = socketRef.current;
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(
@@ -125,7 +135,7 @@ export function TerminalPage() {
     setError(null);
     terminalRef.current?.reset();
     terminalRef.current?.writeln("正在连接 Agent 终端...");
-    fitAddonRef.current?.fit();
+    fitTerminal(fitAddonRef.current);
     const cols = terminalRef.current?.cols ?? TERMINAL_COLS;
     const rows = terminalRef.current?.rows ?? TERMINAL_ROWS;
     const url = await terminalSessionWebSocketUrl(
@@ -165,10 +175,7 @@ export function TerminalPage() {
 
   return (
     <PageContainer>
-      <PageSection
-        title="终端"
-        description="选择在线 Agent，执行一次性命令并查看返回输出。"
-      >
+      <PageSection>
         <div className="grid gap-4 xl:grid-cols-[280px_minmax(0,1fr)]">
           <div className="space-y-4 rounded-lg border bg-card p-4">
             <div className="flex items-center gap-2 text-sm font-medium">

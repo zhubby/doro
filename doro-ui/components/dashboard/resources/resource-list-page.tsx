@@ -35,8 +35,8 @@ const labels: Record<ResourceStatus | "all", string> = {
 };
 
 export function ResourceListPage<T extends { id: string; status: ResourceStatus }>({
-  title,
-  description,
+  title: _title,
+  description: _description,
   rows,
   columns,
   createLabel,
@@ -88,7 +88,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
         </PageSection>
       ) : null}
 
-      <PageSection title={title} description={description} contentClassName="space-y-4">
+      <PageSection contentClassName="space-y-4">
         <Toolbar
           left={
             <>

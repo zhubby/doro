@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 
 import { DataTable } from "@/components/admin/data-table";
-import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
   DialogClose,
@@ -445,10 +443,8 @@ export function HostsPage({
           控制平面暂不可用：{apiError}
         </div>
       ) : null}
-      <PageSection
-        title="主机"
-        description="来自控制平面的 Agent 注册状态、能力声明和心跳。"
-        toolbar={
+      <div className="space-y-4">
+        <div className="flex justify-end">
           <Dialog open={hostDialogOpen} onOpenChange={handleHostDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
@@ -529,37 +525,34 @@ export function HostsPage({
               </div>
             </DialogContent>
           </Dialog>
-        }
-      >
-        <div className="mb-4 grid gap-3 md:grid-cols-3">
-          <Card>
-            <CardContent className="flex items-center gap-3 p-4">
-              <Server className="size-4 text-muted-foreground" />
-              <div>
-                <p className="text-xs text-muted-foreground">已注册 Agent</p>
-                <p className="text-xl font-semibold">{hosts.length}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center gap-3 p-4">
-              <Activity className="size-4 text-muted-foreground" />
-              <div>
-                <p className="text-xs text-muted-foreground">当前在线</p>
-                <p className="text-xl font-semibold">{onlineHosts}</p>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="flex items-center gap-3 p-4">
-              <Cpu className="size-4 text-muted-foreground" />
-              <div>
-                <p className="text-xs text-muted-foreground">声明能力</p>
-                <p className="text-xl font-semibold">{declaredCapabilities}</p>
-              </div>
-            </CardContent>
-          </Card>
         </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="flex items-center gap-3 rounded-md bg-muted/35 px-4 py-3">
+            <Server className="size-4 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">已注册 Agent</p>
+              <p className="text-lg font-semibold leading-6">{hosts.length}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-md bg-muted/35 px-4 py-3">
+            <Activity className="size-4 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">当前在线</p>
+              <p className="text-lg font-semibold leading-6">{onlineHosts}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-md bg-muted/35 px-4 py-3">
+            <Cpu className="size-4 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">声明能力</p>
+              <p className="text-lg font-semibold leading-6">
+                {declaredCapabilities}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <DataTable
           columns={hostColumns(metricHistoryByHost)}
           rows={hosts}
@@ -593,7 +586,7 @@ export function HostsPage({
           )}
           emptyText="暂无已连接 Agent"
         />
-      </PageSection>
+      </div>
       <Dialog
         open={Boolean(editTarget)}
         onOpenChange={(open) => {
