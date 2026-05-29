@@ -100,6 +100,7 @@ impl Agent {
         Host {
             id: self.config.host_id,
             hostname: self.config.hostname.clone(),
+            display_name: self.config.hostname.clone(),
             labels: vec!["agent".to_string()],
             status: HostStatus::Online,
             last_seen_at: Some(Utc::now()),
