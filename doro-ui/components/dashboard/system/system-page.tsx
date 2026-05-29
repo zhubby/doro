@@ -32,6 +32,43 @@ function formatLoad(value?: number) {
   return value.toFixed(2);
 }
 
+function objectValue(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function formatBytes(bytes?: number | null) {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes)) {
+    return "-";
+  }
+  if (bytes < 1024) {
+    return `${bytes.toFixed(0)} B`;
+  }
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatBytesPerSecond(bytes?: number | null) {
+  const formatted = formatBytes(bytes);
+  return formatted === "-" ? "-" : `${formatted}/s`;
+}
+
 function metricProgress(value?: number) {
   if (typeof value !== "number" || Number.isNaN(value)) {
     return 0;
@@ -78,11 +115,140 @@ function liveTrafficMetrics(metric?: MetricSnapshot | null): Metric[] {
   ];
 }
 
+function networkMetrics(metric?: MetricSnapshot | null): Metric[] {
+  const extra = objectValue(metric?.extra);
+  const networks = Array.isArray(extra?.networks) ? extra.networks : [];
+  const totals = networks.reduce(
+    (current, network) => {
+      const networkObject = objectValue(network);
+      return {
+        receivedBytesPerSecond:
+          current.receivedBytesPerSecond +
+          (numberValue(networkObject?.received_bytes_per_second) ?? 0),
+        transmittedBytesPerSecond:
+          current.transmittedBytesPerSecond +
+          (numberValue(networkObject?.transmitted_bytes_per_second) ?? 0),
+        totalReceivedBytes:
+          current.totalReceivedBytes +
+          (numberValue(networkObject?.total_received_bytes) ?? 0),
+        totalTransmittedBytes:
+          current.totalTransmittedBytes +
+          (numberValue(networkObject?.total_transmitted_bytes) ?? 0),
+      };
+    },
+    {
+      receivedBytesPerSecond: 0,
+      transmittedBytesPerSecond: 0,
+      totalReceivedBytes: 0,
+      totalTransmittedBytes: 0,
+    },
+  );
+
+  const activeInterface = networks
+    .map((network) => objectValue(network))
+    .filter((network): network is Record<string, unknown> => Boolean(network))
+    .sort(
+      (left, right) =>
+        (numberValue(right.received_bytes_per_second) ?? 0) +
+        (numberValue(right.transmitted_bytes_per_second) ?? 0) -
+        ((numberValue(left.received_bytes_per_second) ?? 0) +
+          (numberValue(left.transmitted_bytes_per_second) ?? 0)),
+    )[0];
+
+  return [
+    {
+      label: "网络下行",
+      value: metric ? formatBytesPerSecond(totals.receivedBytesPerSecond) : "等待采集",
+    },
+    {
+      label: "网络上行",
+      value: metric ? formatBytesPerSecond(totals.transmittedBytesPerSecond) : "等待采集",
+    },
+    {
+      label: "累计接收",
+      value: metric ? formatBytes(totals.totalReceivedBytes) : "等待采集",
+    },
+    {
+      label: "活跃接口",
+      value:
+        stringValue(activeInterface?.name) ??
+        (metric && networks.length === 0 ? "暂无接口数据" : "等待采集"),
+    },
+  ];
+}
+
+function diskIoMetrics(metric?: MetricSnapshot | null): Metric[] {
+  const extra = objectValue(metric?.extra);
+  const disks = Array.isArray(extra?.disk_io) ? extra.disk_io : [];
+  const totals = disks.reduce(
+    (current, disk) => {
+      const diskObject = objectValue(disk);
+      return {
+        readBytesPerSecond:
+          current.readBytesPerSecond +
+          (numberValue(diskObject?.read_bytes_per_second) ?? 0),
+        writeBytesPerSecond:
+          current.writeBytesPerSecond +
+          (numberValue(diskObject?.write_bytes_per_second) ?? 0),
+        totalReadBytes:
+          current.totalReadBytes +
+          (numberValue(diskObject?.total_read_bytes) ?? 0),
+        totalWrittenBytes:
+          current.totalWrittenBytes +
+          (numberValue(diskObject?.total_written_bytes) ?? 0),
+      };
+    },
+    {
+      readBytesPerSecond: 0,
+      writeBytesPerSecond: 0,
+      totalReadBytes: 0,
+      totalWrittenBytes: 0,
+    },
+  );
+
+  const busiestDisk = disks
+    .map((disk) => objectValue(disk))
+    .filter((disk): disk is Record<string, unknown> => Boolean(disk))
+    .sort(
+      (left, right) =>
+        (numberValue(right.read_bytes_per_second) ?? 0) +
+        (numberValue(right.write_bytes_per_second) ?? 0) -
+        ((numberValue(left.read_bytes_per_second) ?? 0) +
+          (numberValue(left.write_bytes_per_second) ?? 0)),
+    )[0];
+
+  return [
+    {
+      label: "磁盘读取",
+      value: metric ? formatBytesPerSecond(totals.readBytesPerSecond) : "等待采集",
+    },
+    {
+      label: "磁盘写入",
+      value: metric ? formatBytesPerSecond(totals.writeBytesPerSecond) : "等待采集",
+    },
+    {
+      label: "累计读写",
+      value: metric
+        ? `${formatBytes(totals.totalReadBytes)} / ${formatBytes(totals.totalWrittenBytes)}`
+        : "等待采集",
+    },
+    {
+      label: "主要磁盘",
+      value:
+        stringValue(busiestDisk?.mount_point) ??
+        stringValue(busiestDisk?.name) ??
+        (metric && disks.length === 0 ? "暂无磁盘 IO 数据" : "等待采集"),
+    },
+  ];
+}
+
 export function SystemPage({ hosts = [], metric, apiError }: SystemPageProps) {
   const selectedHost =
     hosts.find((host) => host.id === metric?.host_id) ?? hosts[0];
   const liveMetrics = systemMetrics(metric);
   const detailMetrics = liveTrafficMetrics(metric);
+  const trafficMetrics = networkMetrics(metric);
+  const diskMetrics = diskIoMetrics(metric);
 
   return (
     <PageContainer
@@ -154,8 +320,15 @@ export function SystemPage({ hosts = [], metric, apiError }: SystemPageProps) {
         </div>
       </PageSection>
 
-      <PageSection title="磁盘 IO" description="细粒度磁盘、网络、进程和 GPU 明细已保存在事件 payload。">
-        <MetricGrid metrics={[{ label: "明细来源", value: "agent_events / metric extra" }]} />
+      <PageSection title="网络 IO" description="按 Agent 最新快照汇总的接口吞吐。">
+        <MetricGrid metrics={trafficMetrics} />
+        <div className="mt-6">
+          <TrendPreview label="网络吞吐趋势" />
+        </div>
+      </PageSection>
+
+      <PageSection title="磁盘 IO" description="按 Agent 最新快照汇总的磁盘读写。">
+        <MetricGrid metrics={diskMetrics} />
         <div className="mt-6">
           <TrendPreview label="磁盘读写趋势" />
         </div>

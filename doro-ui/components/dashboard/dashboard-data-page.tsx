@@ -45,11 +45,14 @@ const emptyData: DashboardData = {
   error: null,
 };
 
+const DASHBOARD_REFRESH_INTERVAL_MS = 10_000;
+
 export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "tasks" | "approvals" | "apps" | "settings" }) {
   const [data, setData] = useState<DashboardData>(emptyData);
 
   useEffect(() => {
     let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
       const [hosts, tasks, approvals, apps, settings] = await Promise.all([
@@ -69,34 +72,55 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       if (cancelled) {
         return;
       }
+      const error =
+        hosts.error ??
+        tasks.error ??
+        approvals.error ??
+        apps.error ??
+        settings.error ??
+        metricResults.find((result) => result.error)?.error ??
+        null;
       const metricHistoryByHost = Object.fromEntries(
         hostItems.map((host, index) => [
           host.id,
           metricResults[index]?.data?.items ?? [],
         ]),
       );
-      setData({
-        hosts: hostItems,
-        tasks: tasks.data?.items ?? [],
-        approvals: approvals.data?.items ?? [],
-        apps: apps.data?.items ?? [],
-        metricHistoryByHost,
-        settings: settings.data,
-        error:
-          hosts.error ??
-          tasks.error ??
-          approvals.error ??
-          apps.error ??
-          settings.error ??
-          metricResults.find((result) => result.error)?.error ??
-          null,
+
+      setData((current) => {
+        if (error) {
+          return {
+            ...current,
+            error,
+          };
+        }
+
+        return {
+          hosts: hostItems,
+          tasks: tasks.data?.items ?? [],
+          approvals: approvals.data?.items ?? [],
+          apps: apps.data?.items ?? [],
+          metricHistoryByHost,
+          settings: settings.data,
+          error: null,
+        };
       });
     }
 
-    load();
+    async function refresh() {
+      await load();
+      if (!cancelled) {
+        refreshTimer = setTimeout(refresh, DASHBOARD_REFRESH_INTERVAL_MS);
+      }
+    }
+
+    refresh();
 
     return () => {
       cancelled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
     };
   }, []);
 
