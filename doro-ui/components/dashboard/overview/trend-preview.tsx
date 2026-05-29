@@ -9,16 +9,19 @@ type TrendPreviewProps = {
   label: string;
   points?: TrendPoint[];
   seriesLabels?: [string, string];
+  emptyText?: string;
 };
 
 export function TrendPreview({
   label,
   points = [],
   seriesLabels = ["上行", "下行"],
+  emptyText = "暂无趋势数据，等待 Agent 指标采集",
 }: TrendPreviewProps) {
+  const visiblePoints = samplePoints(points, 48);
   const maxValue = Math.max(
     1,
-    ...points.flatMap((point) => [point.primary, point.secondary]),
+    ...visiblePoints.flatMap((point) => [point.primary, point.secondary]),
   );
 
   return (
@@ -30,12 +33,12 @@ export function TrendPreview({
           <span>{seriesLabels[1]}</span>
         </div>
       </div>
-      {points.length > 0 ? (
-        <div className="flex h-40 items-end gap-2">
-          {points.map((point, index) => (
+      {visiblePoints.length > 0 ? (
+        <div className="flex h-40 items-end gap-1.5 overflow-hidden">
+          {visiblePoints.map((point, index) => (
             <div
               key={`${point.primary}-${point.secondary}-${index}`}
-              className="flex flex-1 items-end gap-1 rounded-md bg-muted px-1"
+              className="flex h-full min-w-0 flex-1 items-end gap-0.5 rounded-md bg-muted px-0.5"
             >
               <div
                 className={cn("w-full rounded-md bg-primary/70")}
@@ -49,10 +52,19 @@ export function TrendPreview({
           ))}
         </div>
       ) : (
-        <div className="flex h-40 items-center justify-center rounded-md bg-muted text-sm text-muted-foreground">
-          等待 Agent 上报趋势数据
+        <div className="flex h-40 items-center justify-center rounded-md border border-dashed bg-muted/40 px-4 text-center text-sm text-muted-foreground">
+          {emptyText}
         </div>
       )}
     </div>
   );
+}
+
+function samplePoints(points: TrendPoint[], maxPoints: number) {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+
+  const stride = Math.ceil(points.length / maxPoints);
+  return points.filter((_, index) => index % stride === 0).slice(-maxPoints);
 }

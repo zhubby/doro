@@ -490,6 +490,7 @@ export function OverviewPage({
                   label="网络吞吐趋势"
                   points={trafficTrend}
                   seriesLabels={["上行", "下行"]}
+                  emptyText="暂无网络趋势数据，等待 Agent 指标采集"
                 />
               </TabsContent>
               <TabsContent value="disk" className="space-y-6">
@@ -498,6 +499,7 @@ export function OverviewPage({
                   label="磁盘读写趋势"
                   points={diskTrend}
                   seriesLabels={["读取", "写入"]}
+                  emptyText="暂无磁盘 IO 趋势数据，等待 Agent 指标采集"
                 />
               </TabsContent>
             </Tabs>
