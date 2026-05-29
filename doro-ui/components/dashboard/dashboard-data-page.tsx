@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   getApps,
   getApprovals,
+  getControlPlaneEnvironment,
   getHostMetrics,
   getHosts,
   getSettings,
   getTasks,
-  refreshContainers,
 } from "@/lib/control-plane-api";
 import { OverviewPage } from "@/components/dashboard/overview/overview-page";
 import { HostsPage } from "@/components/dashboard/hosts/hosts-page";
@@ -20,8 +20,8 @@ import { SettingsPage } from "@/components/dashboard/settings/settings-page";
 import type {
   AppSummary,
   ApprovalRequest,
+  ControlPlaneEnvironment,
   Host,
-  HostContainer,
   MetricSnapshot,
   SettingsResponse,
   Task,
@@ -32,7 +32,7 @@ type DashboardData = {
   tasks: Task[];
   approvals: ApprovalRequest[];
   apps: AppSummary[];
-  containers: HostContainer[];
+  controlPlaneEnvironment: ControlPlaneEnvironment | null;
   metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
   error: string | null;
@@ -43,7 +43,7 @@ const emptyData: DashboardData = {
   tasks: [],
   approvals: [],
   apps: [],
-  containers: [],
+  controlPlaneEnvironment: null,
   metricHistoryByHost: {},
   settings: null,
   error: null,
@@ -54,6 +54,7 @@ const DASHBOARD_METRIC_HISTORY_LIMIT = 240;
 
 export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "tasks" | "approvals" | "apps" | "settings" }) {
   const [data, setData] = useState<DashboardData>(emptyData);
+  const controlPlaneEnvironmentLoaded = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,12 +72,14 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
         return;
       }
       const hostItems = hosts.data?.items ?? [];
-      const [metricResults, containers] = await Promise.all([
+      const shouldLoadControlPlaneEnvironment =
+        view === "overview" && !controlPlaneEnvironmentLoaded.current;
+      const [metricResults, controlPlaneEnvironment] = await Promise.all([
         Promise.all(
           hostItems.map((host) => getHostMetrics(host.id, DASHBOARD_METRIC_HISTORY_LIMIT)),
         ),
-        view === "overview"
-          ? refreshContainers()
+        shouldLoadControlPlaneEnvironment
+          ? getControlPlaneEnvironment()
           : Promise.resolve({ data: null, error: null }),
       ]);
       if (cancelled) {
@@ -89,7 +92,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
         apps.error ??
         settings.error ??
         metricResults.find((result) => result.error)?.error ??
-        containers.error ??
+        controlPlaneEnvironment.error ??
         null;
       const metricHistoryByHost = Object.fromEntries(
         hostItems.map((host, index) => [
@@ -97,6 +100,9 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
           metricResults[index]?.data?.items ?? [],
         ]),
       );
+      if (controlPlaneEnvironment.data?.item) {
+        controlPlaneEnvironmentLoaded.current = true;
+      }
 
       setData((current) => {
         if (error) {
@@ -111,7 +117,8 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
           tasks: tasks.data?.items ?? [],
           approvals: approvals.data?.items ?? [],
           apps: apps.data?.items ?? [],
-          containers: containers.data?.items ?? current.containers,
+          controlPlaneEnvironment:
+            controlPlaneEnvironment.data?.item ?? current.controlPlaneEnvironment,
           metricHistoryByHost,
           settings: settings.data,
           error: null,
@@ -183,7 +190,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       tasks={data.tasks}
       approvals={data.approvals}
       apps={data.apps}
-      containers={data.containers}
+      controlPlaneEnvironment={data.controlPlaneEnvironment}
       metricHistoryByHost={data.metricHistoryByHost}
       apiError={data.error}
     />

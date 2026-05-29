@@ -36,6 +36,8 @@ use doro_protocol::AuthStatusResponse;
 use doro_protocol::AuthTokenResponse;
 use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
+use doro_protocol::ControlPlaneEnvironment;
+use doro_protocol::ControlPlaneEnvironmentResponse;
 use doro_protocol::CreateEnrollmentTokenRequest;
 use doro_protocol::CreateEnrollmentTokenResponse;
 use doro_protocol::CreateTaskRequest;
@@ -92,8 +94,10 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
+use sysinfo::System;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -119,6 +123,7 @@ pub struct AppState {
     store: Store,
     auth: AuthService,
     agent_streams: AgentStreamRegistry,
+    control_plane_environment: ControlPlaneEnvironment,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -520,6 +525,7 @@ pub fn app_with_auth_and_streams(
         store,
         auth,
         agent_streams,
+        control_plane_environment: collect_control_plane_environment(),
     };
 
     let protected_routes = Router::new()
@@ -542,6 +548,10 @@ pub fn app_with_auth_and_streams(
             get(list_host_containers),
         )
         .route("/api/v1/containers", get(refresh_containers))
+        .route(
+            "/api/v1/control-plane/environment",
+            get(control_plane_environment),
+        )
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
         .route(
             "/api/v1/terminal/commands",
@@ -1286,6 +1296,33 @@ async fn refresh_containers(
         items.extend(state.store.containers().list_by_host(host.id).await?);
     }
     Ok(Json(ListHostContainersResponse { items }))
+}
+
+async fn control_plane_environment(
+    State(state): State<AppState>,
+) -> Json<ControlPlaneEnvironmentResponse> {
+    Json(ControlPlaneEnvironmentResponse {
+        item: state.control_plane_environment,
+    })
+}
+
+fn collect_control_plane_environment() -> ControlPlaneEnvironment {
+    let uptime_seconds = System::uptime().min(u32::MAX as u64);
+    ControlPlaneEnvironment {
+        hostname: System::host_name().unwrap_or_else(|| "unknown".to_string()),
+        os_version: System::long_os_version().unwrap_or_else(|| "unknown".to_string()),
+        kernel_version: System::kernel_version().unwrap_or_else(|| "unknown".to_string()),
+        architecture: std::env::consts::ARCH.to_string(),
+        host_address: control_plane_host_address().unwrap_or_else(|| "unknown".to_string()),
+        booted_at: Utc::now().checked_sub_signed(ChronoDuration::seconds(uptime_seconds as i64)),
+        uptime_seconds: uptime_seconds as u32,
+    }
+}
+
+fn control_plane_host_address() -> Option<String> {
+    let socket = UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    Some(socket.local_addr().ok()?.ip().to_string())
 }
 
 async fn terminal_session_ws(

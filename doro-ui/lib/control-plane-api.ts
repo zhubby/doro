@@ -1,6 +1,7 @@
 import type {
   AuthStatusResponse,
   AuthTokenResponse,
+  ControlPlaneEnvironmentResponse,
   CreateEnrollmentTokenRequest,
   CreateEnrollmentTokenResponse,
   CurrentUserResponse,
@@ -300,6 +301,10 @@ export async function getHostContainers(hostId: string) {
 
 export async function refreshContainers() {
   return getJson<ListHostContainersResponse>("/api/v1/containers");
+}
+
+export async function getControlPlaneEnvironment() {
+  return getJson<ControlPlaneEnvironmentResponse>("/api/v1/control-plane/environment");
 }
 
 export async function getTasks() {

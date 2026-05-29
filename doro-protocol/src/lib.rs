@@ -326,6 +326,24 @@ pub struct ListHostContainersResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ControlPlaneEnvironment.ts")]
+pub struct ControlPlaneEnvironment {
+    pub hostname: String,
+    pub os_version: String,
+    pub kernel_version: String,
+    pub architecture: String,
+    pub host_address: String,
+    pub booted_at: Option<DateTime<Utc>>,
+    pub uptime_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ControlPlaneEnvironmentResponse.ts")]
+pub struct ControlPlaneEnvironmentResponse {
+    pub item: ControlPlaneEnvironment,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "ListTasksResponse.ts")]
 pub struct ListTasksResponse {
     pub items: Vec<Task>,
@@ -448,6 +466,8 @@ mod tests {
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
         assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
+        assert!(ControlPlaneEnvironment::export_all(&cfg).is_ok());
+        assert!(ControlPlaneEnvironmentResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());
         assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
         assert!(AppSummary::export_all(&cfg).is_ok());

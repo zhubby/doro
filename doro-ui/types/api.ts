@@ -7,6 +7,8 @@ export type { AuthStatusResponse } from "./generated/AuthStatusResponse";
 export type { AuthTokenResponse } from "./generated/AuthTokenResponse";
 export type { CapabilityName } from "./generated/CapabilityName";
 export type { CapabilityRisk } from "./generated/CapabilityRisk";
+export type { ControlPlaneEnvironment } from "./generated/ControlPlaneEnvironment";
+export type { ControlPlaneEnvironmentResponse } from "./generated/ControlPlaneEnvironmentResponse";
 export type { CreateEnrollmentTokenRequest } from "./generated/CreateEnrollmentTokenRequest";
 export type { CreateEnrollmentTokenResponse } from "./generated/CreateEnrollmentTokenResponse";
 export type { CreateTaskRequest } from "./generated/CreateTaskRequest";

@@ -25,7 +25,7 @@ export function PageSection({
   contentClassName,
 }: PageSectionProps) {
   return (
-    <Card className={className}>
+    <Card className={cn("flex flex-col", className)}>
       {(title || description || toolbar) && (
         <CardHeader>
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -39,7 +39,13 @@ export function PageSection({
           </div>
         </CardHeader>
       )}
-      <CardContent className={cn(!title && !description && "pt-6", contentClassName)}>
+      <CardContent
+        className={cn(
+          "min-h-0",
+          !title && !description && "pt-6",
+          contentClassName,
+        )}
+      >
         {children}
       </CardContent>
     </Card>

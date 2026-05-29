@@ -6,6 +6,8 @@ use serde::Serialize;
 use serde_json::json;
 use uuid::Uuid;
 
+pub mod openai;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AiPlanRequest {
     pub prompt: String,

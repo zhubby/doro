@@ -174,12 +174,36 @@ impl Default for AgentConfig {
 #[serde(default)]
 pub struct AiConfig {
     pub provider: String,
+    pub openai: OpenAiConfig,
 }
 
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
             provider: "disabled".to_string(),
+            openai: OpenAiConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct OpenAiConfig {
+    pub api_key_env: String,
+    pub base_url: String,
+    pub default_chat_model: String,
+    pub default_response_model: String,
+    pub timeout_seconds: u64,
+}
+
+impl Default for OpenAiConfig {
+    fn default() -> Self {
+        Self {
+            api_key_env: "OPENAI_API_KEY".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            default_chat_model: "gpt-4.1-mini".to_string(),
+            default_response_model: "gpt-4.1-mini".to_string(),
+            timeout_seconds: 60,
         }
     }
 }
@@ -332,6 +356,7 @@ mod tests {
         assert!(body.contains("[store]"));
         assert!(body.contains("[security]"));
         assert!(body.contains("[ai]"));
+        assert!(body.contains("[ai.openai]"));
         assert!(!body.contains("[agent]"));
 
         Ok(())
@@ -390,6 +415,8 @@ mod tests {
         assert!(!loaded.created);
         assert_eq!(loaded.config.server.console_bind, "0.0.0.0:9000");
         assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:9001");
+        assert_eq!(loaded.config.ai.provider, "disabled");
+        assert_eq!(loaded.config.ai.openai.api_key_env, "OPENAI_API_KEY");
         assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
         assert_eq!(
             loaded.config.store.database_url,
@@ -423,6 +450,38 @@ mod tests {
         assert_eq!(loaded.config.agent.hostname, "edge-node");
         assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 15);
         assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_openai_control_plane_config() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("openai-control-plane.toml");
+        fs::write(
+            &path,
+            r#"
+                [ai]
+                provider = "openai"
+
+                [ai.openai]
+                api_key_env = "DORO_OPENAI_API_KEY"
+                base_url = "https://example.test/v1"
+                default_chat_model = "gpt-4.1-mini"
+                default_response_model = "gpt-4.1"
+                timeout_seconds = 30
+            "#,
+        )?;
+
+        let loaded = load_or_create_control_plane_config(Some(&path))?;
+
+        assert!(!loaded.created);
+        assert_eq!(loaded.config.ai.provider, "openai");
+        assert_eq!(loaded.config.ai.openai.api_key_env, "DORO_OPENAI_API_KEY");
+        assert_eq!(loaded.config.ai.openai.base_url, "https://example.test/v1");
+        assert_eq!(loaded.config.ai.openai.default_chat_model, "gpt-4.1-mini");
+        assert_eq!(loaded.config.ai.openai.default_response_model, "gpt-4.1");
+        assert_eq!(loaded.config.ai.openai.timeout_seconds, 30);
 
         Ok(())
     }

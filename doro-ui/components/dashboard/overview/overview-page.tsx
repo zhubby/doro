@@ -5,7 +5,7 @@ import { AlertTriangle, CircleGauge, HardDrive, Network, NotebookPen } from "luc
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
 import type { TrendPoint } from "@/components/dashboard/overview/trend-preview";
 import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
-import { ContainerList } from "@/components/dashboard/overview/container-list";
+import { ControlPlaneEnvironmentPanel } from "@/components/dashboard/overview/control-plane-environment";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -18,17 +18,16 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { formatRelativeTime } from "@/lib/datetime";
 import { notes } from "@/lib/mock-data";
-import type { AppSummary, ApprovalRequest, Host, HostContainer, MetricSnapshot, Task } from "@/types/api";
-import type { ContainerResource, Metric, ResourceStatus } from "@/types/dashboard";
+import type { AppSummary, ApprovalRequest, ControlPlaneEnvironment, Host, MetricSnapshot, Task } from "@/types/api";
+import type { Metric } from "@/types/dashboard";
 
 type OverviewPageProps = {
   hosts?: Host[];
   tasks?: Task[];
   approvals?: ApprovalRequest[];
   apps?: AppSummary[];
-  containers?: HostContainer[];
+  controlPlaneEnvironment?: ControlPlaneEnvironment | null;
   metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
 };
@@ -233,55 +232,6 @@ function latestMetrics(
     .filter((item): item is { host: Host; metric: MetricSnapshot } => Boolean(item.metric));
 }
 
-function resourceStatus(status: string): ResourceStatus {
-  if (status === "running") {
-    return "running";
-  }
-  if (status === "created" || status === "restarting" || status === "paused") {
-    return "warning";
-  }
-  return "stopped";
-}
-
-function formatPorts(ports: HostContainer["ports"]) {
-  if (!Array.isArray(ports) || ports.length === 0) {
-    return "-";
-  }
-  return ports
-    .map((port) => {
-      if (!port || typeof port !== "object") {
-        return null;
-      }
-      const value = port as Record<string, unknown>;
-      const privatePort = value.PrivatePort ?? value.private_port;
-      const publicPort = value.PublicPort ?? value.public_port;
-      return publicPort
-        ? `${publicPort}:${privatePort}`
-        : String(privatePort ?? "-");
-    })
-    .filter(Boolean)
-    .join(", ");
-}
-
-function toContainerResource(
-  container: HostContainer,
-  hostNames: Map<string, string>,
-): ContainerResource {
-  return {
-    id: container.container_ref,
-    hostId: container.host_id,
-    agentName: hostNames.get(container.host_id) ?? container.host_id,
-    name: container.name,
-    image: container.image,
-    status: resourceStatus(container.status),
-    source: container.runtime,
-    cpu: "-",
-    memory: "-",
-    ports: formatPorts(container.ports),
-    updatedAt: formatRelativeTime(container.created_at ?? container.observed_at),
-  };
-}
-
 function unavailableResourceStats(hasOnlineAgents: boolean): ResourceStat[] {
   return ["负载", "CPU", "内存", "磁盘"].map((label) => ({
     label,
@@ -381,7 +331,7 @@ export function OverviewPage({
   tasks = [],
   approvals = [],
   apps = [],
-  containers = [],
+  controlPlaneEnvironment = null,
   metricHistoryByHost = {},
   apiError,
 }: OverviewPageProps) {
@@ -389,13 +339,6 @@ export function OverviewPage({
     (approval) => approval.status === "pending",
   ).length;
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
-  const runningContainers = containers.filter(
-    (container) => container.status === "running",
-  ).length;
-  const hostNames = new Map(hosts.map((host) => [host.id, host.hostname]));
-  const containerRows = containers.map((container) =>
-    toContainerResource(container, hostNames),
-  );
   const systemStats = aggregateResourceStats(hosts, metricHistoryByHost);
   const trafficMetrics = aggregateTrafficMetrics(metricHistoryByHost);
   const diskMetrics = aggregateDiskIoMetrics(metricHistoryByHost);
@@ -426,9 +369,9 @@ export function OverviewPage({
       helper: waitingApprovals > 0 ? `${waitingApprovals} 个待处理` : "当前无需处理",
     },
     {
-      label: "容器",
-      value: String(containers.length),
-      helper: `${runningContainers} 个运行中`,
+      label: "应用",
+      value: String(apps.length),
+      helper: apps.length > 0 ? "已接入应用目录" : "等待应用接入",
     },
   ];
 
@@ -519,7 +462,7 @@ export function OverviewPage({
           </CardContent>
         </Card>
 
-        <Card className="xl:col-start-1 xl:row-start-2">
+        <Card className="h-full xl:col-start-1 xl:row-start-2">
           <CardHeader>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
@@ -561,8 +504,8 @@ export function OverviewPage({
           </CardContent>
         </Card>
 
-        <ContainerList
-          containers={containerRows}
+        <ControlPlaneEnvironmentPanel
+          environment={controlPlaneEnvironment}
           className="h-full xl:col-start-2 xl:row-start-2"
         />
       </div>
