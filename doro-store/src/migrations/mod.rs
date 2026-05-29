@@ -32,6 +32,10 @@ pub(crate) fn all() -> &'static [Migration] {
             id: "202605280001_host_system_profile",
             sql: include_str!("../../migrations/202605280001_host_system_profile.sql"),
         },
+        Migration {
+            id: "202605290001_container_created_at",
+            sql: include_str!("../../migrations/202605290001_container_created_at.sql"),
+        },
     ]
 }
 

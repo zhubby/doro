@@ -4,9 +4,10 @@ import { useEffect, useState } from "react";
 
 import { ContainersPage } from "@/components/dashboard/resources/containers-page";
 import { getHostContainers, getHosts } from "@/lib/control-plane-api";
-import type { HostContainer } from "@/types/api";
+import type { Host, HostContainer } from "@/types/api";
 
 export default function Containers() {
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [containers, setContainers] = useState<HostContainer[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +23,7 @@ export default function Containers() {
       if (cancelled) {
         return;
       }
+      setHosts(hostItems);
       setContainers(containerResults.flatMap((result) => result.data?.items ?? []));
       setError(
         hostsResult.error ??
@@ -37,5 +39,5 @@ export default function Containers() {
     };
   }, []);
 
-  return <ContainersPage containers={containers} apiError={error} />;
+  return <ContainersPage hosts={hosts} containers={containers} apiError={error} />;
 }

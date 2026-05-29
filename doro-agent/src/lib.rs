@@ -2,6 +2,8 @@ use chrono::Utc;
 use collectors::CollectorConfig;
 use collectors::CollectorEvent;
 use collectors::LocalCollectors;
+use collectors::MetricsCapture;
+use collectors::collect_container_snapshot;
 use collectors::system_profile;
 use doro_protocol::AgentCapability;
 use doro_protocol::AgentEvent;
@@ -13,6 +15,7 @@ use doro_protocol::MetricSnapshot;
 use doro_protocol::PROTOCOL_VERSION;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
+use doro_protocol::protobuf_timestamp_from_utc;
 use doro_protocol::protobuf_timestamp_now;
 use std::path::Path;
 use std::time::Duration;
@@ -154,20 +157,100 @@ impl Agent {
         }
     }
 
-    pub fn grpc_event(
-        &self,
-        agent_id: Uuid,
-        kind: &str,
-        payload: serde_json::Value,
-    ) -> grpc::AgentEvent {
+    fn grpc_event(&self, agent_id: Uuid, event: grpc::agent_event::Event) -> grpc::AgentEvent {
         grpc::AgentEvent {
             event_id: Uuid::new_v4().to_string(),
             agent_id: agent_id.to_string(),
             host_id: self.config.host_id.to_string(),
-            kind: kind.to_string(),
-            payload_json: payload.to_string(),
             recorded_at: Some(protobuf_timestamp_now()),
+            event: Some(event),
         }
+    }
+
+    pub fn connected_event(&self, agent_id: Uuid) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::Connected(grpc::ConnectedEvent {
+                protocol_version: PROTOCOL_VERSION.to_string(),
+                hostname: self.config.hostname.clone(),
+            }),
+        )
+    }
+
+    pub fn heartbeat_event(&self, agent_id: Uuid) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::Heartbeat(grpc::HeartbeatEvent {
+                protocol_version: PROTOCOL_VERSION.to_string(),
+            }),
+        )
+    }
+
+    pub fn metrics_snapshot_event(
+        &self,
+        agent_id: Uuid,
+        metrics: MetricsCapture,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::MetricsSnapshot(grpc::MetricsSnapshotEvent {
+                host_id: metrics.snapshot.host_id.to_string(),
+                captured_at: Some(protobuf_timestamp_from_utc(metrics.snapshot.captured_at)),
+                cpu_percent: metrics.snapshot.cpu_percent,
+                memory_percent: metrics.snapshot.memory_percent,
+                disk_percent: metrics.snapshot.disk_percent,
+                load_average: metrics.snapshot.load_average,
+                extra_json: metrics.extra.to_string(),
+            }),
+        )
+    }
+
+    pub fn container_snapshot_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        payload: serde_json::Value,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::ContainerSnapshot(container_snapshot_from_payload(
+                command_id, payload,
+            )),
+        )
+    }
+
+    pub fn collector_error_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        collector: impl Into<String>,
+        message: impl Into<String>,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::CollectorError(grpc::CollectorErrorEvent {
+                command_id,
+                collector: collector.into(),
+                message: message.into(),
+            }),
+        )
+    }
+
+    pub fn command_result_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        status: grpc::CommandStatus,
+        message: impl Into<String>,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::CommandResult(grpc::CommandResultEvent {
+                command_id,
+                status: status as i32,
+                message: message.into(),
+            }),
+        )
     }
 
     pub fn heartbeat(&self) -> AgentEvent {
@@ -248,9 +331,22 @@ async fn run_session(
     agent: &mut Agent,
     shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
-    let mut client =
-        AgentControlPlaneClient::connect(agent.config.control_plane_url.clone()).await?;
+    let control_plane_url = agent.config.control_plane_url.clone();
+    tracing::debug!(
+        control_plane_url,
+        "connecting to control-plane agent endpoint"
+    );
+    let mut client = AgentControlPlaneClient::connect(control_plane_url.clone()).await?;
+    tracing::debug!(
+        control_plane_url,
+        "connected to control-plane agent endpoint"
+    );
     let agent_id = ensure_registered(client.clone(), persisted_config, config_path, agent).await?;
+    tracing::debug!(
+        agent_id = %agent_id,
+        host_id = %agent.config.host_id,
+        "agent identity ready for control-plane session"
+    );
 
     report_heartbeat(&mut client, agent, agent_id).await?;
     open_agent_stream(client, agent.clone(), agent_id, shutdown_rx).await
@@ -317,16 +413,7 @@ async fn open_agent_stream(
         hostname = %agent.config.hostname,
         "opening agent stream"
     );
-    sender
-        .send(agent.grpc_event(
-            agent_id,
-            "connected",
-            serde_json::json!({
-                "protocol_version": PROTOCOL_VERSION,
-                "hostname": agent.config.hostname
-            }),
-        ))
-        .await?;
+    sender.send(agent.connected_event(agent_id)).await?;
     tracing::debug!(agent_id = %agent_id, "queued agent connected event");
 
     let heartbeat_agent = agent.clone();
@@ -339,13 +426,7 @@ async fn open_agent_stream(
                 _ = interval.tick() => {}
                 () = wait_for_shutdown(heartbeat_shutdown.clone()) => break,
             }
-            let event = heartbeat_agent.grpc_event(
-                agent_id,
-                "heartbeat",
-                serde_json::json!({
-                    "protocol_version": PROTOCOL_VERSION
-                }),
-            );
+            let event = heartbeat_agent.heartbeat_event(agent_id);
             if heartbeat_sender.send(event).await.is_err() {
                 break;
             }
@@ -372,39 +453,22 @@ async fn open_agent_stream(
                     () = wait_for_shutdown(metrics_shutdown.clone()) => return,
                 }
                 for collector_event in collectors.collect(metrics_agent.config.host_id).await {
-                    let (kind, payload) = match collector_event {
-                        CollectorEvent::Metrics(metrics) => (
-                            "metrics.snapshot",
-                            serde_json::json!({
-                                "host_id": metrics.snapshot.host_id,
-                                "captured_at": metrics.snapshot.captured_at,
-                                "cpu_percent": metrics.snapshot.cpu_percent,
-                                "memory_percent": metrics.snapshot.memory_percent,
-                                "disk_percent": metrics.snapshot.disk_percent,
-                                "load_average": metrics.snapshot.load_average,
-                                "extra": metrics.extra,
-                            }),
-                        ),
-                        CollectorEvent::Containers(payload) => ("container.snapshot", payload),
-                        CollectorEvent::Error { collector, message } => (
-                            "metrics.collector_error",
-                            serde_json::json!({
-                                "collector": collector,
-                                "message": message,
-                            }),
-                        ),
+                    let event = match collector_event {
+                        CollectorEvent::Metrics(metrics) => {
+                            metrics_agent.metrics_snapshot_event(agent_id, metrics)
+                        }
+                        CollectorEvent::Containers(payload) => {
+                            metrics_agent.container_snapshot_event(agent_id, String::new(), payload)
+                        }
+                        CollectorEvent::Error { collector, message } => metrics_agent
+                            .collector_error_event(agent_id, String::new(), collector, message),
                     };
                     tracing::debug!(
                         agent_id = %agent_id,
                         host_id = %metrics_agent.config.host_id,
-                        kind,
                         "queued telemetry event"
                     );
-                    if metrics_sender
-                        .send(metrics_agent.grpc_event(agent_id, kind, payload))
-                        .await
-                        .is_err()
-                    {
+                    if metrics_sender.send(event).await.is_err() {
                         return;
                     }
                 }
@@ -423,7 +487,11 @@ async fn open_agent_stream(
                 let Some(command) = command? else {
                     anyhow::bail!("agent stream closed");
                 };
-                handle_command(command);
+                if handle_command(command, &agent, agent_id, &sender).await
+                    == AgentCommandAction::Reconnect
+                {
+                    return Ok(());
+                }
             }
             () = wait_for_shutdown(shutdown_rx.clone()) => return Ok(()),
         }
@@ -477,19 +545,145 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
+fn container_snapshot_from_payload(
+    command_id: String,
+    payload: serde_json::Value,
+) -> grpc::ContainerSnapshotEvent {
+    let runtime = payload
+        .get("runtime")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("docker")
+        .to_string();
+    let containers = payload
+        .get("containers")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(container_observation_from_json)
+        .collect();
+    let extra_json = serde_json::json!({
+        "daemon": payload.get("daemon").cloned().unwrap_or(serde_json::Value::Null),
+        "networks": payload.get("networks").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "volumes": payload.get("volumes").cloned().unwrap_or_else(|| serde_json::json!([])),
+    })
+    .to_string();
+
+    grpc::ContainerSnapshotEvent {
+        command_id,
+        runtime,
+        containers,
+        extra_json,
+    }
+}
+
+fn container_observation_from_json(container: &serde_json::Value) -> grpc::ContainerObservation {
+    grpc::ContainerObservation {
+        id: container
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        names: container
+            .get("names")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .map(ToString::to_string)
+            .collect(),
+        image: container
+            .get("image")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        image_id: container
+            .get("image_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        command: container
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        created: container
+            .get("created")
+            .and_then(serde_json::Value::as_i64)
+            .unwrap_or_default(),
+        ports_json: container
+            .get("ports")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!([]))
+            .to_string(),
+        labels_json: container
+            .get("labels")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}))
+            .to_string(),
+        state: container
+            .get("state")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        status: container
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    }
+}
+
 fn next_reconnect_delay(current: Duration) -> Duration {
     (current * 2).min(MAX_RECONNECT_DELAY)
 }
 
-fn handle_command(command: grpc::ControlPlaneCommand) {
-    match command.kind.as_str() {
-        "ack" => {
-            tracing::info!(command_id = %command.command_id, "control-plane acknowledged stream")
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentCommandAction {
+    Continue,
+    Reconnect,
+}
+
+async fn handle_command(
+    command: grpc::ControlPlaneCommand,
+    agent: &Agent,
+    agent_id: Uuid,
+    sender: &mpsc::Sender<grpc::AgentEvent>,
+) -> AgentCommandAction {
+    let command_id = command.command_id.clone();
+    match command.command {
+        Some(grpc::control_plane_command::Command::Ack(_)) => {
+            tracing::info!(command_id = %command_id, "control-plane acknowledged stream")
         }
-        kind => {
-            tracing::warn!(command_id = %command.command_id, kind, "unsupported control-plane command")
+        Some(grpc::control_plane_command::Command::CollectContainers(_)) => {
+            tracing::info!(command_id = %command_id, "collecting containers by control-plane request");
+            let event = match collect_container_snapshot(agent.config.docker_socket_path.as_deref())
+                .await
+            {
+                Ok(payload) => agent.container_snapshot_event(agent_id, command_id, payload),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::Shutdown(shutdown)) => {
+            tracing::info!(
+                command_id = %command_id,
+                reason = shutdown.reason,
+                "control-plane requested agent stream reconnect"
+            );
+            return AgentCommandAction::Reconnect;
+        }
+        None => {
+            tracing::warn!(command_id = %command_id, "control-plane command missing typed payload")
         }
     }
+    AgentCommandAction::Continue
 }
 
 fn parse_uuid(value: &str, field: &str) -> anyhow::Result<Uuid> {
@@ -539,32 +733,116 @@ mod tests {
             gpu_metrics_enabled: false,
         });
 
-        let event = agent.grpc_event(
-            agent_id,
-            "connected",
-            serde_json::json!({"protocol_version": PROTOCOL_VERSION}),
-        );
+        let event = agent.connected_event(agent_id);
 
         assert_eq!(event.agent_id, agent_id.to_string());
         assert_eq!(event.host_id, host_id.to_string());
-        assert_eq!(event.kind, "connected");
-        assert!(event.payload_json.contains(PROTOCOL_VERSION));
+        let Some(grpc::agent_event::Event::Connected(connected)) = event.event else {
+            panic!("connected event should use typed payload");
+        };
+        assert_eq!(connected.protocol_version, PROTOCOL_VERSION);
     }
 
     #[test]
-    fn handle_command_accepts_ack_and_unknown_commands() {
-        handle_command(grpc::ControlPlaneCommand {
-            command_id: Uuid::new_v4().to_string(),
-            kind: "ack".to_string(),
-            payload_json: "{}".to_string(),
-            requires_approval: false,
+    fn container_snapshot_event_preserves_command_id() {
+        let agent_id = Uuid::new_v4();
+        let command_id = Uuid::new_v4().to_string();
+        let agent = Agent::new(AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
         });
-        handle_command(grpc::ControlPlaneCommand {
-            command_id: Uuid::new_v4().to_string(),
-            kind: "future_command".to_string(),
-            payload_json: "{}".to_string(),
-            requires_approval: false,
+
+        let event = agent.container_snapshot_event(
+            agent_id,
+            command_id.clone(),
+            serde_json::json!({
+                "runtime": "docker",
+                "containers": [{"id": "abc", "names": ["/db"], "image": "postgres"}]
+            }),
+        );
+
+        let Some(grpc::agent_event::Event::ContainerSnapshot(snapshot)) = event.event else {
+            panic!("container event should use typed payload");
+        };
+        assert_eq!(snapshot.command_id, command_id);
+        assert_eq!(snapshot.containers.len(), 1);
+        assert_eq!(snapshot.containers[0].id, "abc");
+    }
+
+    #[tokio::test]
+    async fn handle_command_continues_for_ack() {
+        let agent_id = Uuid::new_v4();
+        let agent = Agent::new(AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
         });
+        let (sender, _receiver) = mpsc::channel(1);
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: None,
+            command: Some(grpc::control_plane_command::Command::Ack(
+                grpc::AckCommand {
+                    message: "connected".to_string(),
+                },
+            )),
+        };
+
+        let action = handle_command(command, &agent, agent_id, &sender).await;
+
+        assert_eq!(action, AgentCommandAction::Continue);
+    }
+
+    #[tokio::test]
+    async fn handle_command_returns_reconnect_for_shutdown_command() {
+        let agent_id = Uuid::new_v4();
+        let agent = Agent::new(AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
+        });
+        let (sender, _receiver) = mpsc::channel(1);
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: None,
+            command: Some(grpc::control_plane_command::Command::Shutdown(
+                grpc::ShutdownCommand {
+                    reason: "control-plane shutting down".to_string(),
+                },
+            )),
+        };
+
+        let action = handle_command(command, &agent, agent_id, &sender).await;
+
+        assert_eq!(action, AgentCommandAction::Reconnect);
     }
 
     #[test]

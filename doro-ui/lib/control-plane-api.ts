@@ -15,6 +15,8 @@ import type {
   RefreshTokenRequest,
   RegisterRequest,
   SettingsResponse,
+  UpdateHostRequest,
+  UpdateHostResponse,
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
@@ -268,6 +270,13 @@ export async function deleteHost(hostId: string) {
   });
 }
 
+export async function updateHost(hostId: string, request: UpdateHostRequest) {
+  return authedRequest<UpdateHostResponse>(`/api/v1/hosts/${hostId}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
 export async function getLatestHostMetric(hostId: string) {
   return getJson<LatestMetricResponse>(`/api/v1/hosts/${hostId}/metrics/latest`);
 }
@@ -280,6 +289,10 @@ export async function getHostMetrics(hostId: string, limit = 60) {
 
 export async function getHostContainers(hostId: string) {
   return getJson<ListHostContainersResponse>(`/api/v1/hosts/${hostId}/containers`);
+}
+
+export async function refreshContainers() {
+  return getJson<ListHostContainersResponse>("/api/v1/containers");
 }
 
 export async function getTasks() {

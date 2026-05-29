@@ -3,6 +3,7 @@
 import { AlertTriangle, CircleGauge, HardDrive, Network, NotebookPen } from "lucide-react";
 
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
+import type { TrendPoint } from "@/components/dashboard/overview/trend-preview";
 import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
 import { ContainerList } from "@/components/dashboard/overview/container-list";
 import { PageContainer } from "@/components/layout/page-container";
@@ -17,19 +18,17 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  containers,
-  diskMetrics,
-  notes,
-  trafficMetrics,
-} from "@/lib/mock-data";
-import type { AppSummary, ApprovalRequest, Host, MetricSnapshot, Task } from "@/types/api";
+import { formatRelativeTime } from "@/lib/datetime";
+import { notes } from "@/lib/mock-data";
+import type { AppSummary, ApprovalRequest, Host, HostContainer, MetricSnapshot, Task } from "@/types/api";
+import type { ContainerResource, Metric, ResourceStatus } from "@/types/dashboard";
 
 type OverviewPageProps = {
   hosts?: Host[];
   tasks?: Task[];
   approvals?: ApprovalRequest[];
   apps?: AppSummary[];
+  containers?: HostContainer[];
   metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
 };
@@ -62,8 +61,24 @@ function formatPercent(value: number) {
 }
 
 function formatBytes(bytes: number) {
-  const gib = bytes / 1024 ** 3;
-  return `${gib >= 10 ? gib.toFixed(1) : gib.toFixed(2)} GB`;
+  if (!Number.isFinite(bytes)) {
+    return "-";
+  }
+  if (bytes < 1024) {
+    return `${bytes.toFixed(0)} B`;
+  }
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unitIndex]}`;
+}
+
+function formatBytesPerSecond(bytes: number) {
+  return `${formatBytes(bytes)}/s`;
 }
 
 function coreCount(host: Host) {
@@ -102,6 +117,109 @@ function diskTotals(snapshot: MetricSnapshot): DiskTotals | null {
   return totals.totalBytes > 0 ? totals : null;
 }
 
+function metricHistories(metricHistoryByHost: Record<string, MetricSnapshot[]>) {
+  return Object.values(metricHistoryByHost)
+    .flat()
+    .sort(
+      (left, right) =>
+        new Date(left.captured_at).getTime() - new Date(right.captured_at).getTime(),
+    );
+}
+
+function latestMetricSnapshots(metricHistoryByHost: Record<string, MetricSnapshot[]>) {
+  return Object.values(metricHistoryByHost)
+    .map((history) => history.at(-1))
+    .filter((snapshot): snapshot is MetricSnapshot => Boolean(snapshot));
+}
+
+function sumIoFields(
+  snapshots: MetricSnapshot[],
+  extraKey: "networks" | "disk_io",
+  fields: [string, string, string, string],
+) {
+  return snapshots.reduce(
+    (totals, snapshot) => {
+      const extra = objectValue(snapshot.extra);
+      const items = extra?.[extraKey];
+      if (!Array.isArray(items)) {
+        return totals;
+      }
+
+      for (const item of items) {
+        const itemObject = objectValue(item);
+        totals.primaryRate += numberValue(itemObject?.[fields[0]]) ?? 0;
+        totals.secondaryRate += numberValue(itemObject?.[fields[1]]) ?? 0;
+        totals.primaryTotal += numberValue(itemObject?.[fields[2]]) ?? 0;
+        totals.secondaryTotal += numberValue(itemObject?.[fields[3]]) ?? 0;
+      }
+      return totals;
+    },
+    {
+      primaryRate: 0,
+      secondaryRate: 0,
+      primaryTotal: 0,
+      secondaryTotal: 0,
+    },
+  );
+}
+
+function aggregateTrafficMetrics(
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+): Metric[] {
+  const snapshots = latestMetricSnapshots(metricHistoryByHost);
+  const totals = sumIoFields(snapshots, "networks", [
+    "transmitted_bytes_per_second",
+    "received_bytes_per_second",
+    "total_transmitted_bytes",
+    "total_received_bytes",
+  ]);
+  const hasData = snapshots.length > 0;
+
+  return [
+    { label: "上行", value: hasData ? formatBytesPerSecond(totals.primaryRate) : "等待采集" },
+    { label: "下行", value: hasData ? formatBytesPerSecond(totals.secondaryRate) : "等待采集" },
+    { label: "总发送", value: hasData ? formatBytes(totals.primaryTotal) : "等待采集" },
+    { label: "总接收", value: hasData ? formatBytes(totals.secondaryTotal) : "等待采集" },
+  ];
+}
+
+function aggregateDiskIoMetrics(
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+): Metric[] {
+  const snapshots = latestMetricSnapshots(metricHistoryByHost);
+  const totals = sumIoFields(snapshots, "disk_io", [
+    "read_bytes_per_second",
+    "write_bytes_per_second",
+    "total_read_bytes",
+    "total_written_bytes",
+  ]);
+  const hasData = snapshots.length > 0;
+
+  return [
+    { label: "读取", value: hasData ? formatBytesPerSecond(totals.primaryRate) : "等待采集" },
+    { label: "写入", value: hasData ? formatBytesPerSecond(totals.secondaryRate) : "等待采集" },
+    { label: "总读取", value: hasData ? formatBytes(totals.primaryTotal) : "等待采集" },
+    { label: "总写入", value: hasData ? formatBytes(totals.secondaryTotal) : "等待采集" },
+  ];
+}
+
+function trendPoints(
+  metricHistoryByHost: Record<string, MetricSnapshot[]>,
+  extraKey: "networks" | "disk_io",
+  fields: [string, string],
+): TrendPoint[] {
+  return metricHistories(metricHistoryByHost)
+    .map((snapshot) => {
+      const totals = sumIoFields([snapshot], extraKey, [fields[0], fields[1], "", ""]);
+      return {
+        primary: totals.primaryRate,
+        secondary: totals.secondaryRate,
+      };
+    })
+    .filter((point) => point.primary > 0 || point.secondary > 0)
+    .slice(-24);
+}
+
 function latestMetrics(
   hosts: Host[],
   metricHistoryByHost: Record<string, MetricSnapshot[]>,
@@ -113,6 +231,55 @@ function latestMetrics(
       metric: metricHistoryByHost[host.id]?.at(-1) ?? null,
     }))
     .filter((item): item is { host: Host; metric: MetricSnapshot } => Boolean(item.metric));
+}
+
+function resourceStatus(status: string): ResourceStatus {
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "created" || status === "restarting" || status === "paused") {
+    return "warning";
+  }
+  return "stopped";
+}
+
+function formatPorts(ports: HostContainer["ports"]) {
+  if (!Array.isArray(ports) || ports.length === 0) {
+    return "-";
+  }
+  return ports
+    .map((port) => {
+      if (!port || typeof port !== "object") {
+        return null;
+      }
+      const value = port as Record<string, unknown>;
+      const privatePort = value.PrivatePort ?? value.private_port;
+      const publicPort = value.PublicPort ?? value.public_port;
+      return publicPort
+        ? `${publicPort}:${privatePort}`
+        : String(privatePort ?? "-");
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function toContainerResource(
+  container: HostContainer,
+  hostNames: Map<string, string>,
+): ContainerResource {
+  return {
+    id: container.container_ref,
+    hostId: container.host_id,
+    agentName: hostNames.get(container.host_id) ?? container.host_id,
+    name: container.name,
+    image: container.image,
+    status: resourceStatus(container.status),
+    source: container.runtime,
+    cpu: "-",
+    memory: "-",
+    ports: formatPorts(container.ports),
+    updatedAt: formatRelativeTime(container.created_at ?? container.observed_at),
+  };
 }
 
 function unavailableResourceStats(hasOnlineAgents: boolean): ResourceStat[] {
@@ -214,6 +381,7 @@ export function OverviewPage({
   tasks = [],
   approvals = [],
   apps = [],
+  containers = [],
   metricHistoryByHost = {},
   apiError,
 }: OverviewPageProps) {
@@ -224,7 +392,21 @@ export function OverviewPage({
   const runningContainers = containers.filter(
     (container) => container.status === "running",
   ).length;
+  const hostNames = new Map(hosts.map((host) => [host.id, host.hostname]));
+  const containerRows = containers.map((container) =>
+    toContainerResource(container, hostNames),
+  );
   const systemStats = aggregateResourceStats(hosts, metricHistoryByHost);
+  const trafficMetrics = aggregateTrafficMetrics(metricHistoryByHost);
+  const diskMetrics = aggregateDiskIoMetrics(metricHistoryByHost);
+  const trafficTrend = trendPoints(metricHistoryByHost, "networks", [
+    "transmitted_bytes_per_second",
+    "received_bytes_per_second",
+  ]);
+  const diskTrend = trendPoints(metricHistoryByHost, "disk_io", [
+    "read_bytes_per_second",
+    "write_bytes_per_second",
+  ]);
   const hasOnlineAgents = hosts.some((host) => host.status === "online");
   const hasMetricSamples = latestMetrics(hosts, metricHistoryByHost).length > 0;
   const overviewStats = [
@@ -344,7 +526,7 @@ export function OverviewPage({
                 <CardTitle>监控</CardTitle>
                 <CardDescription>展示流量和磁盘 IO 趋势</CardDescription>
               </div>
-              <Badge variant="secondary">近 1 小时</Badge>
+              <Badge variant="secondary">最近 240 条</Badge>
             </div>
           </CardHeader>
           <CardContent>
@@ -361,18 +543,26 @@ export function OverviewPage({
               </TabsList>
               <TabsContent value="traffic" className="space-y-6">
                 <MetricGrid metrics={trafficMetrics} />
-                <TrendPreview label="网络吞吐趋势" />
+                <TrendPreview
+                  label="网络吞吐趋势"
+                  points={trafficTrend}
+                  seriesLabels={["上行", "下行"]}
+                />
               </TabsContent>
               <TabsContent value="disk" className="space-y-6">
                 <MetricGrid metrics={diskMetrics} />
-                <TrendPreview label="磁盘读写趋势" />
+                <TrendPreview
+                  label="磁盘读写趋势"
+                  points={diskTrend}
+                  seriesLabels={["读取", "写入"]}
+                />
               </TabsContent>
             </Tabs>
           </CardContent>
         </Card>
 
         <ContainerList
-          containers={containers}
+          containers={containerRows}
           className="h-full xl:col-start-2 xl:row-start-2"
         />
       </div>

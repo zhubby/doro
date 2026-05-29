@@ -38,6 +38,7 @@ use doro_protocol::CreateTaskRequest;
 use doro_protocol::CurrentUserResponse;
 use doro_protocol::EnrollmentToken;
 use doro_protocol::HealthResponse;
+use doro_protocol::HostStatus;
 use doro_protocol::LatestMetricResponse;
 use doro_protocol::ListApprovalsResponse;
 use doro_protocol::ListAppsResponse;
@@ -52,10 +53,13 @@ use doro_protocol::RegisterRequest;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
+use doro_protocol::UpdateHostRequest;
+use doro_protocol::UpdateHostResponse;
 use doro_protocol::UserSummary;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
+use doro_protocol::protobuf_timestamp_now;
 use doro_store::AgentHeartbeat;
 use doro_store::AgentRegistration;
 use doro_store::NewAgentEvent;
@@ -78,10 +82,14 @@ use rand::rngs::OsRng;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc;
+use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio_stream::wrappers::IntervalStream;
 use tokio_stream::wrappers::ReceiverStream;
@@ -95,10 +103,144 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
+const CONTAINER_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     store: Store,
     auth: AuthService,
+    agent_streams: AgentStreamRegistry,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AgentStreamRegistry {
+    streams: Arc<Mutex<HashMap<Uuid, AgentStreamHandle>>>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentStreamHandle {
+    agent_id: Uuid,
+    sender: mpsc::Sender<Result<grpc::ControlPlaneCommand, Status>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<AgentCommandReply>>>>,
+}
+
+#[derive(Debug)]
+enum AgentCommandReply {
+    ContainerSnapshot(grpc::ContainerSnapshotEvent),
+    Failed(String),
+}
+
+impl AgentStreamRegistry {
+    async fn register(
+        &self,
+        host_id: Uuid,
+        agent_id: Uuid,
+        sender: mpsc::Sender<Result<grpc::ControlPlaneCommand, Status>>,
+    ) -> Arc<Mutex<HashMap<String, oneshot::Sender<AgentCommandReply>>>> {
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        self.streams.lock().await.insert(
+            host_id,
+            AgentStreamHandle {
+                agent_id,
+                sender,
+                pending: pending.clone(),
+            },
+        );
+        pending
+    }
+
+    async fn unregister(&self, host_id: Uuid, agent_id: Uuid) {
+        let mut streams = self.streams.lock().await;
+        if streams
+            .get(&host_id)
+            .is_some_and(|handle| handle.agent_id == agent_id)
+        {
+            streams.remove(&host_id);
+        }
+    }
+
+    async fn shutdown_all(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        let handles = self
+            .streams
+            .lock()
+            .await
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for handle in handles {
+            let command = grpc::ControlPlaneCommand {
+                command_id: Uuid::new_v4().to_string(),
+                issued_at: Some(protobuf_timestamp_now()),
+                command: Some(grpc::control_plane_command::Command::Shutdown(
+                    grpc::ShutdownCommand {
+                        reason: reason.clone(),
+                    },
+                )),
+            };
+            if handle.sender.send(Ok(command)).await.is_err() {
+                tracing::debug!(
+                    agent_id = %handle.agent_id,
+                    "failed to enqueue agent stream shutdown command"
+                );
+            }
+        }
+    }
+
+    async fn collect_containers(
+        &self,
+        host_id: Uuid,
+    ) -> Result<grpc::ContainerSnapshotEvent, ContainerRefreshError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(ContainerRefreshError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::CollectContainers(
+                grpc::CollectContainersCommand {
+                    runtime: "docker".to_string(),
+                },
+            )),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(ContainerRefreshError::NoStream);
+        }
+
+        match tokio::time::timeout(CONTAINER_REFRESH_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::ContainerSnapshot(snapshot))) => Ok(snapshot),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(ContainerRefreshError::AgentFailed(message))
+            }
+            Ok(Err(_)) => Err(ContainerRefreshError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(ContainerRefreshError::Timeout)
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+enum ContainerRefreshError {
+    NoOnlineHosts,
+    NoStream,
+    Timeout,
+    AgentFailed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -146,7 +288,19 @@ pub fn app(store: Store) -> Router {
 }
 
 pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
-    let state = AppState { store, auth };
+    app_with_auth_and_streams(store, auth, AgentStreamRegistry::default())
+}
+
+pub fn app_with_auth_and_streams(
+    store: Store,
+    auth: AuthService,
+    agent_streams: AgentStreamRegistry,
+) -> Router {
+    let state = AppState {
+        store,
+        auth,
+        agent_streams,
+    };
 
     let protected_routes = Router::new()
         .route("/api/v1/hosts", get(list_hosts))
@@ -154,7 +308,10 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
             "/api/v1/hosts/enrollment-token",
             axum::routing::post(create_enrollment_token),
         )
-        .route("/api/v1/hosts/:host_id", axum::routing::delete(delete_host))
+        .route(
+            "/api/v1/hosts/:host_id",
+            axum::routing::delete(delete_host).patch(update_host),
+        )
         .route(
             "/api/v1/hosts/:host_id/metrics/latest",
             get(latest_host_metric),
@@ -164,6 +321,7 @@ pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
             "/api/v1/hosts/:host_id/containers",
             get(list_host_containers),
         )
+        .route("/api/v1/containers", get(refresh_containers))
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
         .route("/api/v1/approvals", get(list_approvals))
         .route("/api/v1/apps", get(list_apps))
@@ -211,20 +369,36 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
         let _ = shutdown_tx.send(true);
     });
 
+    let agent_streams = AgentStreamRegistry::default();
+    let shutdown_streams = agent_streams.clone();
     let console_store = store.clone();
+    let console_streams = agent_streams.clone();
     let agent_store = store.clone();
+    let grpc_streams = agent_streams.clone();
     let console_shutdown = shutdown_rx.clone();
+    let stream_shutdown = shutdown_rx.clone();
     let agent_shutdown = shutdown_rx;
+    tokio::spawn(async move {
+        wait_for_shutdown(stream_shutdown).await;
+        shutdown_streams
+            .shutdown_all("control-plane shutting down")
+            .await;
+    });
     let console_server = async move {
-        axum::serve(console_listener, app_with_auth(console_store, auth))
-            .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
-            .await
-            .map_err(anyhow::Error::from)
+        axum::serve(
+            console_listener,
+            app_with_auth_and_streams(console_store, auth, console_streams),
+        )
+        .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
+        .await
+        .map_err(anyhow::Error::from)
     };
     let agent_server = async move {
         Server::builder()
             .add_service(AgentControlPlaneServer::new(GrpcAgentService {
                 store: agent_store,
+                agent_streams: grpc_streams,
+                shutdown_rx: agent_shutdown.clone(),
             }))
             .serve_with_shutdown(agent_addr, wait_for_shutdown(agent_shutdown))
             .await
@@ -241,6 +415,10 @@ async fn wait_for_shutdown(mut shutdown_rx: watch::Receiver<bool>) {
             break;
         }
     }
+}
+
+fn shutdown_requested(shutdown_rx: &watch::Receiver<bool>) -> bool {
+    *shutdown_rx.borrow()
 }
 
 async fn wait_for_shutdown_signal() {
@@ -281,6 +459,8 @@ async fn wait_for_shutdown_signal() {
 #[derive(Debug, Clone)]
 pub struct GrpcAgentService {
     store: Store,
+    agent_streams: AgentStreamRegistry,
+    shutdown_rx: watch::Receiver<bool>,
 }
 
 #[tonic::async_trait]
@@ -394,32 +574,47 @@ impl AgentControlPlane for GrpcAgentService {
         request: Request<Streaming<grpc::AgentEvent>>,
     ) -> Result<Response<Self::OpenAgentStreamStream>, Status> {
         let store = self.store.clone();
+        let agent_streams = self.agent_streams.clone();
+        let shutdown_rx = self.shutdown_rx.clone();
         let mut inbound = request.into_inner();
+        tracing::debug!("agent opened grpc stream");
         let (sender, receiver) = mpsc::channel(8);
         let command = grpc::ControlPlaneCommand {
             command_id: Uuid::new_v4().to_string(),
-            kind: "ack".to_string(),
-            payload_json: serde_json::json!({
-                "message": "grpc agent stream connected"
-            })
-            .to_string(),
-            requires_approval: false,
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::Ack(
+                grpc::AckCommand {
+                    message: "grpc agent stream connected".to_string(),
+                },
+            )),
         };
         if sender.send(Ok(command)).await.is_err() {
             tracing::warn!("failed to enqueue initial grpc command");
         }
 
         tokio::spawn(async move {
-            let _keep_command_stream_open = sender;
+            let command_sender = sender;
+            let mut pending_commands: Option<
+                Arc<Mutex<HashMap<String, oneshot::Sender<AgentCommandReply>>>>,
+            > = None;
             let mut connected_agent: Option<(Uuid, Uuid)> = None;
             loop {
-                let event = match inbound.message().await {
-                    Ok(Some(event)) => event,
-                    Ok(None) => break,
-                    Err(error) => {
-                        tracing::warn!(%error, "agent stream receive failed");
-                        break;
+                let event = tokio::select! {
+                    event = inbound.message() => {
+                        match event {
+                            Ok(Some(event)) => event,
+                            Ok(None) => break,
+                            Err(error) => {
+                                if shutdown_requested(&shutdown_rx) {
+                                    tracing::debug!(%error, "agent stream receive stopped during shutdown");
+                                } else {
+                                    tracing::warn!(%error, "agent stream receive failed");
+                                }
+                                break;
+                            }
+                        }
                     }
+                    () = wait_for_shutdown(shutdown_rx.clone()) => break,
                 };
                 let recorded_at = event
                     .recorded_at
@@ -428,24 +623,61 @@ impl AgentControlPlane for GrpcAgentService {
                     .unwrap_or_else(Utc::now);
                 let agent_id = parse_optional_uuid(&event.agent_id);
                 let host_id = parse_optional_uuid(&event.host_id);
-                let payload = parse_event_payload(&event.payload_json);
-                let event_type = if event.kind.trim().is_empty() {
-                    "unknown".to_string()
-                } else {
-                    event.kind.clone()
+                let Some((event_type, payload)) = typed_agent_event_payload(&event) else {
+                    tracing::warn!("agent stream event missing typed payload");
+                    continue;
                 };
-                if matches!(event_type.as_str(), "connected" | "heartbeat")
-                    && let (Some(agent_id), Some(host_id)) = (agent_id, host_id)
-                {
-                    connected_agent = Some((agent_id, host_id));
-                    if let Err(error) = store
-                        .agents()
-                        .mark_online(agent_id, host_id, recorded_at)
-                        .await
-                    {
-                        tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
+                match event.event.clone() {
+                    Some(grpc::agent_event::Event::Connected(_))
+                    | Some(grpc::agent_event::Event::Heartbeat(_)) => {
+                        if let (Some(agent_id), Some(host_id)) = (agent_id, host_id) {
+                            if let Some((old_agent_id, old_host_id)) = connected_agent
+                                && old_host_id != host_id
+                            {
+                                agent_streams.unregister(old_host_id, old_agent_id).await;
+                            }
+                            connected_agent = Some((agent_id, host_id));
+                            pending_commands = Some(
+                                agent_streams
+                                    .register(host_id, agent_id, command_sender.clone())
+                                    .await,
+                            );
+                            tracing::debug!(
+                                agent_id = %agent_id,
+                                host_id = %host_id,
+                                event_type,
+                                "agent stream registered"
+                            );
+                            if let Err(error) = store
+                                .agents()
+                                .mark_online(agent_id, host_id, recorded_at)
+                                .await
+                            {
+                                tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
+                            }
+                        }
                     }
-                }
+                    Some(grpc::agent_event::Event::ContainerSnapshot(snapshot)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && !snapshot.command_id.is_empty()
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&snapshot.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::ContainerSnapshot(snapshot.clone()));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::CommandResult(result)) => {
+                        if result.status == grpc::CommandStatus::Failed as i32
+                            && let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ = reply_sender.send(AgentCommandReply::Failed(result.message));
+                        }
+                    }
+                    _ => {}
+                };
 
                 if let Err(error) = store
                     .events()
@@ -473,6 +705,7 @@ impl AgentControlPlane for GrpcAgentService {
             }
 
             if let Some((agent_id, host_id)) = connected_agent {
+                agent_streams.unregister(host_id, agent_id).await;
                 let recorded_at = Utc::now();
                 if let Err(error) = store
                     .agents()
@@ -683,6 +916,25 @@ async fn delete_host(
     Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
 }
 
+async fn update_host(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Json(request): Json<UpdateHostRequest>,
+) -> Result<Json<UpdateHostResponse>, AppError> {
+    match state
+        .store
+        .hosts()
+        .update(host_id, request.display_name, request.labels)
+        .await
+    {
+        Ok(host) => Ok(Json(UpdateHostResponse { item: host })),
+        Err(sea_orm::DbErr::RecordNotFound(_)) => {
+            Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 async fn create_enrollment_token(
     State(state): State<AppState>,
     Json(request): Json<CreateEnrollmentTokenRequest>,
@@ -747,6 +999,49 @@ async fn list_host_containers(
     Ok(Json(ListHostContainersResponse {
         items: state.store.containers().list_by_host(host_id).await?,
     }))
+}
+
+async fn refresh_containers(
+    State(state): State<AppState>,
+) -> Result<Json<ListHostContainersResponse>, AppError> {
+    let hosts = state.store.hosts().list().await?;
+    let online_hosts = hosts
+        .into_iter()
+        .filter(|host| host.status == HostStatus::Online)
+        .collect::<Vec<_>>();
+    if online_hosts.is_empty() {
+        return Err(container_refresh_app_error(
+            ContainerRefreshError::NoOnlineHosts,
+        ));
+    }
+
+    let mut snapshots = Vec::with_capacity(online_hosts.len());
+    for host in &online_hosts {
+        let snapshot = state
+            .agent_streams
+            .collect_containers(host.id)
+            .await
+            .map_err(container_refresh_app_error)?;
+        snapshots.push((host.id, snapshot));
+    }
+
+    for (host_id, snapshot) in snapshots {
+        let payload = container_snapshot_payload(&snapshot);
+        ingest_agent_event(
+            &state.store,
+            Some(host_id),
+            "container.snapshot",
+            &payload,
+            Utc::now(),
+        )
+        .await?;
+    }
+
+    let mut items = Vec::new();
+    for host in online_hosts {
+        items.extend(state.store.containers().list_by_host(host.id).await?);
+    }
+    Ok(Json(ListHostContainersResponse { items }))
 }
 
 async fn list_tasks(State(state): State<AppState>) -> Result<Json<ListTasksResponse>, AppError> {
@@ -890,6 +1185,80 @@ fn parse_event_payload(payload_json: &str) -> Value {
     })
 }
 
+fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)> {
+    match event.event.as_ref()? {
+        grpc::agent_event::Event::Connected(connected) => Some((
+            "connected".to_string(),
+            serde_json::json!({
+                "protocol_version": connected.protocol_version,
+                "hostname": connected.hostname
+            }),
+        )),
+        grpc::agent_event::Event::Heartbeat(heartbeat) => Some((
+            "heartbeat".to_string(),
+            serde_json::json!({
+                "protocol_version": heartbeat.protocol_version
+            }),
+        )),
+        grpc::agent_event::Event::MetricsSnapshot(snapshot) => Some((
+            "metrics.snapshot".to_string(),
+            serde_json::json!({
+                "host_id": snapshot.host_id,
+                "captured_at": snapshot.captured_at.as_ref().and_then(timestamp_to_utc),
+                "cpu_percent": snapshot.cpu_percent,
+                "memory_percent": snapshot.memory_percent,
+                "disk_percent": snapshot.disk_percent,
+                "load_average": snapshot.load_average,
+                "extra": parse_event_payload(&snapshot.extra_json),
+            }),
+        )),
+        grpc::agent_event::Event::ContainerSnapshot(snapshot) => Some((
+            "container.snapshot".to_string(),
+            container_snapshot_payload(snapshot),
+        )),
+        grpc::agent_event::Event::CollectorError(error) => Some((
+            "metrics.collector_error".to_string(),
+            serde_json::json!({
+                "command_id": error.command_id,
+                "collector": error.collector,
+                "message": error.message,
+            }),
+        )),
+        grpc::agent_event::Event::CommandResult(result) => Some((
+            "command.result".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "status": result.status,
+                "message": result.message,
+            }),
+        )),
+    }
+}
+
+fn container_snapshot_payload(snapshot: &grpc::ContainerSnapshotEvent) -> Value {
+    serde_json::json!({
+        "command_id": snapshot.command_id,
+        "runtime": snapshot.runtime,
+        "containers": snapshot.containers.iter().map(container_observation_payload).collect::<Vec<_>>(),
+        "extra": parse_event_payload(&snapshot.extra_json),
+    })
+}
+
+fn container_observation_payload(container: &grpc::ContainerObservation) -> Value {
+    serde_json::json!({
+        "id": container.id,
+        "names": container.names,
+        "image": container.image,
+        "image_id": container.image_id,
+        "command": container.command,
+        "created": container.created,
+        "ports": parse_event_payload(&container.ports_json),
+        "labels": parse_event_payload(&container.labels_json),
+        "state": container.state,
+        "status": container.status,
+    })
+}
+
 async fn ingest_agent_event(
     store: &Store,
     host_id: Option<Uuid>,
@@ -1002,6 +1371,10 @@ fn container_observation(
             .get("labels")
             .cloned()
             .unwrap_or_else(|| serde_json::json!({})),
+        created_at: container
+            .get("created")
+            .and_then(Value::as_i64)
+            .and_then(|seconds| Utc.timestamp_opt(seconds, 0).single()),
         observed_at: recorded_at,
     })
 }
@@ -1041,6 +1414,26 @@ impl AppError {
             status,
             message: message.into(),
         }))
+    }
+}
+
+fn container_refresh_app_error(error: ContainerRefreshError) -> AppError {
+    match error {
+        ContainerRefreshError::NoOnlineHosts => {
+            AppError::status(StatusCode::SERVICE_UNAVAILABLE, "no online agents")
+        }
+        ContainerRefreshError::NoStream => AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent stream is not connected",
+        ),
+        ContainerRefreshError::Timeout => AppError::status(
+            StatusCode::GATEWAY_TIMEOUT,
+            "agent container refresh timed out",
+        ),
+        ContainerRefreshError::AgentFailed(message) => AppError::status(
+            StatusCode::BAD_GATEWAY,
+            format!("agent container refresh failed: {message}"),
+        ),
     }
 }
 
@@ -1400,6 +1793,71 @@ mod tests {
         assert_eq!(observations[0].container_ref, "abc123");
         assert_eq!(observations[0].name, "postgres");
         assert_eq!(observations[0].runtime, "docker");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_container_command_and_receives_snapshot() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let collect = tokio::spawn({
+            let registry = registry.clone();
+            async move { registry.collect_containers(host_id).await }
+        });
+        let command = receiver
+            .recv()
+            .await
+            .expect("registry should send collect command")
+            .expect("command stream item should be ok");
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::CollectContainers(_))
+        ));
+        let reply_sender = pending
+            .lock()
+            .await
+            .remove(&command.command_id)
+            .expect("command should have pending waiter");
+        reply_sender
+            .send(AgentCommandReply::ContainerSnapshot(
+                grpc::ContainerSnapshotEvent {
+                    command_id: command.command_id,
+                    runtime: "docker".to_string(),
+                    containers: Vec::new(),
+                    extra_json: "{}".to_string(),
+                },
+            ))
+            .expect("waiter should receive snapshot");
+
+        let snapshot = collect
+            .await
+            .expect("collect task should complete")
+            .expect("snapshot should succeed");
+        assert_eq!(snapshot.runtime, "docker");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_sends_shutdown_to_registered_streams() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        registry.register(host_id, agent_id, sender).await;
+
+        registry.shutdown_all("control-plane shutting down").await;
+
+        let command = receiver
+            .recv()
+            .await
+            .expect("registry should send shutdown command")
+            .expect("command stream item should be ok");
+        let Some(grpc::control_plane_command::Command::Shutdown(shutdown)) = command.command else {
+            panic!("shutdown_all should send shutdown command");
+        };
+        assert_eq!(shutdown.reason, "control-plane shutting down");
     }
 
     #[test]

@@ -223,6 +223,7 @@ CREATE TABLE IF NOT EXISTS containers (
     status TEXT NOT NULL,
     ports JSONB NOT NULL DEFAULT '[]'::jsonb,
     labels JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ,
     observed_at TIMESTAMPTZ NOT NULL,
     UNIQUE(host_id, runtime, container_ref)
 );

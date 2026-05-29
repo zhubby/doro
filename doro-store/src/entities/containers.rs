@@ -15,6 +15,7 @@ pub struct Model {
     pub status: String,
     pub ports: Value,
     pub labels: Value,
+    pub created_at: Option<DateTimeWithTimeZone>,
     pub observed_at: DateTimeWithTimeZone,
 }
 

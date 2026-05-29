@@ -3,4 +3,4 @@ import type { AgentCapability } from "./AgentCapability";
 import type { HostStatus } from "./HostStatus";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type Host = { id: string, hostname: string, labels: Array<string>, status: HostStatus, last_seen_at: string | null, capabilities: Array<AgentCapability>, system_profile: JsonValue, };
+export type Host = { id: string, hostname: string, display_name: string, labels: Array<string>, status: HostStatus, last_seen_at: string | null, capabilities: Array<AgentCapability>, system_profile: JsonValue, };

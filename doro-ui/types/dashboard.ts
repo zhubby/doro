@@ -66,11 +66,14 @@ export type ResourceColumn<T> = {
   key: keyof T | string;
   label: string;
   className?: string;
+  width?: string;
   render?: (row: T) => React.ReactNode;
 };
 
 export type ContainerResource = {
   id: string;
+  hostId: string;
+  agentName: string;
   name: string;
   image: string;
   status: ResourceStatus;

@@ -6,6 +6,8 @@ use doro_protocol::MetricSnapshot;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashSet;
+use std::time::Duration;
+use std::time::Instant;
 use sysinfo::Components;
 use sysinfo::Disks;
 use sysinfo::Networks;
@@ -44,6 +46,7 @@ pub struct LocalCollectors {
     disks: Disks,
     networks: Networks,
     components: Components,
+    last_sample_at: Option<Instant>,
 }
 
 impl LocalCollectors {
@@ -56,6 +59,7 @@ impl LocalCollectors {
             disks: Disks::new_with_refreshed_list(),
             networks: Networks::new_with_refreshed_list(),
             components: Components::new_with_refreshed_list(),
+            last_sample_at: None,
         }
     }
 
@@ -63,7 +67,7 @@ impl LocalCollectors {
         let mut events = vec![CollectorEvent::Metrics(self.collect_metrics(host_id))];
 
         if self.config.container_metrics_enabled {
-            match collect_containers(self.config.docker_socket_path.as_deref()).await {
+            match collect_container_snapshot(self.config.docker_socket_path.as_deref()).await {
                 Ok(payload) => events.push(CollectorEvent::Containers(payload)),
                 Err(error) => events.push(CollectorEvent::Error {
                     collector: "containers",
@@ -104,6 +108,11 @@ impl LocalCollectors {
         self.components.refresh(true);
 
         let captured_at = Utc::now();
+        let sampled_at = Instant::now();
+        let sample_interval = self
+            .last_sample_at
+            .map(|last_sample_at| sampled_at.saturating_duration_since(last_sample_at));
+        self.last_sample_at = Some(sampled_at);
         let total_memory = self.system.total_memory();
         let used_memory = self.system.used_memory();
         let memory_percent = percent(used_memory, total_memory);
@@ -129,7 +138,8 @@ impl LocalCollectors {
             extra: json!({
                 "cpus": self.cpu_payload(),
                 "disks": self.disk_payload(),
-                "networks": self.network_payload(),
+                "disk_io": self.disk_io_payload(sample_interval),
+                "networks": self.network_payload(sample_interval),
                 "components": self.component_payload(),
                 "processes": self.process_payload(),
             }),
@@ -162,6 +172,7 @@ impl LocalCollectors {
                     let available = disk.available_space();
                     json!({
                         "name": disk.name().to_string_lossy(),
+                        "kind": disk.kind().to_string(),
                         "mount_point": disk.mount_point().to_string_lossy(),
                         "total_bytes": total,
                         "available_bytes": available,
@@ -172,7 +183,30 @@ impl LocalCollectors {
         )
     }
 
-    fn network_payload(&self) -> Value {
+    fn disk_io_payload(&self, sample_interval: Option<Duration>) -> Value {
+        json!(
+            self.disks
+                .list()
+                .iter()
+                .map(|disk| {
+                    let usage = disk.usage();
+                    json!({
+                        "name": disk.name().to_string_lossy(),
+                        "kind": disk.kind().to_string(),
+                        "mount_point": disk.mount_point().to_string_lossy(),
+                        "read_bytes": usage.read_bytes,
+                        "written_bytes": usage.written_bytes,
+                        "total_read_bytes": usage.total_read_bytes,
+                        "total_written_bytes": usage.total_written_bytes,
+                        "read_bytes_per_second": bytes_per_second(usage.read_bytes, sample_interval),
+                        "write_bytes_per_second": bytes_per_second(usage.written_bytes, sample_interval),
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+
+    fn network_payload(&self, sample_interval: Option<Duration>) -> Value {
         json!(
             self.networks
                 .iter()
@@ -183,6 +217,8 @@ impl LocalCollectors {
                         "transmitted_bytes": data.transmitted(),
                         "total_received_bytes": data.total_received(),
                         "total_transmitted_bytes": data.total_transmitted(),
+                        "received_bytes_per_second": bytes_per_second(data.received(), sample_interval),
+                        "transmitted_bytes_per_second": bytes_per_second(data.transmitted(), sample_interval),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -274,13 +310,24 @@ fn percent(used: u64, total: u64) -> f32 {
     ((used as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as f32
 }
 
+fn bytes_per_second(bytes: u64, interval: Option<Duration>) -> f64 {
+    let Some(interval) = interval else {
+        return 0.0;
+    };
+    let seconds = interval.as_secs_f64();
+    if seconds <= 0.0 {
+        return 0.0;
+    }
+    bytes as f64 / seconds
+}
+
 fn merge_extra(extra: &mut Value, key: &str, value: Value) {
     if let Some(map) = extra.as_object_mut() {
         map.insert(key.to_string(), value);
     }
 }
 
-async fn collect_containers(socket_path: Option<&str>) -> anyhow::Result<Value> {
+pub async fn collect_container_snapshot(socket_path: Option<&str>) -> anyhow::Result<Value> {
     let docker = match socket_path {
         Some(path) => Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION),
         None => Docker::connect_with_unix_defaults(),
@@ -399,6 +446,13 @@ mod tests {
         assert_eq!(percent(2, 1), 100.0);
     }
 
+    #[test]
+    fn bytes_per_second_handles_missing_or_zero_interval() {
+        assert_eq!(bytes_per_second(10, None), 0.0);
+        assert_eq!(bytes_per_second(10, Some(Duration::from_secs(0))), 0.0);
+        assert_eq!(bytes_per_second(10, Some(Duration::from_secs(2))), 5.0);
+    }
+
     #[tokio::test]
     async fn system_sampling_produces_metric_snapshot() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
@@ -419,6 +473,71 @@ mod tests {
         assert!((0.0..=100.0).contains(&metrics.snapshot.disk_percent));
         assert!(metrics.extra.get("system").is_none());
         assert!(metrics.extra.get("cpus").is_some());
+        assert!(metrics.extra.get("networks").is_some());
+        assert!(metrics.extra.get("disk_io").is_some());
+        assert!(
+            metrics.extra["networks"]
+                .as_array()
+                .is_some_and(|networks| networks.iter().all(|network| {
+                    network.get("received_bytes").is_some()
+                        && network.get("transmitted_bytes").is_some()
+                        && network.get("received_bytes_per_second").is_some()
+                        && network.get("transmitted_bytes_per_second").is_some()
+                }))
+        );
+        assert!(
+            metrics.extra["disk_io"]
+                .as_array()
+                .is_some_and(|disks| disks.iter().all(|disk| {
+                    disk.get("read_bytes").is_some()
+                        && disk.get("written_bytes").is_some()
+                        && disk.get("read_bytes_per_second").is_some()
+                        && disk.get("write_bytes_per_second").is_some()
+                }))
+        );
+    }
+
+    #[tokio::test]
+    async fn repeated_sampling_reports_non_negative_io_rates() {
+        let mut collectors = LocalCollectors::new(CollectorConfig {
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
+        });
+        let host_id = uuid::Uuid::new_v4();
+        let _ = collectors.collect(host_id).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        let events = collectors.collect(host_id).await;
+
+        let Some(CollectorEvent::Metrics(metrics)) = events.first() else {
+            panic!("first collector event should be metrics");
+        };
+
+        assert!(
+            metrics.extra["networks"]
+                .as_array()
+                .is_some_and(|networks| networks.iter().all(|network| {
+                    network["received_bytes_per_second"]
+                        .as_f64()
+                        .is_some_and(|value| value >= 0.0)
+                        && network["transmitted_bytes_per_second"]
+                            .as_f64()
+                            .is_some_and(|value| value >= 0.0)
+                }))
+        );
+        assert!(
+            metrics.extra["disk_io"]
+                .as_array()
+                .is_some_and(|disks| disks.iter().all(|disk| {
+                    disk["read_bytes_per_second"]
+                        .as_f64()
+                        .is_some_and(|value| value >= 0.0)
+                        && disk["write_bytes_per_second"]
+                            .as_f64()
+                            .is_some_and(|value| value >= 0.0)
+                }))
+        );
     }
 
     #[test]

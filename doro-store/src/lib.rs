@@ -111,6 +111,7 @@ pub struct NewContainerObservation {
     pub status: String,
     pub ports: Value,
     pub labels: Value,
+    pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -329,6 +330,48 @@ impl HostRepository<'_> {
         Ok(result.rows_affected > 0)
     }
 
+    pub async fn update(
+        &self,
+        host_id: Uuid,
+        display_name: String,
+        labels: Vec<String>,
+    ) -> Result<Host, DbErr> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() {
+            return Err(DbErr::Custom("display_name is required".to_string()));
+        }
+
+        let normalized_labels = normalize_labels(labels);
+        let now = Utc::now();
+        let result = entities::hosts::Entity::update_many()
+            .col_expr(
+                entities::hosts::Column::DisplayName,
+                sea_orm::sea_query::Expr::value(display_name),
+            )
+            .col_expr(
+                entities::hosts::Column::Labels,
+                sea_orm::sea_query::Expr::value(json!(normalized_labels)),
+            )
+            .col_expr(
+                entities::hosts::Column::UpdatedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .filter(entities::hosts::Column::Id.eq(host_id))
+            .exec(self.store.connection())
+            .await?;
+
+        if result.rows_affected == 0 {
+            return Err(DbErr::RecordNotFound(format!("host {host_id} not found")));
+        }
+
+        let host = entities::hosts::Entity::find_by_id(host_id)
+            .one(self.store.connection())
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound(format!("host {host_id} not found")))?;
+
+        self.to_protocol(host).await
+    }
+
     pub async fn upsert_observed(
         &self,
         host_id: Uuid,
@@ -352,7 +395,6 @@ impl HostRepository<'_> {
                 sea_orm::sea_query::OnConflict::column(entities::hosts::Column::Id)
                     .update_columns([
                         entities::hosts::Column::Hostname,
-                        entities::hosts::Column::DisplayName,
                         entities::hosts::Column::Status,
                         entities::hosts::Column::LastSeenAt,
                         entities::hosts::Column::UpdatedAt,
@@ -386,6 +428,7 @@ impl HostRepository<'_> {
         Ok(Host {
             id: host.id,
             hostname: host.hostname,
+            display_name: host.display_name,
             labels: json_array_strings(host.labels),
             status,
             last_seen_at,
@@ -803,6 +846,7 @@ impl ContainerRepository<'_> {
                 status: Set(container.status),
                 ports: Set(container.ports),
                 labels: Set(container.labels),
+                created_at: Set(container.created_at.map(Into::into)),
                 observed_at: Set(container.observed_at.into()),
             })
             .on_conflict(
@@ -817,6 +861,7 @@ impl ContainerRepository<'_> {
                     entities::containers::Column::Status,
                     entities::containers::Column::Ports,
                     entities::containers::Column::Labels,
+                    entities::containers::Column::CreatedAt,
                     entities::containers::Column::ObservedAt,
                 ])
                 .to_owned(),
@@ -845,6 +890,7 @@ impl ContainerRepository<'_> {
                 status: container.status,
                 ports: container.ports,
                 labels: container.labels,
+                created_at: container.created_at.map(Into::into),
                 observed_at: container.observed_at.into(),
             })
             .collect())
@@ -1161,7 +1207,6 @@ where
         sea_orm::sea_query::OnConflict::column(entities::hosts::Column::Id)
             .update_columns([
                 entities::hosts::Column::Hostname,
-                entities::hosts::Column::DisplayName,
                 entities::hosts::Column::Status,
                 entities::hosts::Column::SystemProfile,
                 entities::hosts::Column::LastSeenAt,
@@ -1398,6 +1443,18 @@ fn json_array_strings(value: Value) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn normalize_labels(labels: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for label in labels {
+        let trimmed = label.trim();
+        if trimmed.is_empty() || normalized.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    normalized
 }
 
 fn serialize_host_status(status: HostStatus) -> String {
@@ -1659,6 +1716,19 @@ mod tests {
 
         assert!(deleted);
         Ok(())
+    }
+
+    #[test]
+    fn normalize_labels_trims_and_deduplicates_values() {
+        let labels = normalize_labels(vec![
+            " agent ".to_string(),
+            "".to_string(),
+            "infra".to_string(),
+            "agent".to_string(),
+            " edge ".to_string(),
+        ]);
+
+        assert_eq!(labels, vec!["agent", "infra", "edge"]);
     }
 
     #[test]

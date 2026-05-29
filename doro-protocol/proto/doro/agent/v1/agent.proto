@@ -39,16 +39,94 @@ message AgentEvent {
   string event_id = 1;
   string agent_id = 2;
   string host_id = 3;
-  string kind = 4;
-  string payload_json = 5;
-  google.protobuf.Timestamp recorded_at = 6;
+  google.protobuf.Timestamp recorded_at = 4;
+  oneof event {
+    ConnectedEvent connected = 5;
+    HeartbeatEvent heartbeat = 6;
+    MetricsSnapshotEvent metrics_snapshot = 7;
+    ContainerSnapshotEvent container_snapshot = 8;
+    CollectorErrorEvent collector_error = 9;
+    CommandResultEvent command_result = 10;
+  }
 }
 
 message ControlPlaneCommand {
   string command_id = 1;
-  string kind = 2;
-  string payload_json = 3;
-  bool requires_approval = 4;
+  google.protobuf.Timestamp issued_at = 2;
+  oneof command {
+    AckCommand ack = 3;
+    CollectContainersCommand collect_containers = 4;
+    ShutdownCommand shutdown = 5;
+  }
+}
+
+message AckCommand {
+  string message = 1;
+}
+
+message CollectContainersCommand {
+  string runtime = 1;
+}
+
+message ShutdownCommand {
+  string reason = 1;
+}
+
+message ConnectedEvent {
+  string protocol_version = 1;
+  string hostname = 2;
+}
+
+message HeartbeatEvent {
+  string protocol_version = 1;
+}
+
+message MetricsSnapshotEvent {
+  string host_id = 1;
+  google.protobuf.Timestamp captured_at = 2;
+  float cpu_percent = 3;
+  float memory_percent = 4;
+  float disk_percent = 5;
+  float load_average = 6;
+  string extra_json = 7;
+}
+
+message ContainerSnapshotEvent {
+  string command_id = 1;
+  string runtime = 2;
+  repeated ContainerObservation containers = 3;
+  string extra_json = 4;
+}
+
+message ContainerObservation {
+  string id = 1;
+  repeated string names = 2;
+  string image = 3;
+  string image_id = 4;
+  string command = 5;
+  int64 created = 6;
+  string ports_json = 7;
+  string labels_json = 8;
+  string state = 9;
+  string status = 10;
+}
+
+message CollectorErrorEvent {
+  string command_id = 1;
+  string collector = 2;
+  string message = 3;
+}
+
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  COMMAND_STATUS_SUCCEEDED = 1;
+  COMMAND_STATUS_FAILED = 2;
+}
+
+message CommandResultEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string message = 3;
 }
 
 message AgentCapability {

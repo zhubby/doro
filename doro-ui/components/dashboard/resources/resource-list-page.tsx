@@ -22,6 +22,9 @@ type ResourceListPageProps<T extends { id: string; status: ResourceStatus }> = {
   batchActions?: string[];
   rowActions?: string[];
   notice?: ReactNode;
+  filteredRows?: T[];
+  toolbarRight?: ReactNode;
+  showStatusChips?: boolean;
 };
 
 const labels: Record<ResourceStatus | "all", string> = {
@@ -41,6 +44,9 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
   batchActions = [],
   rowActions = ["管理", "日志"],
   notice,
+  filteredRows: controlledRows,
+  toolbarRight,
+  showStatusChips = true,
 }: ResourceListPageProps<T>) {
   const [activeStatus, setActiveStatus] = useState<ResourceStatus | "all">("all");
   const filters = useMemo<FilterChip[]>(() => {
@@ -60,24 +66,27 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
           : rows.filter((row) => row.status === status).length,
     }));
   }, [rows]);
-  const filteredRows = useMemo(() => {
+  const localFilteredRows = useMemo(() => {
     if (activeStatus === "all") {
       return rows;
     }
 
     return rows.filter((row) => row.status === activeStatus);
   }, [activeStatus, rows]);
+  const tableRows = controlledRows ?? localFilteredRows;
 
   return (
     <PageContainer>
       {notice}
-      <PageSection contentClassName="space-y-4">
-        <FilterChips
-          filters={filters}
-          value={activeStatus}
-          onValueChange={(value) => setActiveStatus(value as ResourceStatus | "all")}
-        />
-      </PageSection>
+      {showStatusChips ? (
+        <PageSection contentClassName="space-y-4">
+          <FilterChips
+            filters={filters}
+            value={activeStatus}
+            onValueChange={(value) => setActiveStatus(value as ResourceStatus | "all")}
+          />
+        </PageSection>
+      ) : null}
 
       <PageSection title={title} description={description} contentClassName="space-y-4">
         <Toolbar
@@ -92,7 +101,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
               ))}
             </>
           }
-          right={
+          right={toolbarRight ?? (
             <>
               <Button variant="outline">
                 <Search className="size-4" aria-hidden="true" />
@@ -105,9 +114,9 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
                 <Settings2 className="size-4" aria-hidden="true" />
               </Button>
             </>
-          }
+          )}
         />
-        <DataTable columns={columns} rows={filteredRows} actions={rowActions} />
+        <DataTable columns={columns} rows={tableRows} actions={rowActions} />
       </PageSection>
     </PageContainer>
   );

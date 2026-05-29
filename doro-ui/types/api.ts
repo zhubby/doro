@@ -31,4 +31,6 @@ export type { SettingsResponse } from "./generated/SettingsResponse";
 export type { Task } from "./generated/Task";
 export type { TaskStatus } from "./generated/TaskStatus";
 export type { TaskStep } from "./generated/TaskStep";
+export type { UpdateHostRequest } from "./generated/UpdateHostRequest";
+export type { UpdateHostResponse } from "./generated/UpdateHostResponse";
 export type { UserSummary } from "./generated/UserSummary";

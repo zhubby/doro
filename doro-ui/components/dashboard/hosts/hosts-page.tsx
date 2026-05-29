@@ -18,17 +18,24 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { createEnrollmentToken, deleteHost } from "@/lib/control-plane-api";
+import {
+  createEnrollmentToken,
+  deleteHost,
+  updateHost,
+} from "@/lib/control-plane-api";
+import { formatRelativeTime } from "@/lib/datetime";
 import type { EnrollmentToken, Host, MetricSnapshot } from "@/types/api";
 import type { ResourceColumn } from "@/types/dashboard";
 import {
   Activity,
   Clipboard,
   Cpu,
+  Pencil,
   Plus,
   RefreshCw,
   Server,
   Trash2,
+  X,
 } from "lucide-react";
 
 type HostsPageProps = {
@@ -36,6 +43,7 @@ type HostsPageProps = {
   metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
   onHostDeleted?: (hostId: string) => void;
+  onHostUpdated?: (host: Host) => void;
 };
 
 const DEFAULT_AGENT_CONTROL_PLANE_URL = "http://127.0.0.1:8788";
@@ -68,25 +76,6 @@ function hostStatusLabel(status: Host["status"]) {
   }
 
   return <Badge variant="outline">离线</Badge>;
-}
-
-function formatLastSeen(value: string | null) {
-  if (!value) {
-    return "尚未收到";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -235,6 +224,22 @@ function HostMetricChart({ history }: { history: MetricSnapshot[] }) {
   );
 }
 
+function HostLabels({ labels }: { labels: string[] }) {
+  if (labels.length === 0) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return (
+    <div className="flex max-w-52 flex-wrap gap-1.5">
+      {labels.map((label) => (
+        <Badge key={label} variant="outline" className="max-w-28 truncate">
+          {label}
+        </Badge>
+      ))}
+    </div>
+  );
+}
+
 function hostColumns(
   metricHistoryByHost: Record<string, MetricSnapshot[]>,
 ): ResourceColumn<Host>[] {
@@ -244,9 +249,11 @@ function hostColumns(
       label: "Agent",
       render: (host) => (
         <div>
-          <p className="font-medium">{host.hostname}</p>
+          <p className="font-medium">{host.display_name || host.hostname}</p>
           <p className="text-xs text-muted-foreground">
-            {machineSummary(host, metricHistoryByHost[host.id] ?? [])}
+            {[host.hostname, machineSummary(host, metricHistoryByHost[host.id] ?? [])]
+              .filter(Boolean)
+              .join(" · ")}
           </p>
         </div>
       ),
@@ -266,12 +273,13 @@ function hostColumns(
     {
       key: "labels",
       label: "标签",
-      render: (host) => host.labels.join(" / ") || "-",
+      render: (host) => <HostLabels labels={host.labels} />,
     },
     {
       key: "last_seen_at",
       label: "最后心跳",
-      render: (host) => formatLastSeen(host.last_seen_at),
+      render: (host) =>
+        formatRelativeTime(host.last_seen_at, { emptyText: "尚未收到" }),
     },
   ];
 }
@@ -281,6 +289,7 @@ export function HostsPage({
   metricHistoryByHost = {},
   apiError,
   onHostDeleted,
+  onHostUpdated,
 }: HostsPageProps) {
   const [hostDialogOpen, setHostDialogOpen] = useState(false);
   const [enrollmentToken, setEnrollmentToken] =
@@ -294,6 +303,12 @@ export function HostsPage({
   const [deleteTarget, setDeleteTarget] = useState<Host | null>(null);
   const [deletePending, setDeletePending] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<Host | null>(null);
+  const [draftDisplayName, setDraftDisplayName] = useState("");
+  const [draftLabels, setDraftLabels] = useState<string[]>([]);
+  const [newLabel, setNewLabel] = useState("");
+  const [editPending, setEditPending] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
   const declaredCapabilities = hosts.reduce(
     (total, host) => total + host.capabilities.length,
@@ -364,6 +379,63 @@ export function HostsPage({
 
     onHostDeleted?.(deleteTarget.id);
     setDeleteTarget(null);
+  }
+
+  function openEditDialog(host: Host) {
+    setEditTarget(host);
+    setDraftDisplayName(host.display_name || host.hostname);
+    setDraftLabels(host.labels.length > 0 ? host.labels : [""]);
+    setNewLabel("");
+    setEditError(null);
+  }
+
+  function updateDraftLabel(index: number, value: string) {
+    setDraftLabels((current) =>
+      current.map((label, currentIndex) =>
+        currentIndex === index ? value : label,
+      ),
+    );
+  }
+
+  function removeDraftLabel(index: number) {
+    setDraftLabels((current) =>
+      current.filter((_, currentIndex) => currentIndex !== index),
+    );
+  }
+
+  function addDraftLabel() {
+    const value = newLabel.trim();
+    if (!value) {
+      return;
+    }
+    setDraftLabels((current) => [...current, value]);
+    setNewLabel("");
+  }
+
+  async function handleSaveHost() {
+    if (!editTarget) {
+      return;
+    }
+
+    setEditPending(true);
+    setEditError(null);
+    const labels = draftLabels.map((label) => label.trim()).filter(Boolean);
+    const result = await updateHost(editTarget.id, {
+      display_name: draftDisplayName,
+      labels,
+    });
+    setEditPending(false);
+
+    if (result.error || !result.data) {
+      setEditError(result.error ?? "保存 Agent 失败");
+      return;
+    }
+
+    onHostUpdated?.(result.data.item);
+    setEditTarget(null);
+    setDraftDisplayName("");
+    setDraftLabels([]);
+    setNewLabel("");
   }
 
   return (
@@ -493,23 +565,155 @@ export function HostsPage({
           rows={hosts}
           actions={[]}
           renderActions={(host) => (
-            <Button
-              aria-label={`删除主机 ${host.hostname}`}
-              title="删除"
-              variant="ghost"
-              size="icon"
-              className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => {
-                setDeleteTarget(host);
-                setDeleteError(null);
-              }}
-            >
-              <Trash2 className="size-4" />
-            </Button>
+            <>
+              <Button
+                aria-label={`编辑主机 ${host.hostname}`}
+                title="编辑"
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground"
+                onClick={() => openEditDialog(host)}
+              >
+                <Pencil className="size-4" />
+              </Button>
+              <Button
+                aria-label={`删除主机 ${host.hostname}`}
+                title="删除"
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => {
+                  setDeleteTarget(host);
+                  setDeleteError(null);
+                }}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </>
           )}
           emptyText="暂无已连接 Agent"
         />
       </PageSection>
+      <Dialog
+        open={Boolean(editTarget)}
+        onOpenChange={(open) => {
+          if (!open && !editPending) {
+            setEditTarget(null);
+            setDraftDisplayName("");
+            setDraftLabels([]);
+            setNewLabel("");
+            setEditError(null);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>编辑 Agent</DialogTitle>
+            <DialogDescription>
+              名称保存到 hosts.display_name，标签保存到 hosts.labels。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="rounded-md border bg-muted/30 p-3 text-sm">
+              <p className="font-medium">{editTarget?.hostname}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{editTarget?.id}</p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="agent-display-name">
+                Agent 名称
+              </label>
+              <input
+                id="agent-display-name"
+                value={draftDisplayName}
+                disabled={editPending}
+                onChange={(event) => setDraftDisplayName(event.target.value)}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="Agent 名称"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-medium">标签</p>
+              {draftLabels.length === 0 ? (
+                <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+                  暂无标签
+                </p>
+              ) : (
+                draftLabels.map((label, index) => (
+                  <div key={`${index}-${label}`} className="flex items-center gap-2">
+                    <input
+                      value={label}
+                      disabled={editPending}
+                      onChange={(event) => updateDraftLabel(index, event.target.value)}
+                      className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                      placeholder="标签"
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      title="删除标签"
+                      disabled={editPending}
+                      className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => removeDraftLabel(index)}
+                    >
+                      <X className="size-4" />
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                value={newLabel}
+                disabled={editPending}
+                onChange={(event) => setNewLabel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    addDraftLabel();
+                  }
+                }}
+                className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="新增标签"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                title="新增标签"
+                disabled={editPending || !newLabel.trim()}
+                onClick={addDraftLabel}
+              >
+                <Plus className="size-4" />
+              </Button>
+            </div>
+
+            {editError ? (
+              <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
+                保存失败：{editError}
+              </div>
+            ) : null}
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline" disabled={editPending}>
+                取消
+              </Button>
+            </DialogClose>
+            <Button
+              disabled={editPending || !draftDisplayName.trim()}
+              onClick={handleSaveHost}
+            >
+              {editPending ? "保存中" : "保存"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={Boolean(deleteTarget)}
         onOpenChange={(open) => {

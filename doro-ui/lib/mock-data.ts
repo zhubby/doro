@@ -97,6 +97,8 @@ export const applications: Application[] = [
 export const containers: ContainerResource[] = [
   {
     id: "openresty",
+    hostId: "demo-agent",
+    agentName: "demo-agent",
     name: "doro-openresty",
     image: "openresty:1.27.1",
     status: "running",
@@ -108,6 +110,8 @@ export const containers: ContainerResource[] = [
   },
   {
     id: "mysql",
+    hostId: "demo-agent",
+    agentName: "demo-agent",
     name: "doro-mysql",
     image: "mysql:8.0",
     status: "running",
@@ -119,6 +123,8 @@ export const containers: ContainerResource[] = [
   },
   {
     id: "redis",
+    hostId: "demo-agent",
+    agentName: "demo-agent",
     name: "doro-redis",
     image: "redis:7.2",
     status: "stopped",
@@ -130,6 +136,8 @@ export const containers: ContainerResource[] = [
   },
   {
     id: "n8n",
+    hostId: "demo-agent",
+    agentName: "demo-agent",
     name: "doro-n8n",
     image: "n8nio/n8n:1.92",
     status: "warning",

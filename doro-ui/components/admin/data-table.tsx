@@ -23,19 +23,30 @@ export function DataTable<T extends { id: string }>({
 
   return (
     <div className="overflow-hidden rounded-lg border">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
+      <div className="overflow-hidden">
+        <table className="w-full table-fixed text-sm">
+          <colgroup>
+            <col className="w-10" />
+            {columns.map((column) => (
+              <col key={String(column.key)} style={{ width: column.width }} />
+            ))}
+            {hasActions ? <col className="w-28" /> : null}
+          </colgroup>
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
-              <th className="w-10 px-4 py-3">
+              <th className="px-3 py-3 sm:px-4">
                 <span className="sr-only">选择</span>
               </th>
               {columns.map((column) => (
-                <th key={String(column.key)} className={cn("px-4 py-3", column.className)}>
+                <th
+                  key={String(column.key)}
+                  className={cn("px-3 py-3 sm:px-4", column.className)}
+                  title={column.label}
+                >
                   {column.label}
                 </th>
               ))}
-              {hasActions ? <th className="px-4 py-3 text-right">操作</th> : null}
+              {hasActions ? <th className="px-3 py-3 text-right sm:px-4">操作</th> : null}
             </tr>
           </thead>
           <tbody>
@@ -51,18 +62,23 @@ export function DataTable<T extends { id: string }>({
             ) : (
               rows.map((row) => (
                 <tr key={row.id} className="border-t">
-                  <td className="px-4 py-4">
+                  <td className="px-3 py-4 sm:px-4">
                     <div className="size-4 rounded border bg-background" />
                   </td>
                   {columns.map((column) => (
-                    <td key={String(column.key)} className={cn("px-4 py-4", column.className)}>
-                      {column.render
-                        ? column.render(row)
-                        : String(row[column.key as keyof T] ?? "")}
+                    <td
+                      key={String(column.key)}
+                      className={cn("px-3 py-4 sm:px-4", column.className)}
+                    >
+                      {column.render ? (
+                        column.render(row)
+                      ) : (
+                        <TruncatedText value={String(row[column.key as keyof T] ?? "")} />
+                      )}
                     </td>
                   ))}
                   {hasActions ? (
-                    <td className="px-4 py-4">
+                    <td className="px-3 py-4 sm:px-4">
                       <div className="flex justify-end gap-2">
                         {renderActions
                           ? renderActions(row)
@@ -84,14 +100,30 @@ export function DataTable<T extends { id: string }>({
   );
 }
 
+export function TruncatedText({ value }: { value: string }) {
+  return (
+    <span className="block truncate" title={value}>
+      {value}
+    </span>
+  );
+}
+
 export function ResourceStatusBadge({ status }: { status: ResourceStatus }) {
   if (status === "running") {
-    return <Badge>运行中</Badge>;
+    return <Badge className="min-w-14 justify-center">运行中</Badge>;
   }
 
   if (status === "warning") {
-    return <Badge variant="secondary">需关注</Badge>;
+    return (
+      <Badge variant="secondary" className="min-w-14 justify-center">
+        需关注
+      </Badge>
+    );
   }
 
-  return <Badge variant="outline">已停止</Badge>;
+  return (
+    <Badge variant="outline" className="min-w-14 justify-center">
+      已停止
+    </Badge>
+  );
 }

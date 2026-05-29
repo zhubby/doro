@@ -9,6 +9,7 @@ import {
   getHosts,
   getSettings,
   getTasks,
+  refreshContainers,
 } from "@/lib/control-plane-api";
 import { OverviewPage } from "@/components/dashboard/overview/overview-page";
 import { HostsPage } from "@/components/dashboard/hosts/hosts-page";
@@ -20,6 +21,7 @@ import type {
   AppSummary,
   ApprovalRequest,
   Host,
+  HostContainer,
   MetricSnapshot,
   SettingsResponse,
   Task,
@@ -30,6 +32,7 @@ type DashboardData = {
   tasks: Task[];
   approvals: ApprovalRequest[];
   apps: AppSummary[];
+  containers: HostContainer[];
   metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
   error: string | null;
@@ -40,16 +43,21 @@ const emptyData: DashboardData = {
   tasks: [],
   approvals: [],
   apps: [],
+  containers: [],
   metricHistoryByHost: {},
   settings: null,
   error: null,
 };
+
+const DASHBOARD_REFRESH_INTERVAL_MS = 10_000;
+const DASHBOARD_METRIC_HISTORY_LIMIT = 240;
 
 export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "tasks" | "approvals" | "apps" | "settings" }) {
   const [data, setData] = useState<DashboardData>(emptyData);
 
   useEffect(() => {
     let cancelled = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
       const [hosts, tasks, approvals, apps, settings] = await Promise.all([
@@ -63,40 +71,68 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
         return;
       }
       const hostItems = hosts.data?.items ?? [];
-      const metricResults = await Promise.all(
-        hostItems.map((host) => getHostMetrics(host.id, 60)),
-      );
+      const [metricResults, containers] = await Promise.all([
+        Promise.all(
+          hostItems.map((host) => getHostMetrics(host.id, DASHBOARD_METRIC_HISTORY_LIMIT)),
+        ),
+        view === "overview"
+          ? refreshContainers()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
       if (cancelled) {
         return;
       }
+      const error =
+        hosts.error ??
+        tasks.error ??
+        approvals.error ??
+        apps.error ??
+        settings.error ??
+        metricResults.find((result) => result.error)?.error ??
+        containers.error ??
+        null;
       const metricHistoryByHost = Object.fromEntries(
         hostItems.map((host, index) => [
           host.id,
           metricResults[index]?.data?.items ?? [],
         ]),
       );
-      setData({
-        hosts: hostItems,
-        tasks: tasks.data?.items ?? [],
-        approvals: approvals.data?.items ?? [],
-        apps: apps.data?.items ?? [],
-        metricHistoryByHost,
-        settings: settings.data,
-        error:
-          hosts.error ??
-          tasks.error ??
-          approvals.error ??
-          apps.error ??
-          settings.error ??
-          metricResults.find((result) => result.error)?.error ??
-          null,
+
+      setData((current) => {
+        if (error) {
+          return {
+            ...current,
+            error,
+          };
+        }
+
+        return {
+          hosts: hostItems,
+          tasks: tasks.data?.items ?? [],
+          approvals: approvals.data?.items ?? [],
+          apps: apps.data?.items ?? [],
+          containers: containers.data?.items ?? current.containers,
+          metricHistoryByHost,
+          settings: settings.data,
+          error: null,
+        };
       });
     }
 
-    load();
+    async function refresh() {
+      await load();
+      if (!cancelled) {
+        refreshTimer = setTimeout(refresh, DASHBOARD_REFRESH_INTERVAL_MS);
+      }
+    }
+
+    refresh();
 
     return () => {
       cancelled = true;
+      if (refreshTimer) {
+        clearTimeout(refreshTimer);
+      }
     };
   }, []);
 
@@ -116,6 +152,14 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
               metricHistoryByHost,
             };
           });
+        }}
+        onHostUpdated={(host) => {
+          setData((current) => ({
+            ...current,
+            hosts: current.hosts.map((item) =>
+              item.id === host.id ? host : item,
+            ),
+          }));
         }}
       />
     );
@@ -139,6 +183,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       tasks={data.tasks}
       approvals={data.approvals}
       apps={data.apps}
+      containers={data.containers}
       metricHistoryByHost={data.metricHistoryByHost}
       apiError={data.error}
     />
