@@ -42,7 +42,7 @@ The initial service surface is:
 - `ReportHeartbeat`: report liveness and current capability declarations.
 - `OpenAgentStream`: bidirectional stream where agents send `AgentEvent` messages and receive `ControlPlaneCommand` messages.
 
-The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, and local observation events. The control plane responds with an `ack` command and persists inbound events. During control-plane maintenance or process shutdown, the control plane sends a `shutdown` command so the agent can close the current stream promptly and wait before reconnecting; this is not a request to stop the agent process or mark a task failed. If the connection fails or the stream closes, including after a shutdown command, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds.
+The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, runtime log lines, and local observation events. The control plane responds with an `ack` command and persists inbound operational events. During control-plane maintenance or process shutdown, the control plane sends a `shutdown` command so the agent can close the current stream promptly and wait before reconnecting; this is not a request to stop the agent process or mark a task failed. If the connection fails or the stream closes, including after a shutdown command, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds.
 
 The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
@@ -57,6 +57,7 @@ The base system collector is supported on macOS and Linux. Docker collection is 
 - `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
 - `container.snapshot`: read-only Docker observations. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
+- `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
 Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
 

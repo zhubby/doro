@@ -11,6 +11,7 @@ import type {
   ListHostContainersResponse,
   ListHostsResponse,
   ListMetricSnapshotsResponse,
+  ListRuntimeLogsResponse,
   ListTasksResponse,
   LoginRequest,
   RefreshTokenRequest,
@@ -321,6 +322,36 @@ export async function getApps() {
 
 export async function getSettings() {
   return getJson<SettingsResponse>("/api/v1/settings");
+}
+
+export async function getControlPlaneLogs(limit = 500) {
+  return getJson<ListRuntimeLogsResponse>(
+    `/api/v1/logs/control-plane?limit=${limit}`,
+  );
+}
+
+export async function getAgentLogs(hostId: string, limit = 500) {
+  return getJson<ListRuntimeLogsResponse>(
+    `/api/v1/logs/agents/${hostId}?limit=${limit}`,
+  );
+}
+
+export async function runtimeLogStreamUrl(
+  scope: "control_plane" | "agent",
+  hostId?: string,
+) {
+  const token = await authToken();
+  if (!token) {
+    return null;
+  }
+  const query = new URLSearchParams({
+    scope,
+    token,
+  });
+  if (hostId) {
+    query.set("host_id", hostId);
+  }
+  return `${controlPlaneUrl()}/api/v1/logs/stream?${query}`;
 }
 
 export async function runTerminalCommand(request: TerminalCommandRequest) {

@@ -1010,8 +1010,10 @@ dependencies = [
  "doro-agent",
  "doro-config",
  "doro-control-plane",
+ "serde_json",
  "tempfile",
  "tokio",
+ "tracing",
  "tracing-subscriber",
  "uuid",
 ]

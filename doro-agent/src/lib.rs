@@ -16,10 +16,16 @@ use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use doro_protocol::protobuf_timestamp_from_utc;
 use doro_protocol::protobuf_timestamp_now;
+use serde_json::Value;
+use std::collections::VecDeque;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 use terminal::TerminalCommand;
 use terminal::TerminalManager;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
@@ -32,6 +38,85 @@ mod terminal;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
+const AGENT_RUNTIME_LOG_LIMIT: usize = 200;
+
+static AGENT_RUNTIME_LOGS: OnceLock<AgentRuntimeLogHub> = OnceLock::new();
+
+#[derive(Debug, Clone)]
+pub struct AgentRuntimeLog {
+    pub id: Uuid,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub fields: Value,
+}
+
+#[derive(Debug, Clone)]
+struct AgentRuntimeLogHub {
+    entries: Arc<StdMutex<VecDeque<AgentRuntimeLog>>>,
+    sender: broadcast::Sender<AgentRuntimeLog>,
+}
+
+impl Default for AgentRuntimeLogHub {
+    fn default() -> Self {
+        let (sender, _) = broadcast::channel(512);
+        Self {
+            entries: Arc::new(StdMutex::new(VecDeque::new())),
+            sender,
+        }
+    }
+}
+
+impl AgentRuntimeLogHub {
+    fn push(&self, entry: AgentRuntimeLog) {
+        {
+            let mut entries = self
+                .entries
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            entries.push_back(entry.clone());
+            while entries.len() > AGENT_RUNTIME_LOG_LIMIT {
+                entries.pop_front();
+            }
+        }
+        let _ = self.sender.send(entry);
+    }
+
+    fn snapshot(&self) -> Vec<AgentRuntimeLog> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    fn subscribe(&self) -> broadcast::Receiver<AgentRuntimeLog> {
+        self.sender.subscribe()
+    }
+}
+
+pub fn init_runtime_log_capture() {
+    let _ = AGENT_RUNTIME_LOGS.set(AgentRuntimeLogHub::default());
+}
+
+pub fn publish_runtime_log(
+    level: impl Into<String>,
+    target: impl Into<String>,
+    message: impl Into<String>,
+    fields: Value,
+) {
+    let Some(hub) = AGENT_RUNTIME_LOGS.get() else {
+        return;
+    };
+    hub.push(AgentRuntimeLog {
+        id: Uuid::new_v4(),
+        level: level.into(),
+        target: target.into(),
+        message: message.into(),
+        fields,
+    });
+}
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -324,6 +409,19 @@ impl Agent {
         )
     }
 
+    pub fn log_line_event(&self, agent_id: Uuid, log: AgentRuntimeLog) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::LogLine(grpc::LogLineEvent {
+                log_id: log.id.to_string(),
+                level: log.level,
+                target: log.target,
+                message: log.message,
+                fields_json: log.fields.to_string(),
+            }),
+        )
+    }
+
     pub fn heartbeat(&self) -> AgentEvent {
         AgentEvent::Heartbeat {
             host_id: self.config.host_id,
@@ -486,6 +584,44 @@ async fn open_agent_stream(
     );
     sender.send(agent.connected_event(agent_id)).await?;
     tracing::debug!(agent_id = %agent_id, "queued agent connected event");
+
+    if let Some(runtime_logs) = AGENT_RUNTIME_LOGS.get() {
+        for log in runtime_logs.snapshot() {
+            if sender
+                .send(agent.log_line_event(agent_id, log))
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+
+        let log_agent = agent.clone();
+        let log_sender = sender.clone();
+        let mut log_receiver = runtime_logs.subscribe();
+        let log_shutdown = shutdown_rx.clone();
+        tokio::spawn(async move {
+            loop {
+                let log = tokio::select! {
+                    log = log_receiver.recv() => {
+                        match log {
+                            Ok(log) => log,
+                            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(broadcast::error::RecvError::Closed) => return,
+                        }
+                    }
+                    () = wait_for_shutdown(log_shutdown.clone()) => return,
+                };
+                if log_sender
+                    .send(log_agent.log_line_event(agent_id, log))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+    }
 
     let heartbeat_agent = agent.clone();
     let heartbeat_sender = sender.clone();
@@ -961,6 +1097,70 @@ mod tests {
         assert_eq!(snapshot.command_id, command_id);
         assert_eq!(snapshot.containers.len(), 1);
         assert_eq!(snapshot.containers[0].id, "abc");
+    }
+
+    #[test]
+    fn log_line_event_preserves_runtime_log_fields() {
+        let agent_id = Uuid::new_v4();
+        let agent = Agent::new(AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            docker_manage_enabled: false,
+            gpu_metrics_enabled: false,
+        });
+        let log_id = Uuid::new_v4();
+
+        let event = agent.log_line_event(
+            agent_id,
+            AgentRuntimeLog {
+                id: log_id,
+                level: "INFO".to_string(),
+                target: "doro_agent".to_string(),
+                message: "agent connected".to_string(),
+                fields: serde_json::json!({"message": "agent connected"}),
+            },
+        );
+
+        let Some(grpc::agent_event::Event::LogLine(log)) = event.event else {
+            panic!("log line event should use typed payload");
+        };
+        assert_eq!(log.log_id, log_id.to_string());
+        assert_eq!(log.level, "INFO");
+        assert_eq!(log.message, "agent connected");
+    }
+
+    #[test]
+    fn runtime_log_hub_keeps_bounded_tail() {
+        let hub = AgentRuntimeLogHub::default();
+        for index in 0..250 {
+            hub.push(AgentRuntimeLog {
+                id: Uuid::new_v4(),
+                level: "INFO".to_string(),
+                target: "doro_agent".to_string(),
+                message: format!("line {index}"),
+                fields: serde_json::json!({}),
+            });
+        }
+
+        let snapshot = hub.snapshot();
+        assert_eq!(snapshot.len(), AGENT_RUNTIME_LOG_LIMIT);
+        assert_eq!(
+            snapshot.first().map(|entry| entry.message.as_str()),
+            Some("line 50")
+        );
+        assert_eq!(
+            snapshot.last().map(|entry| entry.message.as_str()),
+            Some("line 249")
+        );
     }
 
     #[tokio::test]

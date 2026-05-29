@@ -237,6 +237,26 @@ pub struct TerminalCommandResponse {
     pub finished_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "RuntimeLogEntry.ts")]
+pub struct RuntimeLogEntry {
+    pub id: Uuid,
+    pub source: String,
+    pub host_id: Option<Uuid>,
+    pub agent_id: Option<Uuid>,
+    pub level: String,
+    pub target: String,
+    pub message: String,
+    pub fields: Value,
+    pub recorded_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListRuntimeLogsResponse.ts")]
+pub struct ListRuntimeLogsResponse {
+    pub items: Vec<RuntimeLogEntry>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "AuthStatusResponse.ts")]
 pub struct AuthStatusResponse {
@@ -451,6 +471,8 @@ mod tests {
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandResponse::export_all(&cfg).is_ok());
+        assert!(RuntimeLogEntry::export_all(&cfg).is_ok());
+        assert!(ListRuntimeLogsResponse::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenRequest::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenResponse::export_all(&cfg).is_ok());
         assert!(AuthStatusResponse::export_all(&cfg).is_ok());
