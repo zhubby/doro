@@ -21,6 +21,7 @@ use axum::response::IntoResponse;
 use axum::response::Response as AxumResponse;
 use axum::response::Sse;
 use axum::response::sse::Event;
+use axum::response::sse::KeepAlive;
 use axum::routing::get;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -51,11 +52,13 @@ use doro_protocol::ListAppsResponse;
 use doro_protocol::ListHostContainersResponse;
 use doro_protocol::ListHostsResponse;
 use doro_protocol::ListMetricSnapshotsResponse;
+use doro_protocol::ListRuntimeLogsResponse;
 use doro_protocol::ListTasksResponse;
 use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::RefreshTokenRequest;
 use doro_protocol::RegisterRequest;
+use doro_protocol::RuntimeLogEntry;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
@@ -92,13 +95,17 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::net::UdpSocket;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::sync::OnceLock;
 use std::time::Duration;
 use sysinfo::System;
 use tokio::sync::Mutex;
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
@@ -117,13 +124,128 @@ use uuid::Uuid;
 const CONTAINER_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_TERMINAL_TIMEOUT_SECONDS: u32 = 30;
 const MAX_TERMINAL_TIMEOUT_SECONDS: u32 = 120;
+const RUNTIME_LOG_LIMIT: usize = 500;
+
+static CONTROL_PLANE_LOG_HUB: OnceLock<LogHub> = OnceLock::new();
 
 #[derive(Debug, Clone)]
 pub struct AppState {
     store: Store,
     auth: AuthService,
     agent_streams: AgentStreamRegistry,
+    logs: LogHub,
     control_plane_environment: ControlPlaneEnvironment,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogHub {
+    inner: Arc<StdMutex<LogHubInner>>,
+    sender: broadcast::Sender<RuntimeLogEntry>,
+}
+
+#[derive(Debug, Default)]
+struct LogHubInner {
+    control_plane: VecDeque<RuntimeLogEntry>,
+    agents: HashMap<Uuid, VecDeque<RuntimeLogEntry>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeLogScope {
+    ControlPlane,
+    Agent(Uuid),
+}
+
+impl Default for LogHub {
+    fn default() -> Self {
+        let (sender, _) = broadcast::channel(1024);
+        Self {
+            inner: Arc::new(StdMutex::new(LogHubInner::default())),
+            sender,
+        }
+    }
+}
+
+impl LogHub {
+    pub fn register_control_plane_global(&self) {
+        let _ = CONTROL_PLANE_LOG_HUB.set(self.clone());
+    }
+
+    pub fn push(&self, entry: RuntimeLogEntry) {
+        {
+            let mut inner = self
+                .inner
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if entry.source == "control_plane" {
+                push_limited(&mut inner.control_plane, entry.clone(), RUNTIME_LOG_LIMIT);
+            } else if let Some(host_id) = entry.host_id {
+                push_limited(
+                    inner.agents.entry(host_id).or_default(),
+                    entry.clone(),
+                    RUNTIME_LOG_LIMIT,
+                );
+            }
+        }
+        let _ = self.sender.send(entry);
+    }
+
+    pub fn control_plane_tail(&self, limit: usize) -> Vec<RuntimeLogEntry> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        tail(&inner.control_plane, limit)
+    }
+
+    pub fn agent_tail(&self, host_id: Uuid, limit: usize) -> Vec<RuntimeLogEntry> {
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        inner
+            .agents
+            .get(&host_id)
+            .map(|entries| tail(entries, limit))
+            .unwrap_or_default()
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<RuntimeLogEntry> {
+        self.sender.subscribe()
+    }
+}
+
+fn push_limited(entries: &mut VecDeque<RuntimeLogEntry>, entry: RuntimeLogEntry, limit: usize) {
+    entries.push_back(entry);
+    while entries.len() > limit {
+        entries.pop_front();
+    }
+}
+
+fn tail(entries: &VecDeque<RuntimeLogEntry>, limit: usize) -> Vec<RuntimeLogEntry> {
+    let start = entries.len().saturating_sub(limit);
+    entries.iter().skip(start).cloned().collect()
+}
+
+pub fn publish_control_plane_runtime_log(
+    level: impl Into<String>,
+    target: impl Into<String>,
+    message: impl Into<String>,
+    fields: Value,
+) {
+    let Some(hub) = CONTROL_PLANE_LOG_HUB.get() else {
+        return;
+    };
+    hub.push(RuntimeLogEntry {
+        id: Uuid::new_v4(),
+        source: "control_plane".to_string(),
+        host_id: None,
+        agent_id: None,
+        level: level.into(),
+        target: target.into(),
+        message: message.into(),
+        fields,
+        recorded_at: Utc::now(),
+    });
 }
 
 #[derive(Debug, Clone, Default)]
@@ -472,6 +594,18 @@ struct MetricHistoryQuery {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+struct RuntimeLogQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuntimeLogStreamQuery {
+    scope: String,
+    host_id: Option<Uuid>,
+    token: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
 struct TerminalSocketQuery {
     token: String,
     cols: Option<u32>,
@@ -513,18 +647,25 @@ pub fn app(store: Store) -> Router {
 }
 
 pub fn app_with_auth(store: Store, auth: AuthService) -> Router {
-    app_with_auth_and_streams(store, auth, AgentStreamRegistry::default())
+    app_with_auth_and_streams(
+        store,
+        auth,
+        AgentStreamRegistry::default(),
+        LogHub::default(),
+    )
 }
 
 pub fn app_with_auth_and_streams(
     store: Store,
     auth: AuthService,
     agent_streams: AgentStreamRegistry,
+    logs: LogHub,
 ) -> Router {
     let state = AppState {
         store,
         auth,
         agent_streams,
+        logs,
         control_plane_environment: collect_control_plane_environment(),
     };
 
@@ -560,6 +701,8 @@ pub fn app_with_auth_and_streams(
         .route("/api/v1/approvals", get(list_approvals))
         .route("/api/v1/apps", get(list_apps))
         .route("/api/v1/settings", get(settings))
+        .route("/api/v1/logs/control-plane", get(list_control_plane_logs))
+        .route("/api/v1/logs/agents/:host_id", get(list_agent_logs))
         .route("/api/v1/events", get(events))
         .route("/api/v1/auth/me", get(me))
         .route("/api/v1/auth/logout", axum::routing::post(logout))
@@ -571,6 +714,7 @@ pub fn app_with_auth_and_streams(
     Router::new()
         .route("/health", get(health))
         .route("/api/v1/terminal/:host_id/ws", get(terminal_session_ws))
+        .route("/api/v1/logs/stream", get(runtime_log_stream))
         .route("/api/v1/auth/status", get(auth_status))
         .route("/api/v1/auth/register", axum::routing::post(register))
         .route("/api/v1/auth/login", axum::routing::post(login))
@@ -592,6 +736,8 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let store = Store::connect_with_config(&config.store).await?;
     store.migrate().await?;
     let auth = AuthService::load_or_create(&store, config.security.jwt_secret.as_deref()).await?;
+    let logs = LogHub::default();
+    logs.register_control_plane_global();
 
     let console_listener = tokio::net::TcpListener::bind(console_addr).await?;
     tracing::info!("doro control-plane console listening on http://{console_addr}");
@@ -608,8 +754,10 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let shutdown_streams = agent_streams.clone();
     let console_store = store.clone();
     let console_streams = agent_streams.clone();
+    let console_logs = logs.clone();
     let agent_store = store.clone();
     let grpc_streams = agent_streams.clone();
+    let agent_logs = logs.clone();
     let console_shutdown = shutdown_rx.clone();
     let stream_shutdown = shutdown_rx.clone();
     let agent_shutdown = shutdown_rx;
@@ -622,7 +770,7 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let console_server = async move {
         axum::serve(
             console_listener,
-            app_with_auth_and_streams(console_store, auth, console_streams),
+            app_with_auth_and_streams(console_store, auth, console_streams, console_logs),
         )
         .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
         .await
@@ -633,6 +781,7 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
             .add_service(AgentControlPlaneServer::new(GrpcAgentService {
                 store: agent_store,
                 agent_streams: grpc_streams,
+                logs: agent_logs,
                 shutdown_rx: agent_shutdown.clone(),
             }))
             .serve_with_shutdown(agent_addr, wait_for_shutdown(agent_shutdown))
@@ -695,6 +844,7 @@ async fn wait_for_shutdown_signal() {
 pub struct GrpcAgentService {
     store: Store,
     agent_streams: AgentStreamRegistry,
+    logs: LogHub,
     shutdown_rx: watch::Receiver<bool>,
 }
 
@@ -810,6 +960,7 @@ impl AgentControlPlane for GrpcAgentService {
     ) -> Result<Response<Self::OpenAgentStreamStream>, Status> {
         let store = self.store.clone();
         let agent_streams = self.agent_streams.clone();
+        let logs = self.logs.clone();
         let shutdown_rx = self.shutdown_rx.clone();
         let mut inbound = request.into_inner();
         tracing::debug!("agent opened grpc stream");
@@ -930,31 +1081,44 @@ impl AgentControlPlane for GrpcAgentService {
                             .close_terminal_output(&closed.session_id, closed.reason)
                             .await;
                     }
+                    Some(grpc::agent_event::Event::LogLine(line)) => {
+                        if let (Some(agent_id), Some(host_id)) = (agent_id, host_id) {
+                            logs.push(runtime_log_from_agent_line(
+                                line,
+                                agent_id,
+                                host_id,
+                                recorded_at,
+                            ));
+                        }
+                    }
                     _ => {}
                 };
 
-                if let Err(error) = store
-                    .events()
-                    .record(NewAgentEvent {
-                        agent_id,
-                        host_id,
-                        event_type: event_type.clone(),
-                        event_json: serde_json::json!({
-                            "event_id": event.event_id,
-                            "kind": event_type,
-                            "payload": payload
-                        }),
-                        recorded_at,
-                    })
-                    .await
-                {
-                    tracing::warn!(%error, "failed to persist agent stream event");
-                }
+                if event_type != "log.line" {
+                    if let Err(error) = store
+                        .events()
+                        .record(NewAgentEvent {
+                            agent_id,
+                            host_id,
+                            event_type: event_type.clone(),
+                            event_json: serde_json::json!({
+                                "event_id": event.event_id,
+                                "kind": event_type,
+                                "payload": payload
+                            }),
+                            recorded_at,
+                        })
+                        .await
+                    {
+                        tracing::warn!(%error, "failed to persist agent stream event");
+                    }
 
-                if let Err(error) =
-                    ingest_agent_event(&store, host_id, &event_type, &payload, recorded_at).await
-                {
-                    tracing::warn!(%error, event_type, "failed to ingest agent stream event");
+                    if let Err(error) =
+                        ingest_agent_event(&store, host_id, &event_type, &payload, recorded_at)
+                            .await
+                    {
+                        tracing::warn!(%error, event_type, "failed to ingest agent stream event");
+                    }
                 }
             }
 
@@ -1674,6 +1838,64 @@ async fn settings(State(state): State<AppState>) -> Result<Json<SettingsResponse
     }))
 }
 
+async fn list_control_plane_logs(
+    State(state): State<AppState>,
+    Query(query): Query<RuntimeLogQuery>,
+) -> Json<ListRuntimeLogsResponse> {
+    Json(ListRuntimeLogsResponse {
+        items: state.logs.control_plane_tail(
+            query
+                .limit
+                .unwrap_or(RUNTIME_LOG_LIMIT)
+                .min(RUNTIME_LOG_LIMIT),
+        ),
+    })
+}
+
+async fn list_agent_logs(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<RuntimeLogQuery>,
+) -> Json<ListRuntimeLogsResponse> {
+    Json(ListRuntimeLogsResponse {
+        items: state.logs.agent_tail(
+            host_id,
+            query
+                .limit
+                .unwrap_or(RUNTIME_LOG_LIMIT)
+                .min(RUNTIME_LOG_LIMIT),
+        ),
+    })
+}
+
+async fn runtime_log_stream(
+    State(state): State<AppState>,
+    Query(query): Query<RuntimeLogStreamQuery>,
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    state.auth.verify_access_token(&query.token)?;
+    let scope = runtime_log_scope(&query)?;
+    let receiver = state.logs.subscribe();
+    let stream =
+        futures_util::stream::unfold((receiver, scope), |(mut receiver, scope)| async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(entry) if runtime_log_matches(scope, &entry) => {
+                        let event = match serde_json::to_string(&entry) {
+                            Ok(data) => Event::default().event("runtime_log").data(data),
+                            Err(_) => continue,
+                        };
+                        return Some((Ok(event), (receiver, scope)));
+                    }
+                    Ok(_) => continue,
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(broadcast::error::RecvError::Closed) => return None,
+                }
+            }
+        });
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
 async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>> {
     let stream = IntervalStream::new(tokio::time::interval(Duration::from_secs(15))).map(|_| {
         Ok(Event::default().event("heartbeat").data(
@@ -1685,6 +1907,32 @@ async fn events() -> Sse<impl futures_util::Stream<Item = Result<Event, Infallib
         ))
     });
     Sse::new(stream)
+}
+
+fn runtime_log_scope(query: &RuntimeLogStreamQuery) -> Result<RuntimeLogScope, AppError> {
+    match query.scope.as_str() {
+        "control_plane" => Ok(RuntimeLogScope::ControlPlane),
+        "agent" => query
+            .host_id
+            .map(RuntimeLogScope::Agent)
+            .ok_or_else(|| AppError::status(StatusCode::BAD_REQUEST, "host_id is required")),
+        _ => Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "scope must be control_plane or agent",
+        )),
+    }
+}
+
+fn runtime_log_matches(scope: RuntimeLogScope, entry: &RuntimeLogEntry) -> bool {
+    match scope {
+        RuntimeLogScope::ControlPlane => entry.source == "control_plane",
+        RuntimeLogScope::Agent(host_id) => {
+            entry.source == "agent"
+                && entry
+                    .host_id
+                    .is_some_and(|entry_host_id| entry_host_id == host_id)
+        }
+    }
 }
 
 async fn setting_string(store: &Store, key: &str, fallback: &str) -> Result<String, AppError> {
@@ -1793,6 +2041,35 @@ fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)
                 "reason": closed.reason,
             }),
         )),
+        grpc::agent_event::Event::LogLine(line) => Some((
+            "log.line".to_string(),
+            serde_json::json!({
+                "log_id": line.log_id,
+                "level": line.level,
+                "target": line.target,
+                "message": line.message,
+                "fields": parse_event_payload(&line.fields_json),
+            }),
+        )),
+    }
+}
+
+fn runtime_log_from_agent_line(
+    line: grpc::LogLineEvent,
+    agent_id: Uuid,
+    host_id: Uuid,
+    recorded_at: DateTime<Utc>,
+) -> RuntimeLogEntry {
+    RuntimeLogEntry {
+        id: line.log_id.parse().unwrap_or_else(|_| Uuid::new_v4()),
+        source: "agent".to_string(),
+        host_id: Some(host_id),
+        agent_id: Some(agent_id),
+        level: line.level,
+        target: line.target,
+        message: line.message,
+        fields: parse_event_payload(&line.fields_json),
+        recorded_at,
     }
 }
 
@@ -2539,6 +2816,92 @@ mod tests {
             panic!("shutdown_all should send shutdown command");
         };
         assert_eq!(shutdown.reason, "control-plane shutting down");
+    }
+
+    #[test]
+    fn log_hub_keeps_control_plane_tail_in_insertion_order() {
+        let hub = LogHub::default();
+        for index in 0..600 {
+            hub.push(RuntimeLogEntry {
+                id: Uuid::new_v4(),
+                source: "control_plane".to_string(),
+                host_id: None,
+                agent_id: None,
+                level: "INFO".to_string(),
+                target: "doro_control_plane".to_string(),
+                message: format!("line {index}"),
+                fields: serde_json::json!({}),
+                recorded_at: Utc::now(),
+            });
+        }
+
+        let entries = hub.control_plane_tail(500);
+        assert_eq!(entries.len(), 500);
+        assert_eq!(
+            entries.first().map(|entry| entry.message.as_str()),
+            Some("line 100")
+        );
+        assert_eq!(
+            entries.last().map(|entry| entry.message.as_str()),
+            Some("line 599")
+        );
+    }
+
+    #[test]
+    fn log_hub_keeps_agent_logs_by_host() {
+        let hub = LogHub::default();
+        let first_host = Uuid::new_v4();
+        let second_host = Uuid::new_v4();
+        hub.push(RuntimeLogEntry {
+            id: Uuid::new_v4(),
+            source: "agent".to_string(),
+            host_id: Some(first_host),
+            agent_id: Some(Uuid::new_v4()),
+            level: "INFO".to_string(),
+            target: "doro_agent".to_string(),
+            message: "first".to_string(),
+            fields: serde_json::json!({}),
+            recorded_at: Utc::now(),
+        });
+        hub.push(RuntimeLogEntry {
+            id: Uuid::new_v4(),
+            source: "agent".to_string(),
+            host_id: Some(second_host),
+            agent_id: Some(Uuid::new_v4()),
+            level: "INFO".to_string(),
+            target: "doro_agent".to_string(),
+            message: "second".to_string(),
+            fields: serde_json::json!({}),
+            recorded_at: Utc::now(),
+        });
+
+        let entries = hub.agent_tail(first_host, 500);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].message, "first");
+    }
+
+    #[test]
+    fn runtime_log_matches_filters_by_scope_and_host() {
+        let host_id = Uuid::new_v4();
+        let other_host_id = Uuid::new_v4();
+        let entry = RuntimeLogEntry {
+            id: Uuid::new_v4(),
+            source: "agent".to_string(),
+            host_id: Some(host_id),
+            agent_id: Some(Uuid::new_v4()),
+            level: "WARN".to_string(),
+            target: "doro_agent".to_string(),
+            message: "agent warning".to_string(),
+            fields: serde_json::json!({}),
+            recorded_at: Utc::now(),
+        };
+
+        assert!(runtime_log_matches(RuntimeLogScope::Agent(host_id), &entry));
+        assert!(!runtime_log_matches(
+            RuntimeLogScope::Agent(other_host_id),
+            &entry
+        ));
+        assert!(!runtime_log_matches(RuntimeLogScope::ControlPlane, &entry));
     }
 
     #[test]

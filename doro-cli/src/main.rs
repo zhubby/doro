@@ -1,8 +1,18 @@
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+use serde_json::Value;
+use serde_json::json;
 use std::fmt::Write;
 use std::path::PathBuf;
+use tracing::Event;
+use tracing::Subscriber;
+use tracing::field::Field;
+use tracing::field::Visit;
+use tracing_subscriber::Layer;
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::registry::LookupSpan;
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Doro home-server control-plane CLI")]
@@ -82,7 +92,8 @@ async fn main() -> anyhow::Result<()> {
             host_id,
             heartbeat_interval_seconds,
         } => {
-            init_logging(cli.log_level)?;
+            doro_agent::init_runtime_log_capture();
+            init_logging(cli.log_level, Some(RuntimeLogDestination::Agent))?;
             let loaded_config = doro_config::load_or_create_agent_config(cli.config.as_deref())?;
             doro_agent::run(apply_agent_overrides(
                 loaded_config,
@@ -98,7 +109,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
         }
         Command::ControlPlane => {
-            init_logging(cli.log_level)?;
+            init_logging(cli.log_level, Some(RuntimeLogDestination::ControlPlane))?;
             let loaded_config =
                 doro_config::load_or_create_control_plane_config(cli.config.as_deref())?;
             doro_control_plane::run(loaded_config.config).await?;
@@ -152,15 +163,26 @@ fn apply_agent_overrides(
     loaded_config
 }
 
-fn init_logging(log_level: Option<LogLevel>) -> anyhow::Result<()> {
+#[derive(Debug, Clone, Copy)]
+enum RuntimeLogDestination {
+    ControlPlane,
+    Agent,
+}
+
+fn init_logging(
+    log_level: Option<LogLevel>,
+    destination: Option<RuntimeLogDestination>,
+) -> anyhow::Result<()> {
     let env_filter = match log_level {
         Some(log_level) => tracing_subscriber::EnvFilter::try_new(default_log_filter(log_level))?,
         None => tracing_subscriber::EnvFilter::try_from_default_env()
             .unwrap_or_else(|_| default_log_filter(LogLevel::Info).into()),
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(env_filter)
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(destination.map(RuntimeLogLayer))
         .try_init()
         .map_err(|error| anyhow::anyhow!("failed to initialize logging: {error}"))?;
 
@@ -170,6 +192,85 @@ fn init_logging(log_level: Option<LogLevel>) -> anyhow::Result<()> {
 fn default_log_filter(log_level: LogLevel) -> String {
     let level = log_level.as_str();
     format!("doro_cli={level},doro_agent={level},doro_control_plane={level},tower_http={level}")
+}
+
+struct RuntimeLogLayer(RuntimeLogDestination);
+
+impl<S> Layer<S> for RuntimeLogLayer
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        let metadata = event.metadata();
+        let mut visitor = RuntimeLogVisitor::default();
+        event.record(&mut visitor);
+        let message = visitor.message.unwrap_or_else(|| {
+            visitor
+                .fields
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_default()
+        });
+        let fields = Value::Object(visitor.fields);
+
+        match self.0 {
+            RuntimeLogDestination::ControlPlane => {
+                doro_control_plane::publish_control_plane_runtime_log(
+                    metadata.level().as_str(),
+                    metadata.target(),
+                    message,
+                    fields,
+                )
+            }
+            RuntimeLogDestination::Agent => doro_agent::publish_runtime_log(
+                metadata.level().as_str(),
+                metadata.target(),
+                message,
+                fields,
+            ),
+        }
+    }
+}
+
+#[derive(Default)]
+struct RuntimeLogVisitor {
+    message: Option<String>,
+    fields: serde_json::Map<String, Value>,
+}
+
+impl Visit for RuntimeLogVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+        let value = format!("{value:?}");
+        let value = value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .unwrap_or(&value)
+            .to_string();
+        if field.name() == "message" {
+            self.message = Some(value.clone());
+        }
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        if field.name() == "message" {
+            self.message = Some(value.to_string());
+        }
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_i64(&mut self, field: &Field, value: i64) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
+
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        self.fields.insert(field.name().to_string(), json!(value));
+    }
 }
 
 fn status_output(

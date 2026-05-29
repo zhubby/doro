@@ -50,6 +50,7 @@ message AgentEvent {
     TerminalCommandResultEvent terminal_command_result = 11;
     TerminalOutputEvent terminal_output = 12;
     TerminalSessionClosedEvent terminal_session_closed = 13;
+    LogLineEvent log_line = 14;
   }
 }
 
@@ -184,6 +185,14 @@ message TerminalOutputEvent {
 message TerminalSessionClosedEvent {
   string session_id = 1;
   string reason = 2;
+}
+
+message LogLineEvent {
+  string log_id = 1;
+  string level = 2;
+  string target = 3;
+  string message = 4;
+  string fields_json = 5;
 }
 
 message AgentCapability {
