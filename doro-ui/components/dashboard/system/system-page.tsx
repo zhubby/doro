@@ -6,6 +6,7 @@ import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { formatRelativeTime } from "@/lib/datetime";
 import { systemInfo } from "@/lib/mock-data";
 import type { Host, MetricSnapshot } from "@/types/api";
 import type { Metric, SystemMetric } from "@/types/dashboard";
@@ -110,7 +111,7 @@ function liveTrafficMetrics(metric?: MetricSnapshot | null): Metric[] {
     { label: "采集主机", value: metric?.host_id.slice(0, 8) ?? "-" },
     {
       label: "采集时间",
-      value: metric ? new Date(metric.captured_at).toLocaleString("zh-CN") : "-",
+      value: formatRelativeTime(metric?.captured_at),
     },
   ];
 }

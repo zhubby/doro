@@ -23,6 +23,7 @@ import {
   deleteHost,
   updateHost,
 } from "@/lib/control-plane-api";
+import { formatRelativeTime } from "@/lib/datetime";
 import type { EnrollmentToken, Host, MetricSnapshot } from "@/types/api";
 import type { ResourceColumn } from "@/types/dashboard";
 import {
@@ -75,25 +76,6 @@ function hostStatusLabel(status: Host["status"]) {
   }
 
   return <Badge variant="outline">离线</Badge>;
-}
-
-function formatLastSeen(value: string | null) {
-  if (!value) {
-    return "尚未收到";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(date);
 }
 
 function objectValue(value: unknown): Record<string, unknown> | null {
@@ -296,7 +278,8 @@ function hostColumns(
     {
       key: "last_seen_at",
       label: "最后心跳",
-      render: (host) => formatLastSeen(host.last_seen_at),
+      render: (host) =>
+        formatRelativeTime(host.last_seen_at, { emptyText: "尚未收到" }),
     },
   ];
 }

@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { formatRelativeTime } from "@/lib/datetime";
 import { notes } from "@/lib/mock-data";
 import type { AppSummary, ApprovalRequest, Host, HostContainer, MetricSnapshot, Task } from "@/types/api";
 import type { ContainerResource, Metric, ResourceStatus } from "@/types/dashboard";
@@ -277,7 +278,7 @@ function toContainerResource(
     cpu: "-",
     memory: "-",
     ports: formatPorts(container.ports),
-    updatedAt: new Date(container.created_at ?? container.observed_at).toLocaleString("zh-CN"),
+    updatedAt: formatRelativeTime(container.created_at ?? container.observed_at),
   };
 }
 

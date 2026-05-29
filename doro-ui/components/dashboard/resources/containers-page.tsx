@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { formatRelativeTime } from "@/lib/datetime";
 import type { Host, HostContainer } from "@/types/api";
 import type { ContainerResource, ResourceColumn, ResourceStatus } from "@/types/dashboard";
 
@@ -118,7 +119,7 @@ function toContainerResource(
     cpu: "-",
     memory: "-",
     ports: formatPorts(container.ports),
-    updatedAt: new Date(container.created_at ?? container.observed_at).toLocaleString("zh-CN"),
+    updatedAt: formatRelativeTime(container.created_at ?? container.observed_at),
   };
 }
 
