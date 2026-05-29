@@ -153,6 +153,14 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
             };
           });
         }}
+        onHostUpdated={(host) => {
+          setData((current) => ({
+            ...current,
+            hosts: current.hosts.map((item) =>
+              item.id === host.id ? host : item,
+            ),
+          }));
+        }}
       />
     );
   }

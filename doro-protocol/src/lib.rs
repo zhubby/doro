@@ -48,6 +48,7 @@ pub struct CreateEnrollmentTokenResponse {
 pub struct Host {
     pub id: Uuid,
     pub hostname: String,
+    pub display_name: String,
     pub labels: Vec<String>,
     pub status: HostStatus,
     pub last_seen_at: Option<DateTime<Utc>>,
@@ -271,6 +272,19 @@ pub struct ListHostsResponse {
     pub items: Vec<Host>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateHostRequest.ts")]
+pub struct UpdateHostRequest {
+    pub display_name: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateHostResponse.ts")]
+pub struct UpdateHostResponse {
+    pub item: Host,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "LatestMetricResponse.ts")]
 pub struct LatestMetricResponse {
@@ -405,6 +419,8 @@ mod tests {
         assert!(AuthTokenResponse::export_all(&cfg).is_ok());
         assert!(CurrentUserResponse::export_all(&cfg).is_ok());
         assert!(ListHostsResponse::export_all(&cfg).is_ok());
+        assert!(UpdateHostRequest::export_all(&cfg).is_ok());
+        assert!(UpdateHostResponse::export_all(&cfg).is_ok());
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
         assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());

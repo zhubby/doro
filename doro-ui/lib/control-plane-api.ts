@@ -15,6 +15,8 @@ import type {
   RefreshTokenRequest,
   RegisterRequest,
   SettingsResponse,
+  UpdateHostRequest,
+  UpdateHostResponse,
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
@@ -265,6 +267,13 @@ export async function createEnrollmentToken(
 export async function deleteHost(hostId: string) {
   return authedRequest<null>(`/api/v1/hosts/${hostId}`, {
     method: "DELETE",
+  });
+}
+
+export async function updateHost(hostId: string, request: UpdateHostRequest) {
+  return authedRequest<UpdateHostResponse>(`/api/v1/hosts/${hostId}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
   });
 }
 

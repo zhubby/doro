@@ -53,6 +53,8 @@ use doro_protocol::RegisterRequest;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
+use doro_protocol::UpdateHostRequest;
+use doro_protocol::UpdateHostResponse;
 use doro_protocol::UserSummary;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
@@ -306,7 +308,10 @@ pub fn app_with_auth_and_streams(
             "/api/v1/hosts/enrollment-token",
             axum::routing::post(create_enrollment_token),
         )
-        .route("/api/v1/hosts/:host_id", axum::routing::delete(delete_host))
+        .route(
+            "/api/v1/hosts/:host_id",
+            axum::routing::delete(delete_host).patch(update_host),
+        )
         .route(
             "/api/v1/hosts/:host_id/metrics/latest",
             get(latest_host_metric),
@@ -909,6 +914,25 @@ async fn delete_host(
     }
 
     Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+}
+
+async fn update_host(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Json(request): Json<UpdateHostRequest>,
+) -> Result<Json<UpdateHostResponse>, AppError> {
+    match state
+        .store
+        .hosts()
+        .update(host_id, request.display_name, request.labels)
+        .await
+    {
+        Ok(host) => Ok(Json(UpdateHostResponse { item: host })),
+        Err(sea_orm::DbErr::RecordNotFound(_)) => {
+            Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 async fn create_enrollment_token(

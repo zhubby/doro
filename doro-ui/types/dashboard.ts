@@ -72,6 +72,8 @@ export type ResourceColumn<T> = {
 
 export type ContainerResource = {
   id: string;
+  hostId: string;
+  agentName: string;
   name: string;
   image: string;
   status: ResourceStatus;

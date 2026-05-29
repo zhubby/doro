@@ -262,9 +262,14 @@ function formatPorts(ports: HostContainer["ports"]) {
     .join(", ");
 }
 
-function toContainerResource(container: HostContainer): ContainerResource {
+function toContainerResource(
+  container: HostContainer,
+  hostNames: Map<string, string>,
+): ContainerResource {
   return {
     id: container.container_ref,
+    hostId: container.host_id,
+    agentName: hostNames.get(container.host_id) ?? container.host_id,
     name: container.name,
     image: container.image,
     status: resourceStatus(container.status),
@@ -272,7 +277,7 @@ function toContainerResource(container: HostContainer): ContainerResource {
     cpu: "-",
     memory: "-",
     ports: formatPorts(container.ports),
-    updatedAt: new Date(container.observed_at).toLocaleString("zh-CN"),
+    updatedAt: new Date(container.created_at ?? container.observed_at).toLocaleString("zh-CN"),
   };
 }
 
@@ -386,7 +391,10 @@ export function OverviewPage({
   const runningContainers = containers.filter(
     (container) => container.status === "running",
   ).length;
-  const containerRows = containers.map(toContainerResource);
+  const hostNames = new Map(hosts.map((host) => [host.id, host.hostname]));
+  const containerRows = containers.map((container) =>
+    toContainerResource(container, hostNames),
+  );
   const systemStats = aggregateResourceStats(hosts, metricHistoryByHost);
   const trafficMetrics = aggregateTrafficMetrics(metricHistoryByHost);
   const diskMetrics = aggregateDiskIoMetrics(metricHistoryByHost);

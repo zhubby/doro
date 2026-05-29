@@ -15,7 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { HostContainer } from "@/types/api";
+import type { Host, HostContainer } from "@/types/api";
 import type { ContainerResource, ResourceColumn, ResourceStatus } from "@/types/dashboard";
 
 const columns: ResourceColumn<ContainerResource>[] = [
@@ -37,8 +37,14 @@ const columns: ResourceColumn<ContainerResource>[] = [
   {
     key: "image",
     label: "镜像",
-    width: "34%",
+    width: "30%",
     render: (row) => <TruncatedText value={row.image} />,
+  },
+  {
+    key: "agentName",
+    label: "Agent",
+    width: "18%",
+    render: (row) => <TruncatedText value={row.agentName} />,
   },
   {
     key: "status",
@@ -55,6 +61,7 @@ const columns: ResourceColumn<ContainerResource>[] = [
 ];
 
 type ContainersPageProps = {
+  hosts?: Host[];
   containers?: HostContainer[];
   apiError?: string | null;
 };
@@ -96,9 +103,14 @@ function formatPorts(ports: HostContainer["ports"]) {
     .join(", ");
 }
 
-function toContainerResource(container: HostContainer): ContainerResource {
+function toContainerResource(
+  container: HostContainer,
+  hostNames: Map<string, string>,
+): ContainerResource {
   return {
     id: container.container_ref,
+    hostId: container.host_id,
+    agentName: hostNames.get(container.host_id) ?? container.host_id,
     name: container.name,
     image: container.image,
     status: resourceStatus(container.status),
@@ -111,25 +123,42 @@ function toContainerResource(container: HostContainer): ContainerResource {
 }
 
 export function ContainersPage({
+  hosts = [],
   containers = [],
   apiError,
 }: ContainersPageProps) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<ResourceStatus | "all">("all");
-  const rows = useMemo(() => containers.map(toContainerResource), [containers]);
+  const [agentName, setAgentName] = useState("all");
+  const hostNames = useMemo(
+    () => new Map(hosts.map((host) => [host.id, host.hostname])),
+    [hosts],
+  );
+  const agentOptions = useMemo(
+    () =>
+      Array.from(new Set(rowsWithHostNames(containers, hostNames).map((row) => row.agentName)))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(right, "zh-CN")),
+    [containers, hostNames],
+  );
+  const rows = useMemo(
+    () => rowsWithHostNames(containers, hostNames),
+    [containers, hostNames],
+  );
   const filteredRows = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
 
     return rows.filter((row) => {
       const matchesStatus = status === "all" || row.status === status;
+      const matchesAgent = agentName === "all" || row.agentName === agentName;
       const matchesQuery =
         normalizedQuery.length === 0 ||
         row.name.toLowerCase().includes(normalizedQuery) ||
         row.id.toLowerCase().includes(normalizedQuery);
 
-      return matchesStatus && matchesQuery;
+      return matchesStatus && matchesAgent && matchesQuery;
     });
-  }, [query, rows, status]);
+  }, [agentName, query, rows, status]);
   const refresh = () => {
     window.location.reload();
   };
@@ -183,6 +212,26 @@ export function ContainersPage({
               </DropdownMenuRadioGroup>
             </DropdownMenuContent>
           </DropdownMenu>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="justify-start">
+                <Filter className="size-4" aria-hidden="true" />
+                {agentName === "all" ? "全部 Agent" : agentName}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Agent 筛选</DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuRadioGroup value={agentName} onValueChange={setAgentName}>
+                <DropdownMenuRadioItem value="all">全部 Agent</DropdownMenuRadioItem>
+                {agentOptions.map((name) => (
+                  <DropdownMenuRadioItem key={name} value={name}>
+                    {name}
+                  </DropdownMenuRadioItem>
+                ))}
+              </DropdownMenuRadioGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       }
       notice={
@@ -194,4 +243,11 @@ export function ContainersPage({
       }
     />
   );
+}
+
+function rowsWithHostNames(
+  containers: HostContainer[],
+  hostNames: Map<string, string>,
+) {
+  return containers.map((container) => toContainerResource(container, hostNames));
 }
