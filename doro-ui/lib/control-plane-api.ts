@@ -15,6 +15,8 @@ import type {
   RefreshTokenRequest,
   RegisterRequest,
   SettingsResponse,
+  TerminalCommandRequest,
+  TerminalCommandResponse,
   UpdateHostRequest,
   UpdateHostResponse,
 } from "@/types/api";
@@ -309,4 +311,11 @@ export async function getApps() {
 
 export async function getSettings() {
   return getJson<SettingsResponse>("/api/v1/settings");
+}
+
+export async function runTerminalCommand(request: TerminalCommandRequest) {
+  return authedRequest<TerminalCommandResponse>("/api/v1/terminal/commands", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }

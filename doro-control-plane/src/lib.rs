@@ -31,6 +31,7 @@ use doro_ai::PlanProvider;
 use doro_protocol::AgentCapability;
 use doro_protocol::AuthStatusResponse;
 use doro_protocol::AuthTokenResponse;
+use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
 use doro_protocol::CreateEnrollmentTokenRequest;
 use doro_protocol::CreateEnrollmentTokenResponse;
@@ -53,6 +54,8 @@ use doro_protocol::RegisterRequest;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
+use doro_protocol::TerminalCommandRequest;
+use doro_protocol::TerminalCommandResponse;
 use doro_protocol::UpdateHostRequest;
 use doro_protocol::UpdateHostResponse;
 use doro_protocol::UserSummary;
@@ -104,6 +107,8 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 const CONTAINER_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_TERMINAL_TIMEOUT_SECONDS: u32 = 30;
+const MAX_TERMINAL_TIMEOUT_SECONDS: u32 = 120;
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -127,6 +132,7 @@ struct AgentStreamHandle {
 #[derive(Debug)]
 enum AgentCommandReply {
     ContainerSnapshot(grpc::ContainerSnapshotEvent),
+    TerminalCommandResult(grpc::TerminalCommandResultEvent),
     Failed(String),
 }
 
@@ -226,10 +232,72 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::Failed(message))) => {
                 Err(ContainerRefreshError::AgentFailed(message))
             }
+            Ok(Ok(AgentCommandReply::TerminalCommandResult(_))) => Err(
+                ContainerRefreshError::AgentFailed("unexpected terminal response".to_string()),
+            ),
             Ok(Err(_)) => Err(ContainerRefreshError::NoStream),
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
                 Err(ContainerRefreshError::Timeout)
+            }
+        }
+    }
+
+    async fn run_terminal_command(
+        &self,
+        request: &TerminalCommandRequest,
+    ) -> Result<grpc::TerminalCommandResultEvent, TerminalCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&request.host_id)
+            .cloned()
+            .ok_or(TerminalCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let timeout_seconds = request
+            .timeout_seconds
+            .unwrap_or(DEFAULT_TERMINAL_TIMEOUT_SECONDS)
+            .clamp(1, MAX_TERMINAL_TIMEOUT_SECONDS);
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::RunTerminalCommand(
+                grpc::RunTerminalCommandCommand {
+                    command_id: command_id.clone(),
+                    input: request.input.clone(),
+                    cols: request.cols.unwrap_or(80).clamp(20, 300),
+                    rows: request.rows.unwrap_or(24).clamp(5, 120),
+                    timeout_seconds,
+                },
+            )),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(TerminalCommandError::NoStream);
+        }
+
+        let wait = Duration::from_secs(timeout_seconds as u64 + 2);
+        match tokio::time::timeout(wait, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::TerminalCommandResult(result))) => Ok(result),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(TerminalCommandError::AgentFailed(message))
+            }
+            Ok(Ok(AgentCommandReply::ContainerSnapshot(_))) => Err(
+                TerminalCommandError::AgentFailed("unexpected container response".to_string()),
+            ),
+            Ok(Err(_)) => Err(TerminalCommandError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(TerminalCommandError::Timeout)
             }
         }
     }
@@ -238,6 +306,13 @@ impl AgentStreamRegistry {
 #[derive(Debug)]
 enum ContainerRefreshError {
     NoOnlineHosts,
+    NoStream,
+    Timeout,
+    AgentFailed(String),
+}
+
+#[derive(Debug)]
+enum TerminalCommandError {
     NoStream,
     Timeout,
     AgentFailed(String),
@@ -323,6 +398,10 @@ pub fn app_with_auth_and_streams(
         )
         .route("/api/v1/containers", get(refresh_containers))
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
+        .route(
+            "/api/v1/terminal/commands",
+            axum::routing::post(run_terminal_command),
+        )
         .route("/api/v1/approvals", get(list_approvals))
         .route("/api/v1/apps", get(list_apps))
         .route("/api/v1/settings", get(settings))
@@ -674,6 +753,15 @@ impl AgentControlPlane for GrpcAgentService {
                                 pending_commands.lock().await.remove(&result.command_id)
                         {
                             let _ = reply_sender.send(AgentCommandReply::Failed(result.message));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::TerminalCommandResult(result)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::TerminalCommandResult(result.clone()));
                         }
                     }
                     _ => {}
@@ -1044,6 +1132,121 @@ async fn refresh_containers(
     Ok(Json(ListHostContainersResponse { items }))
 }
 
+async fn run_terminal_command(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<TerminalCommandRequest>,
+) -> Result<Json<TerminalCommandResponse>, AppError> {
+    let input = request.input.trim();
+    if input.is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "terminal command input is required",
+        ));
+    }
+    if request
+        .timeout_seconds
+        .unwrap_or(DEFAULT_TERMINAL_TIMEOUT_SECONDS)
+        > MAX_TERMINAL_TIMEOUT_SECONDS
+    {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            format!(
+                "terminal command timeout must be {MAX_TERMINAL_TIMEOUT_SECONDS} seconds or less"
+            ),
+        ));
+    }
+
+    let hosts = state.store.hosts().list().await?;
+    let host = hosts
+        .into_iter()
+        .find(|host| host.id == request.host_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "host not found"))?;
+    if host.status != HostStatus::Online {
+        return Err(AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not online",
+        ));
+    }
+    if !host
+        .capabilities
+        .iter()
+        .any(|capability| capability.name == CapabilityName::ShellExecute)
+    {
+        return Err(AppError::status(
+            StatusCode::FORBIDDEN,
+            "agent does not declare shell execution capability",
+        ));
+    }
+
+    state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(request.host_id),
+            event_type: "terminal.command_requested".to_string(),
+            event_json: serde_json::json!({
+                "host_id": request.host_id,
+                "input": request.input,
+                "requested_by": current_user.username,
+                "timeout_seconds": request.timeout_seconds.unwrap_or(DEFAULT_TERMINAL_TIMEOUT_SECONDS),
+            }),
+            recorded_at: Utc::now(),
+        })
+        .await?;
+
+    let result = state
+        .agent_streams
+        .run_terminal_command(&request)
+        .await
+        .map_err(terminal_command_app_error)?;
+    let started_at = result
+        .started_at
+        .as_ref()
+        .and_then(timestamp_to_utc)
+        .unwrap_or_else(Utc::now);
+    let finished_at = result
+        .finished_at
+        .as_ref()
+        .and_then(timestamp_to_utc)
+        .unwrap_or_else(Utc::now);
+    let status = command_status_label(result.status);
+    let exit_code = if result.exit_code < 0 {
+        None
+    } else {
+        Some(result.exit_code)
+    };
+
+    state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(request.host_id),
+            event_type: "terminal.command_completed".to_string(),
+            event_json: serde_json::json!({
+                "command_id": result.command_id,
+                "host_id": request.host_id,
+                "status": status,
+                "exit_code": exit_code,
+                "output_bytes": result.output.len(),
+            }),
+            recorded_at: finished_at,
+        })
+        .await?;
+
+    Ok(Json(TerminalCommandResponse {
+        command_id: result.command_id,
+        host_id: request.host_id,
+        status: status.to_string(),
+        output: result.output,
+        exit_code,
+        started_at,
+        finished_at,
+    }))
+}
+
 async fn list_tasks(State(state): State<AppState>) -> Result<Json<ListTasksResponse>, AppError> {
     Ok(Json(ListTasksResponse {
         items: state.store.tasks().list().await?,
@@ -1230,6 +1433,17 @@ fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)
                 "command_id": result.command_id,
                 "status": result.status,
                 "message": result.message,
+            }),
+        )),
+        grpc::agent_event::Event::TerminalCommandResult(result) => Some((
+            "terminal.command_result".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "status": result.status,
+                "output": result.output,
+                "exit_code": result.exit_code,
+                "started_at": result.started_at.as_ref().and_then(timestamp_to_utc),
+                "finished_at": result.finished_at.as_ref().and_then(timestamp_to_utc),
             }),
         )),
     }
@@ -1434,6 +1648,31 @@ fn container_refresh_app_error(error: ContainerRefreshError) -> AppError {
             StatusCode::BAD_GATEWAY,
             format!("agent container refresh failed: {message}"),
         ),
+    }
+}
+
+fn terminal_command_app_error(error: TerminalCommandError) -> AppError {
+    match error {
+        TerminalCommandError::NoStream => AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent stream is not connected",
+        ),
+        TerminalCommandError::Timeout => AppError::status(
+            StatusCode::GATEWAY_TIMEOUT,
+            "agent terminal command timed out",
+        ),
+        TerminalCommandError::AgentFailed(message) => AppError::status(
+            StatusCode::BAD_GATEWAY,
+            format!("agent terminal command failed: {message}"),
+        ),
+    }
+}
+
+fn command_status_label(status: i32) -> &'static str {
+    if status == grpc::CommandStatus::Succeeded as i32 {
+        "succeeded"
+    } else {
+        "failed"
     }
 }
 
@@ -1837,6 +2076,63 @@ mod tests {
             .expect("collect task should complete")
             .expect("snapshot should succeed");
         assert_eq!(snapshot.runtime, "docker");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_terminal_command_and_receives_result() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let execute = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .run_terminal_command(&TerminalCommandRequest {
+                        host_id,
+                        input: "pwd".to_string(),
+                        cols: Some(100),
+                        rows: Some(30),
+                        timeout_seconds: Some(10),
+                    })
+                    .await
+            }
+        });
+        let command = receiver
+            .recv()
+            .await
+            .expect("registry should send terminal command")
+            .expect("command stream item should be ok");
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::RunTerminalCommand(_))
+        ));
+        let reply_sender = pending
+            .lock()
+            .await
+            .remove(&command.command_id)
+            .expect("command should have pending waiter");
+        reply_sender
+            .send(AgentCommandReply::TerminalCommandResult(
+                grpc::TerminalCommandResultEvent {
+                    command_id: command.command_id,
+                    status: grpc::CommandStatus::Succeeded as i32,
+                    output: "/tmp".to_string(),
+                    exit_code: 0,
+                    started_at: Some(protobuf_timestamp_now()),
+                    finished_at: Some(protobuf_timestamp_now()),
+                },
+            ))
+            .expect("waiter should receive terminal result");
+
+        let result = execute
+            .await
+            .expect("execute task should complete")
+            .expect("terminal command should succeed");
+        assert_eq!(result.output, "/tmp");
+        assert_eq!(result.exit_code, 0);
     }
 
     #[tokio::test]

@@ -11,6 +11,7 @@ import {
   Server,
   Settings,
   ShieldCheck,
+  Terminal,
   Zap,
 } from "lucide-react";
 
@@ -53,6 +54,12 @@ export const navigation: NavigationItem[] = [
     href: "/ai",
     description: "管理智能体运行环境和任务能力。",
     icon: Zap,
+  },
+  {
+    label: "终端",
+    href: "/terminal",
+    description: "选择 Agent 并执行受审计的终端命令。",
+    icon: Terminal,
   },
   {
     label: "网站",

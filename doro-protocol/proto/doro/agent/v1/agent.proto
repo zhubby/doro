@@ -47,6 +47,7 @@ message AgentEvent {
     ContainerSnapshotEvent container_snapshot = 8;
     CollectorErrorEvent collector_error = 9;
     CommandResultEvent command_result = 10;
+    TerminalCommandResultEvent terminal_command_result = 11;
   }
 }
 
@@ -57,6 +58,7 @@ message ControlPlaneCommand {
     AckCommand ack = 3;
     CollectContainersCommand collect_containers = 4;
     ShutdownCommand shutdown = 5;
+    RunTerminalCommandCommand run_terminal_command = 6;
   }
 }
 
@@ -70,6 +72,14 @@ message CollectContainersCommand {
 
 message ShutdownCommand {
   string reason = 1;
+}
+
+message RunTerminalCommandCommand {
+  string command_id = 1;
+  string input = 2;
+  uint32 cols = 3;
+  uint32 rows = 4;
+  uint32 timeout_seconds = 5;
 }
 
 message ConnectedEvent {
@@ -127,6 +137,15 @@ message CommandResultEvent {
   string command_id = 1;
   CommandStatus status = 2;
   string message = 3;
+}
+
+message TerminalCommandResultEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string output = 3;
+  int32 exit_code = 4;
+  google.protobuf.Timestamp started_at = 5;
+  google.protobuf.Timestamp finished_at = 6;
 }
 
 message AgentCapability {

@@ -18,6 +18,8 @@ use doro_protocol::protobuf_timestamp_from_utc;
 use doro_protocol::protobuf_timestamp_now;
 use std::path::Path;
 use std::time::Duration;
+use terminal::TerminalCommand;
+use terminal::TerminalManager;
 use tokio::sync::mpsc;
 use tokio::sync::watch;
 use tokio_stream::wrappers::ReceiverStream;
@@ -26,6 +28,7 @@ use uuid::Uuid;
 
 mod collectors;
 pub mod docker;
+mod terminal;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
@@ -267,6 +270,30 @@ impl Agent {
         )
     }
 
+    pub fn terminal_command_result_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        output: terminal::TerminalCommandOutput,
+    ) -> grpc::AgentEvent {
+        let status = if output.exit_code == Some(0) && !output.timed_out {
+            grpc::CommandStatus::Succeeded
+        } else {
+            grpc::CommandStatus::Failed
+        };
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::TerminalCommandResult(grpc::TerminalCommandResultEvent {
+                command_id,
+                status: status as i32,
+                output: output.output,
+                exit_code: output.exit_code.unwrap_or(-1),
+                started_at: Some(protobuf_timestamp_from_utc(output.started_at)),
+                finished_at: Some(protobuf_timestamp_from_utc(output.finished_at)),
+            }),
+        )
+    }
+
     pub fn heartbeat(&self) -> AgentEvent {
         AgentEvent::Heartbeat {
             host_id: self.config.host_id,
@@ -494,6 +521,7 @@ async fn open_agent_stream(
         .open_agent_stream(ReceiverStream::new(receiver))
         .await?
         .into_inner();
+    let terminal = TerminalManager::new()?;
     tracing::debug!(agent_id = %agent_id, "agent stream opened");
     loop {
         tokio::select! {
@@ -501,7 +529,7 @@ async fn open_agent_stream(
                 let Some(command) = command? else {
                     anyhow::bail!("agent stream closed");
                 };
-                if handle_command(command, &agent, agent_id, &sender).await
+                if handle_command(command, &agent, agent_id, &sender, &terminal).await
                     == AgentCommandAction::Reconnect
                 {
                     return Ok(());
@@ -662,6 +690,7 @@ async fn handle_command(
     agent: &Agent,
     agent_id: Uuid,
     sender: &mpsc::Sender<grpc::AgentEvent>,
+    terminal: &TerminalManager,
 ) -> AgentCommandAction {
     let command_id = command.command_id.clone();
     match command.command {
@@ -682,6 +711,32 @@ async fn handle_command(
                 };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {
+            tracing::info!(command_id = %command_id, "executing terminal command by control-plane request");
+            let event = match terminal
+                .execute(TerminalCommand {
+                    command_id: command_id.clone(),
+                    input: terminal_command.input,
+                    cols: terminal_command.cols.clamp(20, 300) as u16,
+                    rows: terminal_command.rows.clamp(5, 120) as u16,
+                    timeout: Duration::from_secs(
+                        terminal_command.timeout_seconds.clamp(1, 120) as u64
+                    ),
+                })
+                .await
+            {
+                Ok(output) => agent.terminal_command_result_event(agent_id, command_id, output),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue terminal command result event");
             }
         }
         Some(grpc::control_plane_command::Command::Shutdown(shutdown)) => {
@@ -823,7 +878,8 @@ mod tests {
             )),
         };
 
-        let action = handle_command(command, &agent, agent_id, &sender).await;
+        let terminal = TerminalManager::new().expect("terminal should start");
+        let action = handle_command(command, &agent, agent_id, &sender, &terminal).await;
 
         assert_eq!(action, AgentCommandAction::Continue);
     }
@@ -857,7 +913,8 @@ mod tests {
             )),
         };
 
-        let action = handle_command(command, &agent, agent_id, &sender).await;
+        let terminal = TerminalManager::new().expect("terminal should start");
+        let action = handle_command(command, &agent, agent_id, &sender, &terminal).await;
 
         assert_eq!(action, AgentCommandAction::Reconnect);
     }

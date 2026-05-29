@@ -14,6 +14,7 @@ doro-config = { workspace = true }
 doro-protocol = { workspace = true }
 futures-util = { workspace = true }
 nvml-wrapper = { workspace = true, optional = true }
+portable-pty = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sysinfo = { workspace = true }

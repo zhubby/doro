@@ -216,6 +216,28 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "TerminalCommandRequest.ts")]
+pub struct TerminalCommandRequest {
+    pub host_id: Uuid,
+    pub input: String,
+    pub cols: Option<u32>,
+    pub rows: Option<u32>,
+    pub timeout_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "TerminalCommandResponse.ts")]
+pub struct TerminalCommandResponse {
+    pub command_id: String,
+    pub host_id: Uuid,
+    pub status: String,
+    pub output: String,
+    pub exit_code: Option<i32>,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "AuthStatusResponse.ts")]
 pub struct AuthStatusResponse {
     pub registration_open: bool,
@@ -409,6 +431,8 @@ mod tests {
         assert!(HostContainer::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(TerminalCommandRequest::export_all(&cfg).is_ok());
+        assert!(TerminalCommandResponse::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenRequest::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenResponse::export_all(&cfg).is_ok());
         assert!(AuthStatusResponse::export_all(&cfg).is_ok());

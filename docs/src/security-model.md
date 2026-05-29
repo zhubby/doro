@@ -22,4 +22,6 @@ Security requirements:
 - Enrollment tokens are one-time credentials.
 - Production deployments require TLS and durable secret storage.
 
+The terminal UI is an explicit administrative direct-execution path for agents that declare `ShellExecute`. Each command is still validated by the control plane, routed only over the established agent stream, and recorded in `agent_events` before and after execution. Deployments that require stricter change control should gate this route behind per-command or per-session approval before enabling it for operators.
+
 The MVP can keep policy simple, but it must preserve the data model and lifecycle needed for stricter policy later.
