@@ -12,9 +12,12 @@ bollard = { workspace = true }
 chrono = { workspace = true }
 doro-config = { workspace = true }
 doro-protocol = { workspace = true }
+futures-util = { workspace = true }
 nvml-wrapper = { workspace = true, optional = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sysinfo = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = { workspace = true }
 tonic = { workspace = true }

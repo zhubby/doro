@@ -146,6 +146,7 @@ pub struct AgentConfig {
     pub process_names: Vec<String>,
     pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
+    pub docker_manage_enabled: bool,
     pub gpu_metrics_enabled: bool,
 }
 
@@ -163,6 +164,7 @@ impl Default for AgentConfig {
             process_names: Vec::new(),
             container_metrics_enabled: false,
             docker_socket_path: None,
+            docker_manage_enabled: false,
             gpu_metrics_enabled: false,
         }
     }
@@ -355,6 +357,7 @@ mod tests {
         assert!(loaded.config.agent.process_names.is_empty());
         assert!(!loaded.config.agent.container_metrics_enabled);
         assert!(loaded.config.agent.docker_socket_path.is_none());
+        assert!(!loaded.config.agent.docker_manage_enabled);
         assert!(!loaded.config.agent.gpu_metrics_enabled);
         assert!(loaded.config.agent.enrollment_token.is_none());
         assert!(loaded.config.agent.agent_id.is_none());
