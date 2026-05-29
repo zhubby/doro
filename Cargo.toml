@@ -22,7 +22,7 @@ doro-store = { path = "doro-store" }
 
 anyhow = "1"
 argon2 = "0.5"
-axum = { version = "0.7", features = ["json", "macros", "tokio"] }
+axum = { version = "0.7", features = ["json", "macros", "tokio", "ws"] }
 base64 = "0.22"
 bollard = { version = "0.18.1", default-features = false, features = ["chrono", "http", "pipe", "ssl_providerless", "time"] }
 chrono = { version = "0.4", features = ["serde"] }

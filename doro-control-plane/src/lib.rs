@@ -9,6 +9,9 @@ use axum::Router;
 use axum::extract::Path as AxumPath;
 use axum::extract::Query;
 use axum::extract::State;
+use axum::extract::WebSocketUpgrade;
+use axum::extract::ws::Message;
+use axum::extract::ws::WebSocket;
 use axum::http::Request as HttpRequest;
 use axum::http::StatusCode;
 use axum::http::header::AUTHORIZATION;
@@ -74,6 +77,7 @@ use doro_store::NewTask;
 use doro_store::NewUser;
 use doro_store::Store;
 use doro_store::StoredUser;
+use futures_util::SinkExt;
 use futures_util::StreamExt;
 use jsonwebtoken::DecodingKey;
 use jsonwebtoken::EncodingKey;
@@ -120,6 +124,7 @@ pub struct AppState {
 #[derive(Debug, Clone, Default)]
 pub struct AgentStreamRegistry {
     streams: Arc<Mutex<HashMap<Uuid, AgentStreamHandle>>>,
+    terminal_sessions: Arc<Mutex<HashMap<String, mpsc::UnboundedSender<String>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -301,6 +306,132 @@ impl AgentStreamRegistry {
             }
         }
     }
+
+    async fn open_terminal_session(
+        &self,
+        host_id: Uuid,
+        session_id: String,
+        cols: u32,
+        rows: u32,
+        output_sender: mpsc::UnboundedSender<String>,
+    ) -> Result<(), TerminalCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(TerminalCommandError::NoStream)?;
+        self.terminal_sessions
+            .lock()
+            .await
+            .insert(session_id.clone(), output_sender);
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::OpenTerminalSession(
+                grpc::OpenTerminalSessionCommand {
+                    session_id: session_id.clone(),
+                    cols: cols.clamp(20, 300),
+                    rows: rows.clamp(5, 120),
+                },
+            )),
+        };
+        if handle.sender.send(Ok(command)).await.is_err() {
+            self.terminal_sessions.lock().await.remove(&session_id);
+            return Err(TerminalCommandError::NoStream);
+        }
+        Ok(())
+    }
+
+    async fn send_terminal_input(
+        &self,
+        host_id: Uuid,
+        session_id: String,
+        data: String,
+    ) -> Result<(), TerminalCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(TerminalCommandError::NoStream)?;
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::TerminalInput(
+                grpc::TerminalInputCommand { session_id, data },
+            )),
+        };
+        handle
+            .sender
+            .send(Ok(command))
+            .await
+            .map_err(|_| TerminalCommandError::NoStream)
+    }
+
+    async fn resize_terminal_session(
+        &self,
+        host_id: Uuid,
+        session_id: String,
+        cols: u32,
+        rows: u32,
+    ) -> Result<(), TerminalCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(TerminalCommandError::NoStream)?;
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::ResizeTerminalSession(
+                grpc::ResizeTerminalSessionCommand {
+                    session_id,
+                    cols: cols.clamp(20, 300),
+                    rows: rows.clamp(5, 120),
+                },
+            )),
+        };
+        handle
+            .sender
+            .send(Ok(command))
+            .await
+            .map_err(|_| TerminalCommandError::NoStream)
+    }
+
+    async fn close_terminal_session(&self, host_id: Uuid, session_id: String, reason: String) {
+        self.terminal_sessions.lock().await.remove(&session_id);
+        let Some(handle) = self.streams.lock().await.get(&host_id).cloned() else {
+            return;
+        };
+        let command = grpc::ControlPlaneCommand {
+            command_id: Uuid::new_v4().to_string(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::CloseTerminalSession(
+                grpc::CloseTerminalSessionCommand { session_id, reason },
+            )),
+        };
+        let _ = handle.sender.send(Ok(command)).await;
+    }
+
+    async fn publish_terminal_output(&self, session_id: &str, data: String) {
+        let sender = self.terminal_sessions.lock().await.get(session_id).cloned();
+        if let Some(sender) = sender {
+            if sender.send(data).is_err() {
+                self.terminal_sessions.lock().await.remove(session_id);
+            }
+        }
+    }
+
+    async fn close_terminal_output(&self, session_id: &str, reason: String) {
+        if let Some(sender) = self.terminal_sessions.lock().await.remove(session_id) {
+            let _ = sender.send(format!("\r\n[terminal closed: {reason}]\r\n"));
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -333,6 +464,20 @@ pub struct CurrentUser {
 #[derive(Debug, Clone, Deserialize)]
 struct MetricHistoryQuery {
     limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TerminalSocketQuery {
+    token: String,
+    cols: Option<u32>,
+    rows: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum TerminalClientMessage {
+    Input { data: String },
+    Resize { cols: u32, rows: u32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -415,6 +560,7 @@ pub fn app_with_auth_and_streams(
 
     Router::new()
         .route("/health", get(health))
+        .route("/api/v1/terminal/:host_id/ws", get(terminal_session_ws))
         .route("/api/v1/auth/status", get(auth_status))
         .route("/api/v1/auth/register", axum::routing::post(register))
         .route("/api/v1/auth/login", axum::routing::post(login))
@@ -763,6 +909,16 @@ impl AgentControlPlane for GrpcAgentService {
                             let _ = reply_sender
                                 .send(AgentCommandReply::TerminalCommandResult(result.clone()));
                         }
+                    }
+                    Some(grpc::agent_event::Event::TerminalOutput(output)) => {
+                        agent_streams
+                            .publish_terminal_output(&output.session_id, output.data)
+                            .await;
+                    }
+                    Some(grpc::agent_event::Event::TerminalSessionClosed(closed)) => {
+                        agent_streams
+                            .close_terminal_output(&closed.session_id, closed.reason)
+                            .await;
                     }
                     _ => {}
                 };
@@ -1132,6 +1288,146 @@ async fn refresh_containers(
     Ok(Json(ListHostContainersResponse { items }))
 }
 
+async fn terminal_session_ws(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<TerminalSocketQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<AxumResponse, AppError> {
+    let current_user = state.auth.verify_access_token(&query.token)?;
+    let hosts = state.store.hosts().list().await?;
+    let host = hosts
+        .into_iter()
+        .find(|host| host.id == host_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "host not found"))?;
+    if host.status != HostStatus::Online {
+        return Err(AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not online",
+        ));
+    }
+    if !host
+        .capabilities
+        .iter()
+        .any(|capability| capability.name == CapabilityName::ShellExecute)
+    {
+        return Err(AppError::status(
+            StatusCode::FORBIDDEN,
+            "agent does not declare shell execution capability",
+        ));
+    }
+
+    Ok(ws.on_upgrade(move |socket| {
+        handle_terminal_socket(
+            socket,
+            state,
+            current_user,
+            host_id,
+            query.cols.unwrap_or(100),
+            query.rows.unwrap_or(28),
+        )
+    }))
+}
+
+async fn handle_terminal_socket(
+    socket: WebSocket,
+    state: AppState,
+    current_user: CurrentUser,
+    host_id: Uuid,
+    cols: u32,
+    rows: u32,
+) {
+    let session_id = Uuid::new_v4().to_string();
+    let (output_sender, mut output_receiver) = mpsc::unbounded_channel();
+    if let Err(error) = state
+        .agent_streams
+        .open_terminal_session(host_id, session_id.clone(), cols, rows, output_sender)
+        .await
+    {
+        tracing::warn!(?error, host_id = %host_id, "failed to open terminal websocket session");
+        return;
+    }
+    let _ = state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(host_id),
+            event_type: "terminal.session_opened".to_string(),
+            event_json: serde_json::json!({
+                "session_id": session_id,
+                "host_id": host_id,
+                "requested_by": current_user.username,
+                "cols": cols,
+                "rows": rows,
+            }),
+            recorded_at: Utc::now(),
+        })
+        .await;
+
+    let (mut ws_sender, mut ws_receiver) = socket.split();
+    let output_task = tokio::spawn(async move {
+        while let Some(output) = output_receiver.recv().await {
+            if ws_sender.send(Message::Text(output)).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(message) = ws_receiver.next().await {
+        let Ok(message) = message else {
+            break;
+        };
+        match message {
+            Message::Text(text) => {
+                if let Ok(message) = serde_json::from_str::<TerminalClientMessage>(&text) {
+                    match message {
+                        TerminalClientMessage::Input { data } => {
+                            if state
+                                .agent_streams
+                                .send_terminal_input(host_id, session_id.clone(), data)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        TerminalClientMessage::Resize { cols, rows } => {
+                            let _ = state
+                                .agent_streams
+                                .resize_terminal_session(host_id, session_id.clone(), cols, rows)
+                                .await;
+                        }
+                    }
+                }
+            }
+            Message::Close(_) => break,
+            _ => {}
+        }
+    }
+
+    state
+        .agent_streams
+        .close_terminal_session(host_id, session_id.clone(), "websocket closed".to_string())
+        .await;
+    output_task.abort();
+    let _ = state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(host_id),
+            event_type: "terminal.session_closed".to_string(),
+            event_json: serde_json::json!({
+                "session_id": session_id,
+                "host_id": host_id,
+                "reason": "websocket closed",
+            }),
+            recorded_at: Utc::now(),
+        })
+        .await;
+}
+
 async fn run_terminal_command(
     State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
@@ -1444,6 +1740,20 @@ fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)
                 "exit_code": result.exit_code,
                 "started_at": result.started_at.as_ref().and_then(timestamp_to_utc),
                 "finished_at": result.finished_at.as_ref().and_then(timestamp_to_utc),
+            }),
+        )),
+        grpc::agent_event::Event::TerminalOutput(output) => Some((
+            "terminal.output".to_string(),
+            serde_json::json!({
+                "session_id": output.session_id,
+                "bytes": output.data.len(),
+            }),
+        )),
+        grpc::agent_event::Event::TerminalSessionClosed(closed) => Some((
+            "terminal.session_closed".to_string(),
+            serde_json::json!({
+                "session_id": closed.session_id,
+                "reason": closed.reason,
             }),
         )),
     }
@@ -2133,6 +2443,44 @@ mod tests {
             .expect("terminal command should succeed");
         assert_eq!(result.output, "/tmp");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn stream_registry_bridges_interactive_terminal_output() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4().to_string();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let (output_sender, mut output_receiver) = mpsc::unbounded_channel();
+        registry.register(host_id, agent_id, sender).await;
+
+        registry
+            .open_terminal_session(host_id, session_id.clone(), 100, 30, output_sender)
+            .await
+            .expect("terminal session should open");
+        let command = receiver
+            .recv()
+            .await
+            .expect("registry should send open terminal command")
+            .expect("command stream item should be ok");
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::OpenTerminalSession(_))
+        ));
+
+        registry
+            .publish_terminal_output(&session_id, "hello".to_string())
+            .await;
+        let output = output_receiver
+            .recv()
+            .await
+            .expect("websocket output channel should receive terminal output");
+        assert_eq!(output, "hello");
+
+        registry
+            .close_terminal_session(host_id, session_id, "test complete".to_string())
+            .await;
     }
 
     #[tokio::test]

@@ -48,6 +48,8 @@ message AgentEvent {
     CollectorErrorEvent collector_error = 9;
     CommandResultEvent command_result = 10;
     TerminalCommandResultEvent terminal_command_result = 11;
+    TerminalOutputEvent terminal_output = 12;
+    TerminalSessionClosedEvent terminal_session_closed = 13;
   }
 }
 
@@ -59,6 +61,10 @@ message ControlPlaneCommand {
     CollectContainersCommand collect_containers = 4;
     ShutdownCommand shutdown = 5;
     RunTerminalCommandCommand run_terminal_command = 6;
+    OpenTerminalSessionCommand open_terminal_session = 7;
+    TerminalInputCommand terminal_input = 8;
+    ResizeTerminalSessionCommand resize_terminal_session = 9;
+    CloseTerminalSessionCommand close_terminal_session = 10;
   }
 }
 
@@ -80,6 +86,28 @@ message RunTerminalCommandCommand {
   uint32 cols = 3;
   uint32 rows = 4;
   uint32 timeout_seconds = 5;
+}
+
+message OpenTerminalSessionCommand {
+  string session_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+
+message TerminalInputCommand {
+  string session_id = 1;
+  string data = 2;
+}
+
+message ResizeTerminalSessionCommand {
+  string session_id = 1;
+  uint32 cols = 2;
+  uint32 rows = 3;
+}
+
+message CloseTerminalSessionCommand {
+  string session_id = 1;
+  string reason = 2;
 }
 
 message ConnectedEvent {
@@ -146,6 +174,16 @@ message TerminalCommandResultEvent {
   int32 exit_code = 4;
   google.protobuf.Timestamp started_at = 5;
   google.protobuf.Timestamp finished_at = 6;
+}
+
+message TerminalOutputEvent {
+  string session_id = 1;
+  string data = 2;
+}
+
+message TerminalSessionClosedEvent {
+  string session_id = 1;
+  string reason = 2;
 }
 
 message AgentCapability {

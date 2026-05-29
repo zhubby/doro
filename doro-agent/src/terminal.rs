@@ -5,6 +5,7 @@ use portable_pty::CommandBuilder;
 use portable_pty::MasterPty;
 use portable_pty::PtySize;
 use portable_pty::native_pty_system;
+use std::collections::HashMap;
 use std::io::Read;
 use std::io::Write;
 use std::sync::Arc;
@@ -12,6 +13,7 @@ use std::sync::Mutex;
 use std::sync::mpsc;
 use std::time::Duration;
 use std::time::Instant;
+use tokio::sync::mpsc as tokio_mpsc;
 
 const DEFAULT_COLS: u16 = 80;
 const DEFAULT_ROWS: u16 = 24;
@@ -20,6 +22,7 @@ const OUTPUT_LIMIT_BYTES: usize = 256 * 1024;
 #[derive(Debug, Clone)]
 pub struct TerminalManager {
     session: Arc<Mutex<TerminalSession>>,
+    interactive_sessions: Arc<Mutex<HashMap<String, InteractiveTerminalSession>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +50,20 @@ struct TerminalSession {
     writer: Box<dyn Write + Send>,
 }
 
+struct InteractiveTerminalSession {
+    _child: Box<dyn Child + Send>,
+    master: Box<dyn MasterPty + Send>,
+    writer: Box<dyn Write + Send>,
+}
+
+impl std::fmt::Debug for InteractiveTerminalSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("InteractiveTerminalSession")
+            .finish_non_exhaustive()
+    }
+}
+
 impl std::fmt::Debug for TerminalSession {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -62,6 +79,7 @@ impl TerminalManager {
                 DEFAULT_COLS,
                 DEFAULT_ROWS,
             )?)),
+            interactive_sessions: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -76,6 +94,77 @@ impl TerminalManager {
                 *session = TerminalSession::spawn(DEFAULT_COLS, DEFAULT_ROWS)?;
             }
             result
+        })
+        .await?
+    }
+
+    pub async fn open_interactive(
+        &self,
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<tokio_mpsc::UnboundedReceiver<Vec<u8>>> {
+        let sessions = self.interactive_sessions.clone();
+        tokio::task::spawn_blocking(move || {
+            let (session, output_rx) = InteractiveTerminalSession::spawn(cols, rows)?;
+            sessions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal sessions lock poisoned"))?
+                .insert(session_id, session);
+            Ok(output_rx)
+        })
+        .await?
+    }
+
+    pub async fn write_interactive(&self, session_id: String, data: String) -> anyhow::Result<()> {
+        let sessions = self.interactive_sessions.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut sessions = sessions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal sessions lock poisoned"))?;
+            let session = sessions
+                .get_mut(&session_id)
+                .ok_or_else(|| anyhow::anyhow!("terminal session is not open"))?;
+            session.writer.write_all(data.as_bytes())?;
+            session.writer.flush()?;
+            Ok(())
+        })
+        .await?
+    }
+
+    pub async fn resize_interactive(
+        &self,
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<()> {
+        let sessions = self.interactive_sessions.clone();
+        tokio::task::spawn_blocking(move || {
+            let sessions = sessions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal sessions lock poisoned"))?;
+            let session = sessions
+                .get(&session_id)
+                .ok_or_else(|| anyhow::anyhow!("terminal session is not open"))?;
+            session.master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+            Ok(())
+        })
+        .await?
+    }
+
+    pub async fn close_interactive(&self, session_id: String) -> anyhow::Result<()> {
+        let sessions = self.interactive_sessions.clone();
+        tokio::task::spawn_blocking(move || {
+            sessions
+                .lock()
+                .map_err(|_| anyhow::anyhow!("terminal sessions lock poisoned"))?
+                .remove(&session_id);
+            Ok(())
         })
         .await?
     }
@@ -196,6 +285,51 @@ impl TerminalSession {
     }
 }
 
+impl InteractiveTerminalSession {
+    fn spawn(
+        cols: u16,
+        rows: u16,
+    ) -> anyhow::Result<(Self, tokio_mpsc::UnboundedReceiver<Vec<u8>>)> {
+        let pty_system = native_pty_system();
+        let pair = pty_system.openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })?;
+        let shell = default_shell();
+        let command = CommandBuilder::new(shell);
+        let child = pair.slave.spawn_command(command)?;
+        let mut reader = pair.master.try_clone_reader()?;
+        let writer = pair.master.take_writer()?;
+        let (output_tx, output_rx) = tokio_mpsc::unbounded_channel();
+        std::thread::spawn(move || {
+            let mut buffer = [0_u8; 4096];
+            loop {
+                match reader.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => {
+                        if output_tx.send(buffer[..read].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok((
+            Self {
+                _child: child,
+                master: pair.master,
+                writer,
+            },
+            output_rx,
+        ))
+    }
+}
+
 fn default_shell() -> String {
     #[cfg(windows)]
     {
@@ -231,9 +365,11 @@ fn parse_exit_code(output: &str, sentinel_prefix: &str) -> Option<i32> {
 fn strip_sentinel(output: String, sentinel_prefix: &str) -> String {
     output
         .lines()
-        .filter(|line| !line.trim().starts_with(sentinel_prefix))
+        .filter(|line| !line.contains(sentinel_prefix))
         .collect::<Vec<_>>()
         .join("\n")
+        .trim_end()
+        .to_string()
 }
 
 #[cfg(test)]
@@ -250,6 +386,16 @@ mod tests {
         assert_eq!(
             strip_sentinel(output.to_string(), "__DORO_TERMINAL_DONE_abc:"),
             "hello"
+        );
+    }
+
+    #[test]
+    fn strips_echoed_sentinel_command_line() {
+        let output = "~ on host\n❯ printf '\\n__DORO_TERMINAL_DONE_abc:%s\\n' \"$?\"\n\n__DORO_TERMINAL_DONE_abc:0\n";
+
+        assert_eq!(
+            strip_sentinel(output.to_string(), "__DORO_TERMINAL_DONE_abc:"),
+            "~ on host"
         );
     }
 

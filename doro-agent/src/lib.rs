@@ -294,6 +294,36 @@ impl Agent {
         )
     }
 
+    pub fn terminal_output_event(
+        &self,
+        agent_id: Uuid,
+        session_id: String,
+        data: Vec<u8>,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::TerminalOutput(grpc::TerminalOutputEvent {
+                session_id,
+                data: String::from_utf8_lossy(&data).into_owned(),
+            }),
+        )
+    }
+
+    pub fn terminal_session_closed_event(
+        &self,
+        agent_id: Uuid,
+        session_id: String,
+        reason: impl Into<String>,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::TerminalSessionClosed(grpc::TerminalSessionClosedEvent {
+                session_id,
+                reason: reason.into(),
+            }),
+        )
+    }
+
     pub fn heartbeat(&self) -> AgentEvent {
         AgentEvent::Heartbeat {
             host_id: self.config.host_id,
@@ -737,6 +767,90 @@ async fn handle_command(
             };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue terminal command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::OpenTerminalSession(open)) => {
+            tracing::info!(
+                session_id = open.session_id,
+                command_id = %command_id,
+                "opening interactive terminal session"
+            );
+            match terminal
+                .open_interactive(
+                    open.session_id.clone(),
+                    open.cols.clamp(20, 300) as u16,
+                    open.rows.clamp(5, 120) as u16,
+                )
+                .await
+            {
+                Ok(mut output_rx) => {
+                    let output_agent = agent.clone();
+                    let output_sender = sender.clone();
+                    let session_id = open.session_id;
+                    tokio::spawn(async move {
+                        while let Some(output) = output_rx.recv().await {
+                            let event = output_agent.terminal_output_event(
+                                agent_id,
+                                session_id.clone(),
+                                output,
+                            );
+                            if output_sender.send(event).await.is_err() {
+                                return;
+                            }
+                        }
+                        let event = output_agent.terminal_session_closed_event(
+                            agent_id,
+                            session_id,
+                            "pty output ended",
+                        );
+                        let _ = output_sender.send(event).await;
+                    });
+                }
+                Err(error) => {
+                    let event = agent.terminal_session_closed_event(
+                        agent_id,
+                        open.session_id,
+                        error.to_string(),
+                    );
+                    if sender.send(event).await.is_err() {
+                        tracing::warn!("failed to enqueue terminal session error event");
+                    }
+                }
+            }
+        }
+        Some(grpc::control_plane_command::Command::TerminalInput(input)) => {
+            if let Err(error) = terminal
+                .write_interactive(input.session_id.clone(), input.data)
+                .await
+            {
+                let event = agent.terminal_session_closed_event(
+                    agent_id,
+                    input.session_id,
+                    error.to_string(),
+                );
+                if sender.send(event).await.is_err() {
+                    tracing::warn!("failed to enqueue terminal input error event");
+                }
+            }
+        }
+        Some(grpc::control_plane_command::Command::ResizeTerminalSession(resize)) => {
+            if let Err(error) = terminal
+                .resize_interactive(
+                    resize.session_id.clone(),
+                    resize.cols.clamp(20, 300) as u16,
+                    resize.rows.clamp(5, 120) as u16,
+                )
+                .await
+            {
+                tracing::warn!(%error, session_id = resize.session_id, "failed to resize terminal session");
+            }
+        }
+        Some(grpc::control_plane_command::Command::CloseTerminalSession(close)) => {
+            let _ = terminal.close_interactive(close.session_id.clone()).await;
+            let event =
+                agent.terminal_session_closed_event(agent_id, close.session_id, close.reason);
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue terminal close event");
             }
         }
         Some(grpc::control_plane_command::Command::Shutdown(shutdown)) => {

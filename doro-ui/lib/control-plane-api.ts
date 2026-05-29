@@ -46,6 +46,11 @@ function controlPlaneUrl() {
   return configuredUrl.replace(/\/$/, "");
 }
 
+function controlPlaneWebSocketUrl() {
+  const url = controlPlaneUrl();
+  return url.replace(/^http:/, "ws:").replace(/^https:/, "wss:");
+}
+
 function readAuth(): StoredAuth | null {
   if (typeof window === "undefined") {
     return null;
@@ -318,4 +323,17 @@ export async function runTerminalCommand(request: TerminalCommandRequest) {
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export async function terminalSessionWebSocketUrl(hostId: string, cols: number, rows: number) {
+  const token = await authToken();
+  if (!token) {
+    return null;
+  }
+  const query = new URLSearchParams({
+    token,
+    cols: String(cols),
+    rows: String(rows),
+  });
+  return `${controlPlaneWebSocketUrl()}/api/v1/terminal/${hostId}/ws?${query}`;
 }

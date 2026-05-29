@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
-import { Send, Server, Terminal as TerminalIcon } from "lucide-react";
+import { Plug, Server, Terminal as TerminalIcon, Unplug } from "lucide-react";
 
 import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
-import { getHosts, runTerminalCommand } from "@/lib/control-plane-api";
+import { getHosts, terminalSessionWebSocketUrl } from "@/lib/control-plane-api";
 import type { Host } from "@/types/api";
 
 const TERMINAL_COLS = 100;
@@ -24,11 +25,12 @@ function hasShellCapability(host: Host) {
 export function TerminalPage() {
   const terminalNode = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const socketRef = useRef<WebSocket | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [selectedHostId, setSelectedHostId] = useState("");
-  const [command, setCommand] = useState("");
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
+  const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -46,14 +48,42 @@ export function TerminalPage() {
         cursor: "#d7dde8",
       },
     });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
     terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
     if (terminalNode.current) {
       terminal.open(terminalNode.current);
-      terminal.writeln("Doro terminal ready.");
+      fitAddon.fit();
+      terminal.writeln("选择 Agent 后连接终端。");
     }
+    function handleResize() {
+      fitAddon.fit();
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(
+          JSON.stringify({
+            type: "resize",
+            cols: terminal.cols,
+            rows: terminal.rows,
+          }),
+        );
+      }
+    }
+    window.addEventListener("resize", handleResize);
+    const disposable = terminal.onData((data) => {
+      const socket = socketRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "input", data }));
+      }
+    });
     return () => {
+      window.removeEventListener("resize", handleResize);
+      disposable.dispose();
+      socketRef.current?.close();
       terminal.dispose();
       terminalRef.current = null;
+      fitAddonRef.current = null;
     };
   }, []);
 
@@ -86,39 +116,51 @@ export function TerminalPage() {
     [hosts, selectedHostId],
   );
   const canRun =
-    Boolean(selectedHost) && selectedHost?.status === "online" && command.trim().length > 0;
+    Boolean(selectedHost) && selectedHost?.status === "online" && !connected;
 
-  async function handleRun() {
-    if (!selectedHost || !canRun) {
+  async function handleConnect() {
+    if (!selectedHost || connected) {
       return;
     }
-    const input = command.trim();
-    setCommand("");
-    setRunning(true);
     setError(null);
-    terminalRef.current?.writeln(`\r\n$ ${input}`);
-
-    const result = await runTerminalCommand({
-      host_id: selectedHost.id,
-      input,
-      cols: TERMINAL_COLS,
-      rows: TERMINAL_ROWS,
-      timeout_seconds: 30,
-    });
-
-    if (result.data) {
-      if (result.data.output.trim()) {
-        terminalRef.current?.write(`${result.data.output.replace(/\n/g, "\r\n")}\r\n`);
-      }
-      const suffix =
-        result.data.exit_code === null ? result.data.status : `${result.data.status}:${result.data.exit_code}`;
-      terminalRef.current?.writeln(`[${suffix}]`);
-    } else {
-      const message = result.error ?? "终端命令执行失败";
-      setError(message);
-      terminalRef.current?.writeln(`[failed] ${message}`);
+    terminalRef.current?.reset();
+    terminalRef.current?.writeln("正在连接 Agent 终端...");
+    fitAddonRef.current?.fit();
+    const cols = terminalRef.current?.cols ?? TERMINAL_COLS;
+    const rows = terminalRef.current?.rows ?? TERMINAL_ROWS;
+    const url = await terminalSessionWebSocketUrl(
+      selectedHost.id,
+      cols,
+      rows,
+    );
+    if (!url) {
+      setError("未登录");
+      return;
     }
-    setRunning(false);
+    const socket = new WebSocket(url);
+    socketRef.current = socket;
+    socket.onopen = () => {
+      setConnected(true);
+      terminalRef.current?.reset();
+      terminalRef.current?.focus();
+    };
+    socket.onmessage = (event) => {
+      terminalRef.current?.write(String(event.data));
+    };
+    socket.onerror = () => {
+      const message = "终端连接失败";
+      setError(message);
+      terminalRef.current?.writeln(`\r\n[${message}]`);
+    };
+    socket.onclose = () => {
+      setConnected(false);
+      socketRef.current = null;
+      terminalRef.current?.writeln("\r\n[终端已断开]");
+    };
+  }
+
+  function handleDisconnect() {
+    socketRef.current?.close();
   }
 
   return (
@@ -135,9 +177,12 @@ export function TerminalPage() {
             </div>
             <select
               value={selectedHostId}
-              onChange={(event) => setSelectedHostId(event.target.value)}
+              onChange={(event) => {
+                handleDisconnect();
+                setSelectedHostId(event.target.value);
+              }}
               className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-              disabled={loading || running}
+              disabled={loading || connected}
             >
               {hosts.length === 0 ? <option value="">暂无可用 Agent</option> : null}
               {hosts.map((host) => (
@@ -152,7 +197,22 @@ export function TerminalPage() {
               </p>
               <p className="mt-1">状态：{selectedHost?.status ?? "unknown"}</p>
               <p className="mt-1">主机：{selectedHost?.hostname ?? "-"}</p>
+              <p className="mt-1">终端：{connected ? "已连接" : "未连接"}</p>
             </div>
+            <Button
+              type="button"
+              className="w-full"
+              variant={connected ? "outline" : "default"}
+              disabled={!canRun && !connected}
+              onClick={connected ? handleDisconnect : handleConnect}
+            >
+              {connected ? (
+                <Unplug className="size-4" aria-hidden="true" />
+              ) : (
+                <Plug className="size-4" aria-hidden="true" />
+              )}
+              {connected ? "断开" : "连接"}
+            </Button>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
 
@@ -162,25 +222,6 @@ export function TerminalPage() {
               <span className="truncate">{selectedHost ? hostLabel(selectedHost) : "Terminal"}</span>
             </div>
             <div ref={terminalNode} className="h-[520px] p-3" />
-            <form
-              className="flex gap-2 border-t border-white/10 bg-black/20 p-3"
-              onSubmit={(event) => {
-                event.preventDefault();
-                handleRun();
-              }}
-            >
-              <input
-                value={command}
-                onChange={(event) => setCommand(event.target.value)}
-                className="h-10 min-w-0 flex-1 rounded-md border border-white/10 bg-black px-3 font-mono text-sm text-slate-100 outline-none focus:ring-2 focus:ring-primary"
-                placeholder="输入命令"
-                disabled={running || !selectedHost}
-              />
-              <Button type="submit" disabled={!canRun || running}>
-                <Send className="size-4" aria-hidden="true" />
-                {running ? "执行中" : "执行"}
-              </Button>
-            </form>
           </div>
         </div>
       </PageSection>
