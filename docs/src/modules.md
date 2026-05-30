@@ -6,7 +6,7 @@
 
 `doro-control-plane` exposes `/api/v1`, owns task orchestration, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
 
-`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream.
+`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user.
 
 `doro-container` owns the provider-neutral container runtime boundary. It defines container inventory, lifecycle, image, network, volume, snapshot, and command abstractions, and exports the direct Docker provider backed by Bollard. Docker socket handling, Bollard model conversion, and runtime-specific container/image/network/volume operations belong in this crate rather than in the agent or control plane.
 
@@ -32,6 +32,6 @@ The control plane should access these tables through typed `doro-store` reposito
 
 ## UI
 
-`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, websites, containers, databases, logs, AI, and settings.
+`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, files, websites, containers, databases, logs, AI, and settings.
 
 The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state. UI API types should come from `doro-ui/types/api.ts`, which re-exports ts-rs bindings generated from `doro-protocol`.

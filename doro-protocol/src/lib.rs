@@ -406,6 +406,93 @@ pub struct TerminalCommandResponse {
     pub finished_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "FileEntryKind.ts")]
+pub enum FileEntryKind {
+    File,
+    Directory,
+    Symlink,
+    Other,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileEntry.ts")]
+pub struct FileEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: FileEntryKind,
+    pub size_bytes: Option<u64>,
+    pub modified_at: Option<DateTime<Utc>>,
+    pub readonly: bool,
+    pub symlink_target: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileDirectoryResponse.ts")]
+pub struct FileDirectoryResponse {
+    pub path: String,
+    pub parent_path: Option<String>,
+    pub items: Vec<FileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileSearchResponse.ts")]
+pub struct FileSearchResponse {
+    pub items: Vec<FileEntry>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "FileOperationKind.ts")]
+pub enum FileOperationKind {
+    CreateDirectory,
+    Rename,
+    Move,
+    Copy,
+    Delete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileOperationRequest.ts")]
+pub struct FileOperationRequest {
+    pub operation: FileOperationKind,
+    pub path: String,
+    pub target_path: Option<String>,
+    pub name: Option<String>,
+    pub overwrite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileOperationResponse.ts")]
+pub struct FileOperationResponse {
+    pub item: Option<FileEntry>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileUploadRequest.ts")]
+pub struct FileUploadRequest {
+    pub path: String,
+    pub content_base64: String,
+    pub overwrite: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileUploadResponse.ts")]
+pub struct FileUploadResponse {
+    pub item: FileEntry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "FileDownloadResponse.ts")]
+pub struct FileDownloadResponse {
+    pub path: String,
+    pub name: String,
+    pub content_base64: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "RuntimeLogEntry.ts")]
 pub struct RuntimeLogEntry {
@@ -683,6 +770,16 @@ mod tests {
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandResponse::export_all(&cfg).is_ok());
+        assert!(FileEntryKind::export_all(&cfg).is_ok());
+        assert!(FileEntry::export_all(&cfg).is_ok());
+        assert!(FileDirectoryResponse::export_all(&cfg).is_ok());
+        assert!(FileSearchResponse::export_all(&cfg).is_ok());
+        assert!(FileOperationKind::export_all(&cfg).is_ok());
+        assert!(FileOperationRequest::export_all(&cfg).is_ok());
+        assert!(FileOperationResponse::export_all(&cfg).is_ok());
+        assert!(FileUploadRequest::export_all(&cfg).is_ok());
+        assert!(FileUploadResponse::export_all(&cfg).is_ok());
+        assert!(FileDownloadResponse::export_all(&cfg).is_ok());
         assert!(RuntimeLogEntry::export_all(&cfg).is_ok());
         assert!(ListRuntimeLogsResponse::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenRequest::export_all(&cfg).is_ok());

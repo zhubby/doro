@@ -48,6 +48,14 @@ use doro_protocol::CreateVirtualMachineRequest;
 use doro_protocol::CreateVirtualMachineSnapshotRequest;
 use doro_protocol::CurrentUserResponse;
 use doro_protocol::EnrollmentToken;
+use doro_protocol::FileDirectoryResponse;
+use doro_protocol::FileDownloadResponse;
+use doro_protocol::FileOperationKind;
+use doro_protocol::FileOperationRequest;
+use doro_protocol::FileOperationResponse;
+use doro_protocol::FileSearchResponse;
+use doro_protocol::FileUploadRequest;
+use doro_protocol::FileUploadResponse;
 use doro_protocol::HealthResponse;
 use doro_protocol::HostStatus;
 use doro_protocol::LatestMetricResponse;
@@ -144,6 +152,9 @@ const DEFAULT_APPROVAL_TTL_HOURS: i64 = 24;
 const DEFAULT_TERMINAL_TIMEOUT_SECONDS: u32 = 30;
 const MAX_TERMINAL_TIMEOUT_SECONDS: u32 = 120;
 const RUNTIME_LOG_LIMIT: usize = 500;
+const FILE_COMMAND_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_FILE_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
+const DEFAULT_FILE_SEARCH_LIMIT: u32 = 500;
 
 static CONTROL_PLANE_LOG_HUB: OnceLock<LogHub> = OnceLock::new();
 
@@ -240,6 +251,31 @@ fn push_limited(entries: &mut VecDeque<RuntimeLogEntry>, entry: RuntimeLogEntry,
     }
 }
 
+fn with_file_command_id(
+    command: grpc::control_plane_command::Command,
+    command_id: &str,
+) -> grpc::control_plane_command::Command {
+    match command {
+        grpc::control_plane_command::Command::ListDirectory(mut command) => {
+            command.command_id = command_id.to_string();
+            grpc::control_plane_command::Command::ListDirectory(command)
+        }
+        grpc::control_plane_command::Command::ReadFile(mut command) => {
+            command.command_id = command_id.to_string();
+            grpc::control_plane_command::Command::ReadFile(command)
+        }
+        grpc::control_plane_command::Command::SearchFiles(mut command) => {
+            command.command_id = command_id.to_string();
+            grpc::control_plane_command::Command::SearchFiles(command)
+        }
+        grpc::control_plane_command::Command::RunFileOperation(mut command) => {
+            command.command_id = command_id.to_string();
+            grpc::control_plane_command::Command::RunFileOperation(command)
+        }
+        other => other,
+    }
+}
+
 fn tail(entries: &VecDeque<RuntimeLogEntry>, limit: usize) -> Vec<RuntimeLogEntry> {
     let start = entries.len().saturating_sub(limit);
     entries.iter().skip(start).cloned().collect()
@@ -286,6 +322,7 @@ enum AgentCommandReply {
     VirtualMachineSnapshot(grpc::VirtualMachineSnapshotEvent),
     VirtualMachineCommandResult,
     TerminalCommandResult(grpc::TerminalCommandResultEvent),
+    FileCommandResult(grpc::FileCommandResultEvent),
     Failed(String),
 }
 
@@ -387,6 +424,9 @@ impl AgentStreamRegistry {
             }
             Ok(Ok(AgentCommandReply::TerminalCommandResult(_))) => Err(
                 ContainerRefreshError::AgentFailed("unexpected terminal response".to_string()),
+            ),
+            Ok(Ok(AgentCommandReply::FileCommandResult(_))) => Err(
+                ContainerRefreshError::AgentFailed("unexpected file response".to_string()),
             ),
             Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(_)))
             | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult)) => {
@@ -502,6 +542,9 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::Failed(message))) => {
                 Err(TerminalCommandError::AgentFailed(message))
             }
+            Ok(Ok(AgentCommandReply::FileCommandResult(_))) => Err(
+                TerminalCommandError::AgentFailed("unexpected file response".to_string()),
+            ),
             Ok(Ok(AgentCommandReply::ContainerSnapshot(_))) => Err(
                 TerminalCommandError::AgentFailed("unexpected container response".to_string()),
             ),
@@ -515,6 +558,114 @@ impl AgentStreamRegistry {
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
                 Err(TerminalCommandError::Timeout)
+            }
+        }
+    }
+
+    async fn list_directory(
+        &self,
+        host_id: Uuid,
+        path: String,
+    ) -> Result<grpc::FileCommandResultEvent, FileCommandError> {
+        self.run_file_command(
+            host_id,
+            grpc::control_plane_command::Command::ListDirectory(grpc::ListDirectoryCommand {
+                command_id: String::new(),
+                path,
+            }),
+        )
+        .await
+    }
+
+    async fn read_file(
+        &self,
+        host_id: Uuid,
+        path: String,
+    ) -> Result<grpc::FileCommandResultEvent, FileCommandError> {
+        self.run_file_command(
+            host_id,
+            grpc::control_plane_command::Command::ReadFile(grpc::ReadFileCommand {
+                command_id: String::new(),
+                path,
+            }),
+        )
+        .await
+    }
+
+    async fn search_files(
+        &self,
+        host_id: Uuid,
+        path: String,
+        query: String,
+        limit: u32,
+    ) -> Result<grpc::FileCommandResultEvent, FileCommandError> {
+        self.run_file_command(
+            host_id,
+            grpc::control_plane_command::Command::SearchFiles(grpc::SearchFilesCommand {
+                command_id: String::new(),
+                path,
+                query,
+                limit,
+            }),
+        )
+        .await
+    }
+
+    async fn run_file_operation(
+        &self,
+        host_id: Uuid,
+        command: grpc::RunFileOperationCommand,
+    ) -> Result<grpc::FileCommandResultEvent, FileCommandError> {
+        self.run_file_command(
+            host_id,
+            grpc::control_plane_command::Command::RunFileOperation(command),
+        )
+        .await
+    }
+
+    async fn run_file_command(
+        &self,
+        host_id: Uuid,
+        command: grpc::control_plane_command::Command,
+    ) -> Result<grpc::FileCommandResultEvent, FileCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(FileCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(with_file_command_id(command, &command_id)),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(FileCommandError::NoStream);
+        }
+
+        match tokio::time::timeout(FILE_COMMAND_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::FileCommandResult(result))) => Ok(result),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(FileCommandError::AgentFailed(message))
+            }
+            Ok(Ok(_)) => Err(FileCommandError::AgentFailed(
+                "unexpected agent response".to_string(),
+            )),
+            Ok(Err(_)) => Err(FileCommandError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(FileCommandError::Timeout)
             }
         }
     }
@@ -661,6 +812,13 @@ enum TerminalCommandError {
     AgentFailed(String),
 }
 
+#[derive(Debug)]
+enum FileCommandError {
+    NoStream,
+    Timeout,
+    AgentFailed(String),
+}
+
 #[derive(Debug, Clone)]
 pub struct AuthService {
     jwt_secret: String,
@@ -695,6 +853,18 @@ struct TerminalSocketQuery {
     token: String,
     cols: Option<u32>,
     rows: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FilePathQuery {
+    path: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct FileSearchQuery {
+    path: Option<String>,
+    query: String,
+    limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -822,6 +992,17 @@ pub fn app_with_auth_and_streams(
         .route(
             "/api/v1/terminal/commands",
             axum::routing::post(run_terminal_command),
+        )
+        .route("/api/v1/files/:host_id/list", get(list_files))
+        .route("/api/v1/files/:host_id/search", get(search_files))
+        .route("/api/v1/files/:host_id/download", get(download_file))
+        .route(
+            "/api/v1/files/:host_id/upload",
+            axum::routing::post(upload_file),
+        )
+        .route(
+            "/api/v1/files/:host_id/operations",
+            axum::routing::post(run_file_operation),
         )
         .route(
             "/api/v1/approvals",
@@ -1228,6 +1409,15 @@ impl AgentControlPlane for GrpcAgentService {
                         {
                             let _ = reply_sender
                                 .send(AgentCommandReply::TerminalCommandResult(result.clone()));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::FileCommandResult(result)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::FileCommandResult(result.clone()));
                         }
                     }
                     Some(grpc::agent_event::Event::TerminalOutput(output)) => {
@@ -2171,6 +2361,225 @@ async fn run_terminal_command(
     }))
 }
 
+async fn list_files(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<FilePathQuery>,
+) -> Result<Json<FileDirectoryResponse>, AppError> {
+    let path = query.path.unwrap_or_else(|| "/".to_string());
+    ensure_file_capability(&state, host_id, CapabilityName::FilesRead).await?;
+    record_file_event(
+        &state,
+        host_id,
+        "file.list_requested",
+        serde_json::json!({
+            "path": path,
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    let result = state
+        .agent_streams
+        .list_directory(host_id, path)
+        .await
+        .map_err(file_command_app_error)?;
+    Ok(Json(file_result_json(&result)?))
+}
+
+async fn search_files(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<FileSearchQuery>,
+) -> Result<Json<FileSearchResponse>, AppError> {
+    let path = query.path.unwrap_or_else(|| "/".to_string());
+    let search_query = query.query.trim().to_string();
+    if search_query.is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "file search query is required",
+        ));
+    }
+    ensure_file_capability(&state, host_id, CapabilityName::FilesRead).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_FILE_SEARCH_LIMIT).min(500);
+    record_file_event(
+        &state,
+        host_id,
+        "file.search_requested",
+        serde_json::json!({
+            "path": path,
+            "query": search_query,
+            "limit": limit,
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    let result = state
+        .agent_streams
+        .search_files(host_id, path, search_query, limit)
+        .await
+        .map_err(file_command_app_error)?;
+    Ok(Json(file_result_json(&result)?))
+}
+
+async fn download_file(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Query(query): Query<FilePathQuery>,
+) -> Result<Json<FileDownloadResponse>, AppError> {
+    let path = required_query_path(query.path)?;
+    ensure_file_capability(&state, host_id, CapabilityName::FilesRead).await?;
+    record_file_event(
+        &state,
+        host_id,
+        "file.download_requested",
+        serde_json::json!({
+            "path": path,
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    let result = state
+        .agent_streams
+        .read_file(host_id, path)
+        .await
+        .map_err(file_command_app_error)?;
+    let metadata: Value = parse_file_result_value(&result)?;
+    Ok(Json(FileDownloadResponse {
+        path: metadata
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        name: metadata
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("download")
+            .to_string(),
+        content_base64: base64::engine::general_purpose::STANDARD.encode(result.content),
+        size_bytes: metadata
+            .get("size_bytes")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    }))
+}
+
+async fn upload_file(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Json(request): Json<FileUploadRequest>,
+) -> Result<Json<FileUploadResponse>, AppError> {
+    ensure_file_capability(&state, host_id, CapabilityName::FilesWrite).await?;
+    let content = base64::engine::general_purpose::STANDARD
+        .decode(request.content_base64.as_bytes())
+        .map_err(|_| AppError::status(StatusCode::BAD_REQUEST, "invalid base64 file content"))?;
+    if content.len() > MAX_FILE_TRANSFER_BYTES {
+        return Err(AppError::status(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "file upload exceeds the 64 MiB transfer limit",
+        ));
+    }
+    record_file_event(
+        &state,
+        host_id,
+        "file.upload_requested",
+        serde_json::json!({
+            "path": request.path,
+            "content_bytes": content.len(),
+            "overwrite": request.overwrite.unwrap_or(false),
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    let result = state
+        .agent_streams
+        .run_file_operation(
+            host_id,
+            grpc::RunFileOperationCommand {
+                command_id: String::new(),
+                operation: "upload".to_string(),
+                path: request.path,
+                target_path: String::new(),
+                name: String::new(),
+                content,
+                overwrite: request.overwrite.unwrap_or(false),
+            },
+        )
+        .await
+        .map_err(file_command_app_error)?;
+    let response: FileOperationResponse = file_result_json(&result)?;
+    let item = response
+        .item
+        .ok_or_else(|| AppError::status(StatusCode::BAD_GATEWAY, "agent did not return file"))?;
+    record_file_event(
+        &state,
+        host_id,
+        "file.upload_completed",
+        serde_json::json!({
+            "path": item.path,
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    Ok(Json(FileUploadResponse { item }))
+}
+
+async fn run_file_operation(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(host_id): AxumPath<Uuid>,
+    Json(request): Json<FileOperationRequest>,
+) -> Result<Json<FileOperationResponse>, AppError> {
+    ensure_file_capability(&state, host_id, CapabilityName::FilesWrite).await?;
+    let operation = file_operation_label(request.operation);
+    record_file_event(
+        &state,
+        host_id,
+        "file.operation_requested",
+        serde_json::json!({
+            "operation": operation,
+            "path": request.path,
+            "target_path": request.target_path,
+            "name": request.name,
+            "overwrite": request.overwrite.unwrap_or(false),
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    let result = state
+        .agent_streams
+        .run_file_operation(
+            host_id,
+            grpc::RunFileOperationCommand {
+                command_id: String::new(),
+                operation: operation.to_string(),
+                path: request.path,
+                target_path: request.target_path.unwrap_or_default(),
+                name: request.name.unwrap_or_default(),
+                content: Vec::new(),
+                overwrite: request.overwrite.unwrap_or(false),
+            },
+        )
+        .await
+        .map_err(file_command_app_error)?;
+    let response: FileOperationResponse = file_result_json(&result)?;
+    record_file_event(
+        &state,
+        host_id,
+        "file.operation_completed",
+        serde_json::json!({
+            "operation": operation,
+            "message": response.message,
+            "requested_by": current_user.username,
+        }),
+    )
+    .await?;
+    Ok(Json(response))
+}
+
 async fn list_tasks(State(state): State<AppState>) -> Result<Json<ListTasksResponse>, AppError> {
     Ok(Json(ListTasksResponse {
         items: state.store.tasks().list().await?,
@@ -2469,6 +2878,55 @@ async fn setting_string(store: &Store, key: &str, fallback: &str) -> Result<Stri
         .unwrap_or_else(|| fallback.to_string()))
 }
 
+async fn ensure_file_capability(
+    state: &AppState,
+    host_id: Uuid,
+    capability: CapabilityName,
+) -> Result<(), AppError> {
+    let hosts = state.store.hosts().list().await?;
+    let host = hosts
+        .into_iter()
+        .find(|host| host.id == host_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "host not found"))?;
+    if host.status != HostStatus::Online {
+        return Err(AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not online",
+        ));
+    }
+    if !host
+        .capabilities
+        .iter()
+        .any(|declared| declared.name == capability)
+    {
+        return Err(AppError::status(
+            StatusCode::FORBIDDEN,
+            "agent does not declare required file capability",
+        ));
+    }
+    Ok(())
+}
+
+async fn record_file_event(
+    state: &AppState,
+    host_id: Uuid,
+    event_type: impl Into<String>,
+    event_json: Value,
+) -> Result<(), AppError> {
+    state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(host_id),
+            event_type: event_type.into(),
+            event_json,
+            recorded_at: Utc::now(),
+        })
+        .await?;
+    Ok(())
+}
+
 fn grpc_capability_to_protocol(capability: grpc::AgentCapability) -> Option<AgentCapability> {
     doro_store::parse_agent_capability(&capability.name, &capability.risk, capability.description)
 }
@@ -2589,6 +3047,16 @@ fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)
                 "status": result.status,
                 "message": result.message,
                 "details": parse_event_payload(&result.details_json),
+            }),
+        )),
+        grpc::agent_event::Event::FileCommandResult(result) => Some((
+            "file.command_result".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "status": result.status,
+                "message": result.message,
+                "result": parse_event_payload(&result.result_json),
+                "content_bytes": result.content.len(),
             }),
         )),
     }
@@ -2954,6 +3422,50 @@ fn terminal_command_app_error(error: TerminalCommandError) -> AppError {
             format!("agent terminal command failed: {message}"),
         ),
     }
+}
+
+fn file_command_app_error(error: FileCommandError) -> AppError {
+    match error {
+        FileCommandError::NoStream => AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent stream is not connected",
+        ),
+        FileCommandError::Timeout => {
+            AppError::status(StatusCode::GATEWAY_TIMEOUT, "agent file command timed out")
+        }
+        FileCommandError::AgentFailed(message) => AppError::status(
+            StatusCode::BAD_GATEWAY,
+            format!("agent file command failed: {message}"),
+        ),
+    }
+}
+
+fn file_operation_label(operation: FileOperationKind) -> &'static str {
+    match operation {
+        FileOperationKind::CreateDirectory => "create_directory",
+        FileOperationKind::Rename => "rename",
+        FileOperationKind::Move => "move",
+        FileOperationKind::Copy => "copy",
+        FileOperationKind::Delete => "delete",
+    }
+}
+
+fn required_query_path(path: Option<String>) -> Result<String, AppError> {
+    path.map(|path| path.trim().to_string())
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| AppError::status(StatusCode::BAD_REQUEST, "path is required"))
+}
+
+fn parse_file_result_value(result: &grpc::FileCommandResultEvent) -> Result<Value, AppError> {
+    serde_json::from_str(&result.result_json)
+        .map_err(|_| AppError::status(StatusCode::BAD_GATEWAY, "agent returned invalid file JSON"))
+}
+
+fn file_result_json<T: for<'de> Deserialize<'de>>(
+    result: &grpc::FileCommandResultEvent,
+) -> Result<T, AppError> {
+    serde_json::from_str(&result.result_json)
+        .map_err(|_| AppError::status(StatusCode::BAD_GATEWAY, "agent returned invalid file JSON"))
 }
 
 fn approval_store_app_error(error: sea_orm::DbErr) -> AppError {
@@ -3448,6 +3960,59 @@ mod tests {
         };
         assert_eq!(result.output, "/tmp");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_file_command_and_receives_result() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let list = tokio::spawn({
+            let registry = registry.clone();
+            async move { registry.list_directory(host_id, "/".to_string()).await }
+        });
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send file command"),
+        };
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::ListDirectory(_))
+        ));
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
+            .send(AgentCommandReply::FileCommandResult(
+                grpc::FileCommandResultEvent {
+                    command_id: command.command_id,
+                    status: grpc::CommandStatus::Succeeded as i32,
+                    message: "directory listed".to_string(),
+                    result_json: serde_json::json!({
+                        "path": "/",
+                        "parent_path": null,
+                        "items": []
+                    })
+                    .to_string(),
+                    content: Vec::new(),
+                },
+            ))
+            .is_err()
+        {
+            panic!("waiter should receive file result");
+        }
+
+        let result = match list.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => panic!("file command should succeed: {error:?}"),
+            Err(error) => panic!("list task should complete: {error}"),
+        };
+        assert_eq!(result.message, "directory listed");
     }
 
     #[tokio::test]

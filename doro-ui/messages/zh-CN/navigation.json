@@ -42,6 +42,10 @@
       "label": "终端",
       "description": "选择 Agent 并执行受审计的终端命令。"
     },
+    "files": {
+      "label": "文件管理",
+      "description": "浏览并管理 Agent 主机文件系统。"
+    },
     "websites": {
       "label": "网站",
       "description": "查看网站、域名、证书和服务状态。"

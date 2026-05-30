@@ -53,6 +53,7 @@ message AgentEvent {
     LogLineEvent log_line = 14;
     VirtualMachineSnapshotEvent virtual_machine_snapshot = 15;
     VirtualMachineCommandResultEvent virtual_machine_command_result = 16;
+    FileCommandResultEvent file_command_result = 17;
   }
 }
 
@@ -70,6 +71,10 @@ message ControlPlaneCommand {
     CloseTerminalSessionCommand close_terminal_session = 10;
     CollectVirtualMachinesCommand collect_virtual_machines = 11;
     RunVirtualMachineCommandCommand run_virtual_machine_command = 12;
+    ListDirectoryCommand list_directory = 13;
+    ReadFileCommand read_file = 14;
+    SearchFilesCommand search_files = 15;
+    RunFileOperationCommand run_file_operation = 16;
   }
 }
 
@@ -88,6 +93,33 @@ message CollectVirtualMachinesCommand {
 message RunVirtualMachineCommandCommand {
   string command_id = 1;
   string command_json = 2;
+}
+
+message ListDirectoryCommand {
+  string command_id = 1;
+  string path = 2;
+}
+
+message ReadFileCommand {
+  string command_id = 1;
+  string path = 2;
+}
+
+message SearchFilesCommand {
+  string command_id = 1;
+  string path = 2;
+  string query = 3;
+  uint32 limit = 4;
+}
+
+message RunFileOperationCommand {
+  string command_id = 1;
+  string operation = 2;
+  string path = 3;
+  string target_path = 4;
+  string name = 5;
+  bytes content = 6;
+  bool overwrite = 7;
 }
 
 message ShutdownCommand {
@@ -217,6 +249,14 @@ message VirtualMachineCommandResultEvent {
   CommandStatus status = 2;
   string message = 3;
   string details_json = 4;
+}
+
+message FileCommandResultEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string message = 3;
+  string result_json = 4;
+  bytes content = 5;
 }
 
 message TerminalOutputEvent {

@@ -28,3 +28,6 @@ uuid = { workspace = true }
 [features]
 default = []
 gpu = ["nvml-wrapper"]
+
+[dev-dependencies]
+tempfile = { workspace = true }

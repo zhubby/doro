@@ -18,6 +18,16 @@ export type { CreateVirtualMachineRequest } from "./generated/CreateVirtualMachi
 export type { CreateVirtualMachineSnapshotRequest } from "./generated/CreateVirtualMachineSnapshotRequest";
 export type { CurrentUserResponse } from "./generated/CurrentUserResponse";
 export type { EnrollmentToken } from "./generated/EnrollmentToken";
+export type { FileDirectoryResponse } from "./generated/FileDirectoryResponse";
+export type { FileDownloadResponse } from "./generated/FileDownloadResponse";
+export type { FileEntry } from "./generated/FileEntry";
+export type { FileEntryKind } from "./generated/FileEntryKind";
+export type { FileOperationKind } from "./generated/FileOperationKind";
+export type { FileOperationRequest } from "./generated/FileOperationRequest";
+export type { FileOperationResponse } from "./generated/FileOperationResponse";
+export type { FileSearchResponse } from "./generated/FileSearchResponse";
+export type { FileUploadRequest } from "./generated/FileUploadRequest";
+export type { FileUploadResponse } from "./generated/FileUploadResponse";
 export type { HealthResponse } from "./generated/HealthResponse";
 export type { Host } from "./generated/Host";
 export type { HostContainer } from "./generated/HostContainer";

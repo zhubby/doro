@@ -9,6 +9,7 @@ export type NavigationItem = {
     | "apps"
     | "ai"
     | "terminal"
+    | "files"
     | "websites"
     | "databases"
     | "containers"

@@ -3,6 +3,7 @@ import {
   Boxes,
   CheckCircle2,
   Database,
+  FolderTree,
   Home,
   ListTodo,
   MonitorCheck,
@@ -53,6 +54,11 @@ export const navigation: NavigationItem[] = [
     id: "terminal",
     href: "/terminal",
     icon: Terminal,
+  },
+  {
+    id: "files",
+    href: "/files",
+    icon: FolderTree,
   },
   {
     id: "websites",

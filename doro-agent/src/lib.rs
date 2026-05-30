@@ -49,11 +49,13 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 mod collectors;
+mod filesystem;
 mod terminal;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
 const MAX_RECONNECT_DELAY: Duration = Duration::from_secs(30);
 const AGENT_RUNTIME_LOG_LIMIT: usize = 200;
+const MAX_FILE_TRANSFER_BYTES: usize = 64 * 1024 * 1024;
 
 static AGENT_RUNTIME_LOGS: OnceLock<AgentRuntimeLogHub> = OnceLock::new();
 
@@ -341,6 +343,16 @@ impl Agent {
                 risk: CapabilityRisk::High,
                 description: "Execute approved shell commands".to_string(),
             },
+            AgentCapability {
+                name: CapabilityName::FilesRead,
+                risk: CapabilityRisk::Low,
+                description: "Browse and read the host filesystem as the agent OS user".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::FilesWrite,
+                risk: CapabilityRisk::High,
+                description: "Manage the host filesystem as the agent OS user".to_string(),
+            },
         ];
         if self.config.docker_manage_enabled {
             capabilities.push(AgentCapability {
@@ -492,6 +504,24 @@ impl Agent {
                     details_json: result.details.to_string(),
                 },
             ),
+        )
+    }
+
+    pub fn file_command_result_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        output: filesystem::FileCommandOutput,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::FileCommandResult(grpc::FileCommandResultEvent {
+                command_id,
+                status: grpc::CommandStatus::Succeeded as i32,
+                message: output.message,
+                result_json: output.result_json,
+                content: output.content,
+            }),
         )
     }
 
@@ -1066,6 +1096,70 @@ async fn handle_command(
             };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue virtual machine command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::ListDirectory(list_command)) => {
+            tracing::info!(command_id = %command_id, path = list_command.path, "listing directory by control-plane request");
+            let event = match filesystem::list_directory(&list_command.path) {
+                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue file list result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::ReadFile(read_command)) => {
+            tracing::info!(command_id = %command_id, path = read_command.path, "reading file by control-plane request");
+            let event = match filesystem::read_file(&read_command.path, MAX_FILE_TRANSFER_BYTES) {
+                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue file read result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::SearchFiles(search_command)) => {
+            tracing::info!(command_id = %command_id, path = search_command.path, query = search_command.query, "searching files by control-plane request");
+            let event = match filesystem::search_files(
+                &search_command.path,
+                &search_command.query,
+                search_command.limit,
+            ) {
+                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue file search result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::RunFileOperation(file_command)) => {
+            tracing::info!(command_id = %command_id, operation = file_command.operation, path = file_command.path, "running file operation by control-plane request");
+            let event = match filesystem::run_operation(file_command, MAX_FILE_TRANSFER_BYTES) {
+                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
+                Err(error) => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    error.to_string(),
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue file operation result event");
             }
         }
         Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {

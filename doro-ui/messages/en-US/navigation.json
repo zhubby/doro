@@ -42,6 +42,10 @@
       "label": "Terminal",
       "description": "Choose an agent and run audited terminal commands."
     },
+    "files": {
+      "label": "Files",
+      "description": "Browse and manage agent host filesystems."
+    },
     "websites": {
       "label": "Websites",
       "description": "Inspect websites, domains, certificates, and service health."

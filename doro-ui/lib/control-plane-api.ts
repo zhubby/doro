@@ -9,6 +9,13 @@ import type {
   CreateVirtualMachineRequest,
   CreateVirtualMachineSnapshotRequest,
   CurrentUserResponse,
+  FileDirectoryResponse,
+  FileDownloadResponse,
+  FileOperationRequest,
+  FileOperationResponse,
+  FileSearchResponse,
+  FileUploadRequest,
+  FileUploadResponse,
   LatestMetricResponse,
   ListAppsResponse,
   ListApprovalsResponse,
@@ -477,6 +484,51 @@ export async function runTerminalCommand(request: TerminalCommandRequest) {
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export async function listFiles(hostId: string, path: string) {
+  const query = new URLSearchParams({ path });
+  return getJson<FileDirectoryResponse>(
+    `/api/v1/files/${hostId}/list?${query}`,
+  );
+}
+
+export async function searchFiles(hostId: string, path: string, queryText: string) {
+  const query = new URLSearchParams({
+    path,
+    query: queryText,
+    limit: "500",
+  });
+  return getJson<FileSearchResponse>(
+    `/api/v1/files/${hostId}/search?${query}`,
+  );
+}
+
+export async function downloadFile(hostId: string, path: string) {
+  const query = new URLSearchParams({ path });
+  return getJson<FileDownloadResponse>(
+    `/api/v1/files/${hostId}/download?${query}`,
+  );
+}
+
+export async function uploadFile(hostId: string, request: FileUploadRequest) {
+  return authedRequest<FileUploadResponse>(`/api/v1/files/${hostId}/upload`, {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function runFileOperation(
+  hostId: string,
+  request: FileOperationRequest,
+) {
+  return authedRequest<FileOperationResponse>(
+    `/api/v1/files/${hostId}/operations`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export async function terminalSessionWebSocketUrl(hostId: string, cols: number, rows: number) {
