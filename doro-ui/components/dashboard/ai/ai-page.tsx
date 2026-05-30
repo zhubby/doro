@@ -8,38 +8,45 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { aiAgents } from "@/lib/mock-data";
 import type { AiAgent, ResourceColumn } from "@/types/dashboard";
-
-const columns: ResourceColumn<AiAgent>[] = [
-  {
-    key: "name",
-    label: "智能体",
-    render: (row) => (
-      <div>
-        <p className="font-medium">{row.name}</p>
-        <p className="text-xs text-muted-foreground">{row.role}</p>
-      </div>
-    ),
-  },
-  {
-    key: "status",
-    label: "状态",
-    render: (row) => <ResourceStatusBadge status={row.status} />,
-  },
-  { key: "model", label: "模型" },
-  { key: "lastRun", label: "最近运行" },
-];
+import { useTranslations } from "next-intl";
 
 export function AiPage() {
+  const t = useTranslations("resources.ai");
+  const tResources = useTranslations("resources");
+  const columns: ResourceColumn<AiAgent>[] = [
+    {
+      key: "name",
+      label: t("agent"),
+      render: (row) => (
+        <div>
+          <p className="font-medium">{row.name}</p>
+          <p className="text-xs text-muted-foreground">{row.role}</p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: tResources("columns.status"),
+      render: (row) => <ResourceStatusBadge status={row.status} />,
+    },
+    { key: "model", label: tResources("columns.model") },
+    { key: "lastRun", label: tResources("columns.lastRun") },
+  ];
+
   return (
     <PageContainer
       aside={
-        <PageSection title="运行配置" description="当前智能体执行环境概览。">
+        <PageSection title={t("runtimeTitle")} description={t("runtimeDescription")}>
           <div className="space-y-3">
-            {["工具调用已开启", "本地任务队列空闲", "模型路由使用默认策略"].map(
+            {[
+              t("toolCallsEnabled"),
+              t("queueIdle"),
+              t("modelRoutingDefault"),
+            ].map(
               (item) => (
                 <div key={item} className="flex items-center justify-between rounded-lg border p-3">
                   <span className="text-sm">{item}</span>
-                  <Badge variant="secondary">正常</Badge>
+                  <Badge variant="secondary">{t("normal")}</Badge>
                 </div>
               ),
             )}
@@ -53,22 +60,26 @@ export function AiPage() {
             <>
               <Button>
                 <Bot className="size-4" aria-hidden="true" />
-                创建智能体
+                {t("create")}
               </Button>
               <Button variant="outline">
                 <Play className="size-4" aria-hidden="true" />
-                运行任务
+                {t("runTask")}
               </Button>
             </>
           }
           right={
             <Button variant="outline">
               <Settings2 className="size-4" aria-hidden="true" />
-              模型设置
+              {t("modelSettings")}
             </Button>
           }
         />
-        <DataTable columns={columns} rows={aiAgents} actions={["运行", "配置"]} />
+        <DataTable
+          columns={columns}
+          rows={aiAgents}
+          actions={[t("runTask"), t("modelSettings")]}
+        />
       </PageSection>
     </PageContainer>
   );

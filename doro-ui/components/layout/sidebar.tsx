@@ -1,14 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   Boxes,
   ChevronUp,
+  Languages,
   LogOut,
   Settings,
   UserRound,
 } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Link, usePathname, useRouter } from "@/i18n/navigation";
+import { locales, type AppLocale } from "@/i18n/routing";
 import { logout } from "@/lib/control-plane-api";
 import { navigation } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
@@ -35,6 +37,10 @@ export function Sidebar({
   user: UserSummary;
 }) {
   const router = useRouter();
+  const currentPathname = usePathname();
+  const locale = useLocale() as AppLocale;
+  const tCommon = useTranslations("common");
+  const tNav = useTranslations("navigation");
   const displayName = user.display_name || user.username;
   const initials = displayName.trim().slice(0, 1).toUpperCase();
 
@@ -51,12 +57,14 @@ export function Sidebar({
             <Boxes className="size-4" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Doro Panel</p>
-            <p className="text-xs text-muted-foreground">本地控制台</p>
+            <p className="text-sm font-semibold">{tCommon("brand.panel")}</p>
+            <p className="text-xs text-muted-foreground">
+              {tCommon("brand.localConsole")}
+            </p>
           </div>
         </div>
         <ScrollArea className="min-h-0 flex-1 px-3 py-4">
-          <nav className="grid gap-1" aria-label="控制面板导航">
+          <nav className="grid gap-1" aria-label={tNav("ariaLabel")}>
             {navigation.map((item) => {
               const Icon = item.icon;
               const isActive =
@@ -74,7 +82,7 @@ export function Sidebar({
                 >
                   <Link href={item.href}>
                     <Icon className="size-4" aria-hidden="true" />
-                    <span>{item.label}</span>
+                    <span>{tNav(`items.${item.id}.label`)}</span>
                     {item.count ? (
                       <Badge variant="outline" className="ml-auto">
                         {item.count}
@@ -93,7 +101,7 @@ export function Sidebar({
               <Button
                 variant="ghost"
                 className="h-auto w-full justify-start gap-3 rounded-lg border bg-background p-3 text-left shadow-none hover:bg-accent"
-                aria-label="打开用户菜单"
+                aria-label={tNav("userMenu.open")}
               >
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground">
                   {initials}
@@ -128,21 +136,34 @@ export function Sidebar({
               <DropdownMenuSeparator />
               <DropdownMenuItem>
                 <UserRound className="size-4" aria-hidden="true" />
-                Profile
+                {tNav("userMenu.profile")}
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link href="/settings">
                   <Settings className="size-4" aria-hidden="true" />
-                  Settings
+                  {tNav("userMenu.settings")}
                 </Link>
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {locales.map((targetLocale) => (
+                <DropdownMenuItem
+                  key={targetLocale}
+                  disabled={targetLocale === locale}
+                  onSelect={() => {
+                    router.replace(currentPathname, { locale: targetLocale });
+                  }}
+                >
+                  <Languages className="size-4" aria-hidden="true" />
+                  {tCommon(`language.${targetLocale}`)}
+                </DropdownMenuItem>
+              ))}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onSelect={handleLogout}
               >
                 <LogOut className="size-4" aria-hidden="true" />
-                Logout
+                {tNav("userMenu.logout")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>

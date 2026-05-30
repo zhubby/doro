@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +11,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { useRouter } from "@/i18n/navigation";
 import { navigation } from "@/lib/navigation";
 import { Search } from "lucide-react";
 
@@ -21,6 +22,8 @@ type SearchCommandProps = {
 
 export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
   const router = useRouter();
+  const t = useTranslations("navigation.search");
+  const tNav = useTranslations("navigation");
 
   return (
     <>
@@ -28,36 +31,38 @@ export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
         variant="outline"
         size="icon"
         onClick={() => onOpenChange(true)}
-        aria-label="打开搜索面板"
-        title="搜索"
+        aria-label={t("open")}
+        title={t("open")}
       >
         <Search className="size-4" aria-hidden="true" />
       </Button>
       <CommandDialog
         open={open}
         onOpenChange={onOpenChange}
-        title="搜索导航"
+        title={t("title")}
       >
-        <CommandInput placeholder="搜索页面、模块或能力..." />
+        <CommandInput placeholder={t("placeholder")} />
         <CommandList>
-          <CommandEmpty>未找到匹配结果。</CommandEmpty>
-          <CommandGroup heading="导航">
+          <CommandEmpty>{t("empty")}</CommandEmpty>
+          <CommandGroup heading={t("group")}>
             {navigation.map((item) => {
               const Icon = item.icon;
+              const label = tNav(`items.${item.id}.label`);
+              const description = tNav(`items.${item.id}.description`);
 
               return (
                 <CommandItem
                   key={item.href}
-                  value={`${item.label} ${item.description}`}
+                  value={`${label} ${description}`}
                   onSelect={() => {
                     onOpenChange(false);
                     router.push(item.href);
                   }}
                 >
                   <Icon className="size-4" aria-hidden="true" />
-                  <span>{item.label}</span>
+                  <span>{label}</span>
                   <span className="ml-auto max-w-48 truncate text-xs text-muted-foreground">
-                    {item.description}
+                    {description}
                   </span>
                 </CommandItem>
               );

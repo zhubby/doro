@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Link, usePathname } from "@/i18n/navigation";
 
 export type ModuleTab = {
   label: string;

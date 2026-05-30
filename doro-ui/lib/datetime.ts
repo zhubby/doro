@@ -6,6 +6,7 @@ const WEEK = 7 * DAY;
 
 type RelativeTimeOptions = {
   emptyText?: string;
+  locale?: string;
   now?: Date;
 };
 
@@ -25,29 +26,41 @@ export function formatRelativeTime(
   const now = options.now ?? new Date();
   const diff = now.getTime() - date.getTime();
   const absDiff = Math.abs(diff);
-  const suffix = diff >= 0 ? "前" : "后";
+  const locale = options.locale ?? "zh-CN";
 
   if (absDiff < 10 * SECOND) {
-    return "刚刚";
+    return locale === "zh-CN" ? "刚刚" : "Just now";
   }
 
   if (absDiff < MINUTE) {
-    return `${Math.floor(absDiff / SECOND)} 秒${suffix}`;
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
+      diff >= 0 ? -Math.floor(absDiff / SECOND) : Math.floor(absDiff / SECOND),
+      "second",
+    );
   }
 
   if (absDiff < HOUR) {
-    return `${Math.floor(absDiff / MINUTE)} 分钟${suffix}`;
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
+      diff >= 0 ? -Math.floor(absDiff / MINUTE) : Math.floor(absDiff / MINUTE),
+      "minute",
+    );
   }
 
   if (absDiff < DAY) {
-    return `${Math.floor(absDiff / HOUR)} 小时${suffix}`;
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
+      diff >= 0 ? -Math.floor(absDiff / HOUR) : Math.floor(absDiff / HOUR),
+      "hour",
+    );
   }
 
   if (absDiff < WEEK) {
-    return `${Math.floor(absDiff / DAY)} 天${suffix}`;
+    return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(
+      diff >= 0 ? -Math.floor(absDiff / DAY) : Math.floor(absDiff / DAY),
+      "day",
+    );
   }
 
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",

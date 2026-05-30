@@ -4,37 +4,45 @@ import { ResourceStatusBadge } from "@/components/admin/data-table";
 import { ResourceListPage } from "@/components/dashboard/resources/resource-list-page";
 import { cronJobs } from "@/lib/mock-data";
 import type { CronJob, ResourceColumn } from "@/types/dashboard";
-
-const columns: ResourceColumn<CronJob>[] = [
-  {
-    key: "name",
-    label: "任务名称",
-    render: (row) => (
-      <div>
-        <p className="font-medium">{row.name}</p>
-        <p className="text-xs text-muted-foreground">{row.type}</p>
-      </div>
-    ),
-  },
-  { key: "schedule", label: "执行周期" },
-  {
-    key: "status",
-    label: "状态",
-    render: (row) => <ResourceStatusBadge status={row.status} />,
-  },
-  { key: "lastRun", label: "最近执行" },
-  { key: "retention", label: "保留策略" },
-];
+import { useTranslations } from "next-intl";
 
 export function CronPage() {
+  const t = useTranslations("resources");
+  const tCommon = useTranslations("common");
+  const columns: ResourceColumn<CronJob>[] = [
+    {
+      key: "name",
+      label: t("columns.name"),
+      render: (row) => (
+        <div>
+          <p className="font-medium">{row.name}</p>
+          <p className="text-xs text-muted-foreground">{row.type}</p>
+        </div>
+      ),
+    },
+    { key: "schedule", label: t("columns.schedule") },
+    {
+      key: "status",
+      label: t("columns.status"),
+      render: (row) => <ResourceStatusBadge status={row.status} />,
+    },
+    { key: "lastRun", label: t("columns.lastRun") },
+    { key: "retention", label: t("columns.retention") },
+  ];
+
   return (
     <ResourceListPage
-      title="计划任务"
-      description="展示备份、巡检、清理等自动化任务，沿用 1Panel 的任务列表模式。"
+      title={t("cron.title")}
+      description={t("cron.description")}
       rows={cronJobs}
       columns={columns}
-      createLabel="创建任务"
-      batchActions={["执行", "启用", "停用", "删除"]}
+      createLabel={t("cron.create")}
+      batchActions={[
+        t("cron.run"),
+        t("cron.enable"),
+        t("cron.disable"),
+        tCommon("actions.delete"),
+      ]}
     />
   );
 }

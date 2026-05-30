@@ -25,16 +25,10 @@ import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { virtualMachines } from "@/lib/mock-data";
 import type { ResourceStatus, VirtualMachineResource } from "@/types/dashboard";
+import { useTranslations } from "next-intl";
 
 type AppsPageProps = {
   apiError?: string | null;
-};
-
-const labels: Record<ResourceStatus | "all", string> = {
-  all: "全部",
-  running: "运行中",
-  stopped: "已停止",
-  warning: "需关注",
 };
 
 function parseUsage(value: string) {
@@ -69,6 +63,9 @@ function MetricPill({
 }
 
 function VirtualMachineCard({ machine }: { machine: VirtualMachineResource }) {
+  const t = useTranslations("resources.apps");
+  const tCommon = useTranslations("common.actions");
+
   return (
     <article className="rounded-lg border bg-card p-4 transition-colors hover:bg-muted/30">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -92,24 +89,24 @@ function VirtualMachineCard({ machine }: { machine: VirtualMachineResource }) {
 
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="outline">
-            控制台
+            {t("console")}
           </Button>
           <Button size="sm" variant="outline">
-            快照
+            {tCommon("snapshot")}
           </Button>
-          <Button size="sm">管理</Button>
+          <Button size="sm">{tCommon("manage")}</Button>
         </div>
       </div>
 
       <div className="mt-4 grid gap-3 md:grid-cols-3">
         <MetricPill icon={Cpu} label="CPU" value={machine.cpu} />
-        <MetricPill icon={Server} label="内存" value={machine.memory} />
-        <MetricPill icon={HardDrive} label="磁盘" value={machine.disk} />
+        <MetricPill icon={Server} label={t("stats.memory")} value={machine.memory} />
+        <MetricPill icon={HardDrive} label={t("stats.disk")} value={machine.disk} />
       </div>
 
       <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t pt-3 text-xs text-muted-foreground">
-        <span>运行时间：{machine.uptime}</span>
-        <span>更新时间：{machine.updatedAt}</span>
+        <span>{t("uptime", { value: machine.uptime })}</span>
+        <span>{t("updatedAt", { value: machine.updatedAt })}</span>
       </div>
     </article>
   );
@@ -117,6 +114,9 @@ function VirtualMachineCard({ machine }: { machine: VirtualMachineResource }) {
 
 export function AppsPage({ apiError }: AppsPageProps) {
   const [activeStatus, setActiveStatus] = useState<ResourceStatus | "all">("all");
+  const t = useTranslations("resources.apps");
+  const tCommon = useTranslations("common");
+  const tStatus = useTranslations("common.status");
   const filters = useMemo<FilterChip[]>(() => {
     const statuses: Array<ResourceStatus | "all"> = [
       "all",
@@ -127,13 +127,13 @@ export function AppsPage({ apiError }: AppsPageProps) {
 
     return statuses.map((status) => ({
       value: status,
-      label: labels[status],
+      label: status === "all" ? tStatus("all") : tStatus(status),
       count:
         status === "all"
           ? virtualMachines.length
           : virtualMachines.filter((machine) => machine.status === status).length,
     }));
-  }, []);
+  }, [tStatus]);
   const filteredMachines = useMemo(() => {
     if (activeStatus === "all") {
       return virtualMachines;
@@ -152,15 +152,27 @@ export function AppsPage({ apiError }: AppsPageProps) {
     <PageContainer>
       {apiError ? (
         <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
+          {tCommon("errors.controlPlaneUnavailable", { error: apiError })}
         </div>
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-3">
         {[
-          { label: "虚拟机", value: virtualMachines.length, helper: "跨 2 台宿主机" },
-          { label: "运行中", value: runningCount, helper: "可直接进入控制台" },
-          { label: "需关注", value: warningCount, helper: "资源或快照策略异常" },
+          {
+            label: t("stats.machines"),
+            value: virtualMachines.length,
+            helper: t("stats.machinesHelper"),
+          },
+          {
+            label: t("stats.running"),
+            value: runningCount,
+            helper: t("stats.runningHelper"),
+          },
+          {
+            label: t("stats.warning"),
+            value: warningCount,
+            helper: t("stats.warningHelper"),
+          },
         ].map((stat) => (
           <div key={stat.label} className="rounded-md bg-muted/35 px-4 py-3">
             <p className="text-sm text-muted-foreground">{stat.label}</p>
@@ -184,23 +196,27 @@ export function AppsPage({ apiError }: AppsPageProps) {
             <>
               <Button>
                 <Plus className="size-4" aria-hidden="true" />
-                创建虚拟机
+                {t("create")}
               </Button>
-              <Button variant="outline">批量启动</Button>
-              <Button variant="outline">批量停止</Button>
-              <Button variant="outline">创建快照</Button>
+              <Button variant="outline">{t("batchStart")}</Button>
+              <Button variant="outline">{t("batchStop")}</Button>
+              <Button variant="outline">{t("snapshot")}</Button>
             </>
           }
           right={
             <>
               <Button variant="outline">
                 <Search className="size-4" aria-hidden="true" />
-                搜索
+                {tCommon("actions.search")}
               </Button>
-              <Button variant="outline" size="icon" aria-label="刷新">
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={tCommon("actions.refresh")}
+              >
                 <RefreshCw className="size-4" aria-hidden="true" />
               </Button>
-              <Button variant="outline" size="icon" aria-label="视图设置">
+              <Button variant="outline" size="icon" aria-label={t("viewSettings")}>
                 <Settings2 className="size-4" aria-hidden="true" />
               </Button>
             </>
@@ -215,28 +231,28 @@ export function AppsPage({ apiError }: AppsPageProps) {
       </PageSection>
 
       <PageSection
-        title="网络与镜像"
-        description="虚拟机默认网络、镜像模板和宿主机池的占用情况。"
+        title={t("networkTitle")}
+        description={t("networkDescription")}
       >
         <div className="grid gap-3 md:grid-cols-3">
           {[
             {
               icon: Network,
-              label: "默认网络",
+              label: t("defaultNetwork"),
               value: "bridge-home",
-              helper: "10.0.1.0/24 · DHCP 已启用",
+              helper: t("dhcpEnabled"),
             },
             {
               icon: HardDrive,
-              label: "镜像缓存",
-              value: "6 个模板",
+              label: t("imageCache"),
+              value: t("imageTemplates"),
               helper: "Ubuntu / Debian / Fedora / HAOS",
             },
             {
               icon: Server,
-              label: "宿主机池",
-              value: "2 台可调度",
-              helper: "剩余 14 vCPU / 38 GB 内存",
+              label: t("hostPool"),
+              value: t("hostPoolValue"),
+              helper: t("hostPoolHelper"),
             },
           ].map((item) => {
             const Icon = item.icon;

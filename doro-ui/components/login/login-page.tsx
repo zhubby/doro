@@ -1,8 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
 import { LogIn, UserPlus } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { authStatus, login, register } from "@/lib/control-plane-api";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { useRouter } from "@/i18n/navigation";
+import { useSearchParams } from "next/navigation";
 
 export function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const t = useTranslations("auth");
+  const tCommon = useTranslations("common");
   const [registrationOpen, setRegistrationOpen] = useState(false);
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -51,7 +55,7 @@ export function LoginPage() {
 
     setPending(false);
     if (!result.data) {
-      setError(result.error ?? "认证失败");
+      setError(result.error ?? tCommon("errors.authFailed"));
       return;
     }
 
@@ -69,17 +73,19 @@ export function LoginPage() {
               <LogIn className="size-5" aria-hidden="true" />
             )}
           </div>
-          <CardTitle>{registrationOpen ? "创建管理员" : "登录 Doro"}</CardTitle>
+          <CardTitle>
+            {registrationOpen ? t("registerTitle") : t("loginTitle")}
+          </CardTitle>
           <CardDescription>
             {registrationOpen
-              ? "初始化首个管理员账号，之后将关闭公开注册。"
-              : "使用管理员账号进入控制平面。"}
+              ? t("registerDescription")
+              : t("loginDescription")}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form className="space-y-4" onSubmit={submit}>
             <label className="block space-y-2 text-sm">
-              <span className="font-medium">用户名</span>
+              <span className="font-medium">{t("username")}</span>
               <input
                 className="h-10 w-full rounded-md border bg-background px-3 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                 value={username}
@@ -93,7 +99,7 @@ export function LoginPage() {
 
             {registrationOpen ? (
               <label className="block space-y-2 text-sm">
-                <span className="font-medium">显示名称</span>
+                <span className="font-medium">{t("displayName")}</span>
                 <input
                   className="h-10 w-full rounded-md border bg-background px-3 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                   value={displayName}
@@ -104,7 +110,7 @@ export function LoginPage() {
             ) : null}
 
             <label className="block space-y-2 text-sm">
-              <span className="font-medium">密码</span>
+              <span className="font-medium">{t("password")}</span>
               <input
                 className="h-10 w-full rounded-md border bg-background px-3 outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
                 type="password"
@@ -123,7 +129,11 @@ export function LoginPage() {
             ) : null}
 
             <Button className="w-full" type="submit" disabled={pending}>
-              {pending ? "处理中..." : registrationOpen ? "创建并进入" : "登录"}
+              {pending
+                ? t("pending")
+                : registrationOpen
+                  ? t("registerSubmit")
+                  : t("loginSubmit")}
             </Button>
           </form>
         </CardContent>

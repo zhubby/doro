@@ -1,10 +1,9 @@
 "use client";
 
-import { usePathname } from "next/navigation";
-
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Sidebar } from "@/components/layout/sidebar";
+import { usePathname } from "@/i18n/navigation";
 import { getNavigationItem } from "@/lib/navigation";
 import { useTheme } from "@/hooks/use-theme";
 import type { UserSummary } from "@/types/api";

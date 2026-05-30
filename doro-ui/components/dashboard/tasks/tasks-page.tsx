@@ -4,70 +4,75 @@ import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import type { Task } from "@/types/api";
 import type { ResourceColumn } from "@/types/dashboard";
+import { useTranslations } from "next-intl";
 
 type TasksPageProps = {
   tasks: Task[];
   apiError?: string | null;
 };
 
-function taskStatusLabel(status: Task["status"]) {
+function TaskStatusBadge({ status }: { status: Task["status"] }) {
+  const t = useTranslations("common.status");
+
   if (status === "running" || status === "queued") {
-    return <Badge>{status === "running" ? "运行中" : "排队中"}</Badge>;
+    return <Badge>{status === "running" ? t("running") : t("queued")}</Badge>;
   }
 
   if (status === "waiting_approval") {
-    return <Badge variant="secondary">等待审批</Badge>;
+    return <Badge variant="secondary">{t("waitingApproval")}</Badge>;
   }
 
   if (status === "succeeded") {
-    return <Badge variant="secondary">已完成</Badge>;
+    return <Badge variant="secondary">{t("completed")}</Badge>;
   }
 
   if (status === "failed" || status === "cancelled") {
-    return <Badge variant="outline">已停止</Badge>;
+    return <Badge variant="outline">{t("stopped")}</Badge>;
   }
 
-  return <Badge variant="outline">草稿</Badge>;
+  return <Badge variant="outline">{t("draft")}</Badge>;
 }
 
-const taskColumns: ResourceColumn<Task>[] = [
-  {
-    key: "title",
-    label: "任务",
-    render: (task) => (
-      <div>
-        <p className="font-medium">{task.title}</p>
-        <p className="text-xs text-muted-foreground">{task.id}</p>
-      </div>
-    ),
-  },
-  {
-    key: "status",
-    label: "状态",
-    render: (task) => taskStatusLabel(task.status),
-  },
-  {
-    key: "steps",
-    label: "步骤",
-    render: (task) => `${task.steps.length} 步`,
-  },
-  {
-    key: "host_id",
-    label: "目标主机",
-    render: (task) => task.host_id ?? "未指定",
-  },
-  {
-    key: "created_at",
-    label: "创建时间",
-  },
-];
-
 export function TasksPage({ tasks, apiError }: TasksPageProps) {
+  const t = useTranslations("resources");
+  const tCommon = useTranslations("common");
+  const taskColumns: ResourceColumn<Task>[] = [
+    {
+      key: "title",
+      label: t("columns.task"),
+      render: (task) => (
+        <div>
+          <p className="font-medium">{task.title}</p>
+          <p className="text-xs text-muted-foreground">{task.id}</p>
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      label: t("columns.status"),
+      render: (task) => <TaskStatusBadge status={task.status} />,
+    },
+    {
+      key: "steps",
+      label: t("columns.steps"),
+      render: (task) => t("tasks.steps", { count: task.steps.length }),
+    },
+    {
+      key: "host_id",
+      label: t("columns.host"),
+      render: (task) => task.host_id ?? t("tasks.unassigned"),
+    },
+    {
+      key: "created_at",
+      label: t("columns.createdAt"),
+    },
+  ];
+
   return (
     <PageContainer>
       {apiError ? (
         <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
+          {tCommon("errors.controlPlaneUnavailable", { error: apiError })}
         </div>
       ) : null}
       <PageSection>
@@ -75,7 +80,7 @@ export function TasksPage({ tasks, apiError }: TasksPageProps) {
           columns={taskColumns}
           rows={tasks}
           actions={[]}
-          emptyText="暂无任务"
+          emptyText={t("tasks.empty")}
         />
       </PageSection>
     </PageContainer>

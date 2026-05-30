@@ -3,6 +3,7 @@ import { SettingList } from "@/components/admin/setting-list";
 import { PageContainer } from "@/components/layout/page-container";
 import { panelSettings } from "@/lib/mock-data";
 import type { SettingsResponse } from "@/types/api";
+import { useTranslations } from "next-intl";
 
 type SettingsPageProps = {
   settings?: SettingsResponse | null;
@@ -10,28 +11,30 @@ type SettingsPageProps = {
 };
 
 export function SettingsPage({ settings, apiError }: SettingsPageProps) {
+  const t = useTranslations("settings");
+  const tCommon = useTranslations("common");
   const controlPlaneSettings = settings
     ? [
         {
           id: "approval-policy",
-          label: "审批策略",
+          label: t("approvalPolicy"),
           value: settings.approval_policy,
-          helper: "由控制平面返回的高风险操作审批策略。",
-          action: "查看",
+          helper: t("approvalPolicyHelper"),
+          action: tCommon("actions.view"),
         },
         {
           id: "agent-transport",
-          label: "Agent 通道",
+          label: t("agentTransport"),
           value: settings.agent_transport,
-          helper: "Agent 与控制平面之间的通信协议。",
-          action: "查看",
+          helper: t("agentTransportHelper"),
+          action: tCommon("actions.view"),
         },
         {
           id: "database",
-          label: "数据库",
+          label: t("database"),
           value: settings.database,
-          helper: "控制平面当前使用的持久化后端。",
-          action: "查看",
+          helper: t("databaseHelper"),
+          action: tCommon("actions.view"),
         },
       ]
     : panelSettings;
@@ -40,7 +43,7 @@ export function SettingsPage({ settings, apiError }: SettingsPageProps) {
     <PageContainer>
       {apiError ? (
         <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
+          {tCommon("errors.controlPlaneUnavailable", { error: apiError })}
         </div>
       ) : null}
       <PageSection>

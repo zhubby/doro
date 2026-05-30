@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ResourceColumn, ResourceStatus } from "@/types/dashboard";
 import type { ReactNode } from "react";
+import { useTranslations } from "next-intl";
 
 type DataTableProps<T extends { id: string }> = {
   columns: ResourceColumn<T>[];
@@ -15,11 +16,14 @@ type DataTableProps<T extends { id: string }> = {
 export function DataTable<T extends { id: string }>({
   columns,
   rows,
-  actions = ["管理"],
+  actions,
   renderActions,
-  emptyText = "暂无数据",
+  emptyText,
 }: DataTableProps<T>) {
-  const hasActions = actions.length > 0 || Boolean(renderActions);
+  const t = useTranslations("common");
+  const visibleActions = actions ?? [t("actions.manage")];
+  const visibleEmptyText = emptyText ?? t("table.empty");
+  const hasActions = visibleActions.length > 0 || Boolean(renderActions);
 
   return (
     <div className="overflow-hidden rounded-lg border">
@@ -35,7 +39,7 @@ export function DataTable<T extends { id: string }>({
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>
               <th className="px-3 py-3 sm:px-4">
-                <span className="sr-only">选择</span>
+                <span className="sr-only">{t("table.select")}</span>
               </th>
               {columns.map((column) => (
                 <th
@@ -46,7 +50,11 @@ export function DataTable<T extends { id: string }>({
                   {column.label}
                 </th>
               ))}
-              {hasActions ? <th className="px-3 py-3 text-right sm:px-4">操作</th> : null}
+              {hasActions ? (
+                <th className="px-3 py-3 text-right sm:px-4">
+                  {t("table.actions")}
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -56,7 +64,7 @@ export function DataTable<T extends { id: string }>({
                   colSpan={columns.length + (hasActions ? 2 : 1)}
                   className="px-4 py-10 text-center text-muted-foreground"
                 >
-                  {emptyText}
+                  {visibleEmptyText}
                 </td>
               </tr>
             ) : (
@@ -82,7 +90,7 @@ export function DataTable<T extends { id: string }>({
                       <div className="flex justify-end gap-2">
                         {renderActions
                           ? renderActions(row)
-                          : actions.map((action) => (
+                          : visibleActions.map((action) => (
                               <Button key={action} variant="outline" size="sm">
                                 {action}
                               </Button>
@@ -109,21 +117,23 @@ export function TruncatedText({ value }: { value: string }) {
 }
 
 export function ResourceStatusBadge({ status }: { status: ResourceStatus }) {
+  const t = useTranslations("common.status");
+
   if (status === "running") {
-    return <Badge className="min-w-14 justify-center">运行中</Badge>;
+    return <Badge className="min-w-14 justify-center">{t("running")}</Badge>;
   }
 
   if (status === "warning") {
     return (
       <Badge variant="secondary" className="min-w-14 justify-center">
-        需关注
+        {t("warning")}
       </Badge>
     );
   }
 
   return (
     <Badge variant="outline" className="min-w-14 justify-center">
-      已停止
+      {t("stopped")}
     </Badge>
   );
 }

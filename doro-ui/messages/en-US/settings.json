@@ -1,0 +1,11 @@
+{
+  "approvalPolicy": "Approval policy",
+  "approvalPolicyHelper": "High-risk operation approval policy returned by the control plane.",
+  "agentTransport": "Agent transport",
+  "agentTransportHelper": "Communication protocol between agents and the control plane.",
+  "database": "Database",
+  "databaseHelper": "Persistence backend currently used by the control plane.",
+  "language": "Language",
+  "languageHelper": "Current interface language.",
+  "languageUpdated": "Language updated."
+}

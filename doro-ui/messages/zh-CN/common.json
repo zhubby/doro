@@ -1,0 +1,83 @@
+{
+  "brand": {
+    "panel": "Doro Panel",
+    "localConsole": "本地控制台"
+  },
+  "actions": {
+    "approve": "通过",
+    "backup": "备份",
+    "cancel": "取消",
+    "configure": "配置",
+    "connect": "连接",
+    "console": "控制台",
+    "create": "创建",
+    "delete": "删除",
+    "disconnect": "断开",
+    "edit": "编辑",
+    "enable": "启用",
+    "disable": "停用",
+    "importConfig": "导入配置",
+    "install": "安装",
+    "logs": "日志",
+    "manage": "管理",
+    "refresh": "刷新",
+    "reject": "拒绝",
+    "restart": "重启",
+    "run": "运行",
+    "search": "搜索",
+    "settings": "设置",
+    "snapshot": "快照",
+    "start": "启动",
+    "stop": "停止",
+    "upgrade": "升级",
+    "view": "查看",
+    "close": "关闭"
+  },
+  "table": {
+    "actions": "操作",
+    "empty": "暂无数据",
+    "select": "选择"
+  },
+  "status": {
+    "all": "全部",
+    "approved": "已批准",
+    "available": "可安装",
+    "cancelled": "已取消",
+    "completed": "已完成",
+    "draft": "草稿",
+    "expired": "已过期",
+    "failed": "已失败",
+    "installed": "已安装",
+    "offline": "离线",
+    "online": "在线",
+    "pending": "待审批",
+    "queued": "排队中",
+    "rejected": "已拒绝",
+    "running": "运行中",
+    "stopped": "已停止",
+    "unknown": "未知",
+    "upgrade": "可升级",
+    "warning": "需关注",
+    "waitingApproval": "等待审批"
+  },
+  "errors": {
+    "authFailed": "认证失败",
+    "controlPlaneUnavailable": "控制平面暂不可用：{error}",
+    "notSignedIn": "未登录"
+  },
+  "theme": {
+    "toLight": "切换到浅色主题",
+    "toDark": "切换到深色主题"
+  },
+  "language": {
+    "label": "语言",
+    "zh-CN": "简体中文",
+    "en-US": "English"
+  },
+  "command": {
+    "title": "命令面板"
+  },
+  "relativeTime": {
+    "now": "刚刚"
+  }
+}

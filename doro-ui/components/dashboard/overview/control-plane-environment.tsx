@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Server, ShieldCheck } from "lucide-react";
+import { useLocale, useTranslations } from "next-intl";
 
 import { PageSection } from "@/components/admin/page-section";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +13,7 @@ type ControlPlaneEnvironmentProps = {
   className?: string;
 };
 
-function formatDateTime(value: string | null) {
+function formatDateTime(value: string | null, locale: string) {
   if (!value) {
     return "-";
   }
@@ -22,7 +23,7 @@ function formatDateTime(value: string | null) {
     return value;
   }
 
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(locale, {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
@@ -33,7 +34,7 @@ function formatDateTime(value: string | null) {
   }).format(date);
 }
 
-function formatDuration(totalSeconds: number) {
+function formatDuration(totalSeconds: number, locale: string) {
   if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
     return "-";
   }
@@ -43,7 +44,11 @@ function formatDuration(totalSeconds: number) {
   const minutes = Math.floor((totalSeconds % 3_600) / 60);
   const seconds = Math.floor(totalSeconds % 60);
 
-  return `${days}天 ${hours}小时 ${minutes}分钟 ${seconds}秒`;
+  if (locale === "zh-CN") {
+    return `${days}天 ${hours}小时 ${minutes}分钟 ${seconds}秒`;
+  }
+
+  return `${days}d ${hours}h ${minutes}m ${seconds}s`;
 }
 
 function runtimeSeconds(environment: ControlPlaneEnvironment | null, now: Date) {
@@ -66,31 +71,33 @@ export function ControlPlaneEnvironmentPanel({
   className,
 }: ControlPlaneEnvironmentProps) {
   const [now, setNow] = useState(() => new Date());
+  const locale = useLocale();
+  const t = useTranslations("dashboard.environment");
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
 
   const rows = [
-    ["主机名称", environment?.hostname],
-    ["发行版本", environment?.os_version],
-    ["内核版本", environment?.kernel_version],
-    ["系统类型", environment?.architecture],
-    ["主机地址", environment?.host_address],
-    ["启动时间", formatDateTime(environment?.booted_at ?? null)],
-    ["运行时间", formatDuration(runtimeSeconds(environment, now))],
+    [t("hostname"), environment?.hostname],
+    [t("osVersion"), environment?.os_version],
+    [t("kernelVersion"), environment?.kernel_version],
+    [t("architecture"), environment?.architecture],
+    [t("hostAddress"), environment?.host_address],
+    [t("bootedAt"), formatDateTime(environment?.booted_at ?? null, locale)],
+    [t("uptime"), formatDuration(runtimeSeconds(environment, now), locale)],
   ];
 
   return (
     <PageSection
-      title="控制平面环境"
-      description="control-plane 所在主机状态"
+      title={t("title")}
+      description={t("description")}
       className={className}
       contentClassName="flex flex-1 flex-col"
       toolbar={
         <Badge variant="outline" className="gap-1.5">
           <ShieldCheck className="size-3.5" aria-hidden="true" />
-          本机
+          {t("local")}
         </Badge>
       }
     >
@@ -101,12 +108,12 @@ export function ControlPlaneEnvironmentPanel({
           </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-medium">
-              {environment?.hostname ?? "等待控制平面信息"}
+              {environment?.hostname ?? t("waiting")}
             </p>
             <p className="mt-1 truncate text-xs text-muted-foreground">
               {environment
                 ? `${environment.os_version} / ${environment.architecture}`
-                : "环境信息暂不可用"}
+                : t("unavailable")}
             </p>
           </div>
         </div>

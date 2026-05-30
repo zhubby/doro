@@ -1,0 +1,83 @@
+{
+  "brand": {
+    "panel": "Doro Panel",
+    "localConsole": "Local console"
+  },
+  "actions": {
+    "approve": "Approve",
+    "backup": "Back up",
+    "cancel": "Cancel",
+    "configure": "Configure",
+    "connect": "Connect",
+    "console": "Console",
+    "create": "Create",
+    "delete": "Delete",
+    "disconnect": "Disconnect",
+    "edit": "Edit",
+    "enable": "Enable",
+    "disable": "Disable",
+    "importConfig": "Import config",
+    "install": "Install",
+    "logs": "Logs",
+    "manage": "Manage",
+    "refresh": "Refresh",
+    "reject": "Reject",
+    "restart": "Restart",
+    "run": "Run",
+    "search": "Search",
+    "settings": "Settings",
+    "snapshot": "Snapshot",
+    "start": "Start",
+    "stop": "Stop",
+    "upgrade": "Upgrade",
+    "view": "View",
+    "close": "Close"
+  },
+  "table": {
+    "actions": "Actions",
+    "empty": "No data",
+    "select": "Select"
+  },
+  "status": {
+    "all": "All",
+    "approved": "Approved",
+    "available": "Available",
+    "cancelled": "Cancelled",
+    "completed": "Completed",
+    "draft": "Draft",
+    "expired": "Expired",
+    "failed": "Failed",
+    "installed": "Installed",
+    "offline": "Offline",
+    "online": "Online",
+    "pending": "Pending",
+    "queued": "Queued",
+    "rejected": "Rejected",
+    "running": "Running",
+    "stopped": "Stopped",
+    "unknown": "Unknown",
+    "upgrade": "Upgradeable",
+    "warning": "Needs attention",
+    "waitingApproval": "Waiting approval"
+  },
+  "errors": {
+    "authFailed": "Authentication failed",
+    "controlPlaneUnavailable": "Control plane unavailable: {error}",
+    "notSignedIn": "Not signed in"
+  },
+  "theme": {
+    "toLight": "Switch to light theme",
+    "toDark": "Switch to dark theme"
+  },
+  "language": {
+    "label": "Language",
+    "zh-CN": "简体中文",
+    "en-US": "English"
+  },
+  "command": {
+    "title": "Command panel"
+  },
+  "relativeTime": {
+    "now": "Just now"
+  }
+}

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Command as CommandPrimitive } from "cmdk";
 import { Search } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import {
   Dialog,
@@ -32,13 +33,15 @@ type CommandDialogProps = React.ComponentPropsWithoutRef<typeof Dialog> & {
 
 const CommandDialog = ({
   children,
-  title = "命令面板",
+  title,
   ...props
 }: CommandDialogProps) => {
+  const t = useTranslations("common.command");
+
   return (
     <Dialog {...props}>
       <DialogContent className="overflow-hidden p-0 shadow-lg">
-        <DialogTitle className="sr-only">{title}</DialogTitle>
+        <DialogTitle className="sr-only">{title ?? t("title")}</DialogTitle>
         <Command>{children}</Command>
       </DialogContent>
     </Dialog>

@@ -6,17 +6,18 @@ import { PageSection } from "@/components/admin/page-section";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { Application, AppState } from "@/types/dashboard";
+import { useTranslations } from "next-intl";
 
-function getApplicationAction(state: AppState) {
+function getApplicationAction(state: AppState, t: ReturnType<typeof useTranslations>) {
   if (state === "running") {
-    return "管理";
+    return t("actions.manage");
   }
 
   if (state === "installed" || state === "upgrade") {
-    return state === "upgrade" ? "升级" : "启动";
+    return state === "upgrade" ? t("actions.upgrade") : t("actions.start");
   }
 
-  return "安装";
+  return t("actions.install");
 }
 
 function getNextApplicationState(state: AppState): AppState {
@@ -32,19 +33,21 @@ function getNextApplicationState(state: AppState): AppState {
 }
 
 export function StatusBadge({ state }: { state: AppState }) {
+  const t = useTranslations("common.status");
+
   if (state === "running") {
-    return <Badge>运行中</Badge>;
+    return <Badge>{t("running")}</Badge>;
   }
 
   if (state === "installed") {
-    return <Badge variant="secondary">已安装</Badge>;
+    return <Badge variant="secondary">{t("installed")}</Badge>;
   }
 
   if (state === "upgrade") {
-    return <Badge variant="secondary">可升级</Badge>;
+    return <Badge variant="secondary">{t("upgrade")}</Badge>;
   }
 
-  return <Badge variant="outline">可安装</Badge>;
+  return <Badge variant="outline">{t("available")}</Badge>;
 }
 
 type ApplicationListProps = {
@@ -66,6 +69,8 @@ export function ApplicationList({
   className,
   contentClassName,
 }: ApplicationListProps) {
+  const tCommon = useTranslations("common");
+  const tResources = useTranslations("resources.applications");
   const [applicationStates, setApplicationStates] = useState(
     () => new Map(applications.map((application) => [application.id, application.state])),
   );
@@ -94,7 +99,7 @@ export function ApplicationList({
       toolbar={
         compact ? (
           <Button size="sm" variant="outline">
-            全部
+            {tResources("all")}
           </Button>
         ) : null
       }
@@ -141,7 +146,7 @@ export function ApplicationList({
                   )
                 }
               >
-                {getApplicationAction(state)}
+                {getApplicationAction(state, tCommon)}
               </Button>
             </div>
           );

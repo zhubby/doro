@@ -1,0 +1,74 @@
+{
+  "ariaLabel": "Control panel navigation",
+  "search": {
+    "open": "Open search panel",
+    "title": "Search navigation",
+    "placeholder": "Search pages, modules, or capabilities...",
+    "empty": "No matching results.",
+    "group": "Navigation"
+  },
+  "userMenu": {
+    "open": "Open user menu",
+    "profile": "Profile",
+    "settings": "Settings",
+    "logout": "Log out"
+  },
+  "items": {
+    "overview": {
+      "label": "Overview",
+      "description": "See sites, databases, containers, and server health in one place."
+    },
+    "hosts": {
+      "label": "Hosts",
+      "description": "Review enrolled agents, host status, and declared capabilities."
+    },
+    "tasks": {
+      "label": "Tasks",
+      "description": "Track task plans, execution steps, and results."
+    },
+    "approvals": {
+      "label": "Approvals",
+      "description": "Handle high-risk host actions and AI plan approvals."
+    },
+    "apps": {
+      "label": "Virtual machines",
+      "description": "Manage VM lifecycle, images, hosts, and resource allocation."
+    },
+    "ai": {
+      "label": "AI",
+      "description": "Manage agent runtime environments and task capabilities."
+    },
+    "terminal": {
+      "label": "Terminal",
+      "description": "Choose an agent and run audited terminal commands."
+    },
+    "websites": {
+      "label": "Websites",
+      "description": "Inspect websites, domains, certificates, and service health."
+    },
+    "databases": {
+      "label": "Databases",
+      "description": "Manage database instances, backups, and connection state."
+    },
+    "containers": {
+      "label": "Containers",
+      "description": "Manage container lifecycle, images, and resource usage."
+    },
+    "system": {
+      "label": "System",
+      "description": "Inspect host resources, disks, network, and security state."
+    },
+    "logs": {
+      "label": "Logs",
+      "description": "Review control-plane, agent, and task logs in one place."
+    },
+    "cron": {
+      "label": "Scheduled tasks",
+      "description": "Review backup, inspection, and automation jobs."
+    },
+    "settings": {
+      "label": "Panel settings",
+      "description": "Configure theme, security entrypoints, sessions, and API access."
+    }
+  }
+}

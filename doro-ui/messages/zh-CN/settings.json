@@ -1,0 +1,11 @@
+{
+  "approvalPolicy": "审批策略",
+  "approvalPolicyHelper": "由控制平面返回的高风险操作审批策略。",
+  "agentTransport": "Agent 通道",
+  "agentTransportHelper": "Agent 与控制平面之间的通信协议。",
+  "database": "数据库",
+  "databaseHelper": "控制平面当前使用的持久化后端。",
+  "language": "语言",
+  "languageHelper": "当前界面语言。",
+  "languageUpdated": "语言已更新。"
+}

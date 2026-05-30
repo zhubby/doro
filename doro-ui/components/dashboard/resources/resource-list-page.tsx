@@ -11,6 +11,7 @@ import { Toolbar } from "@/components/admin/toolbar";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import type { ResourceColumn, ResourceStatus } from "@/types/dashboard";
+import { useTranslations } from "next-intl";
 
 type ResourceListPageProps<T extends { id: string; status: ResourceStatus }> = {
   title: string;
@@ -27,13 +28,6 @@ type ResourceListPageProps<T extends { id: string; status: ResourceStatus }> = {
   showStatusChips?: boolean;
 };
 
-const labels: Record<ResourceStatus | "all", string> = {
-  all: "全部",
-  running: "运行中",
-  stopped: "已停止",
-  warning: "需关注",
-};
-
 export function ResourceListPage<T extends { id: string; status: ResourceStatus }>({
   title: _title,
   description: _description,
@@ -42,13 +36,16 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
   createLabel,
   importLabel,
   batchActions = [],
-  rowActions = ["管理", "日志"],
+  rowActions,
   notice,
   filteredRows: controlledRows,
   toolbarRight,
   showStatusChips = true,
 }: ResourceListPageProps<T>) {
   const [activeStatus, setActiveStatus] = useState<ResourceStatus | "all">("all");
+  const t = useTranslations("common.status");
+  const tResources = useTranslations("resources.list");
+  const tActions = useTranslations("common.actions");
   const filters = useMemo<FilterChip[]>(() => {
     const statuses: Array<ResourceStatus | "all"> = [
       "all",
@@ -59,13 +56,14 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
 
     return statuses.map((status) => ({
       value: status,
-      label: labels[status],
+      label: status === "all" ? t("all") : t(status),
       count:
         status === "all"
           ? rows.length
           : rows.filter((row) => row.status === status).length,
     }));
-  }, [rows]);
+  }, [rows, t]);
+  const visibleRowActions = rowActions ?? [tActions("manage"), tActions("logs")];
   const localFilteredRows = useMemo(() => {
     if (activeStatus === "all") {
       return rows;
@@ -88,7 +86,7 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
         </PageSection>
       ) : null}
 
-      <PageSection contentClassName="space-y-4">
+      <PageSection title={_title} description={_description} contentClassName="space-y-4">
         <Toolbar
           left={
             <>
@@ -105,18 +103,22 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
             <>
               <Button variant="outline">
                 <Search className="size-4" aria-hidden="true" />
-                搜索
+                {tResources("search")}
               </Button>
-              <Button variant="outline" size="icon" aria-label="刷新">
+              <Button variant="outline" size="icon" aria-label={tResources("refresh")}>
                 <RefreshCw className="size-4" aria-hidden="true" />
               </Button>
-              <Button variant="outline" size="icon" aria-label="列设置">
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={tResources("columnSettings")}
+              >
                 <Settings2 className="size-4" aria-hidden="true" />
               </Button>
             </>
           )}
         />
-        <DataTable columns={columns} rows={tableRows} actions={rowActions} />
+        <DataTable columns={columns} rows={tableRows} actions={visibleRowActions} />
       </PageSection>
     </PageContainer>
   );

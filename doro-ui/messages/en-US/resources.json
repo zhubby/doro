@@ -1,0 +1,116 @@
+{
+  "columns": {
+    "agent": "Agent",
+    "backup": "Latest backup",
+    "createdAt": "Created",
+    "expiresAt": "Expires",
+    "host": "Target host",
+    "image": "Image",
+    "lastRun": "Last run",
+    "lastSeen": "Last heartbeat",
+    "memory": "Memory",
+    "model": "Model",
+    "name": "Name",
+    "primaryDomain": "Primary domain",
+    "reason": "Reason",
+    "retention": "Retention",
+    "rootPath": "Site path / proxy target",
+    "runtime": "Runtime",
+    "schedule": "Schedule",
+    "size": "Data size",
+    "ssl": "SSL",
+    "status": "Status",
+    "steps": "Steps",
+    "tags": "Tags",
+    "task": "Task",
+    "traffic": "Traffic",
+    "type": "Type",
+    "updatedAt": "Updated",
+    "version": "Version"
+  },
+  "list": {
+    "search": "Search",
+    "refresh": "Refresh",
+    "columnSettings": "Column settings"
+  },
+  "tasks": {
+    "empty": "No tasks",
+    "steps": "{count} steps",
+    "unassigned": "Unassigned"
+  },
+  "cron": {
+    "title": "Scheduled tasks",
+    "description": "Shows backup, inspection, cleanup, and other automation jobs in a standard task list.",
+    "create": "Create task",
+    "run": "Run",
+    "enable": "Enable",
+    "disable": "Disable"
+  },
+  "websites": {
+    "title": "Websites",
+    "description": "Shows domains, SSL, runtime, and operations for website entries.",
+    "create": "Create website",
+    "renewCertificate": "Renew certificate"
+  },
+  "databases": {
+    "title": "Databases",
+    "description": "Shows database instances, backups, and connection status in the standard list layout.",
+    "create": "Create database"
+  },
+  "containers": {
+    "title": "Containers",
+    "description": "Container runtime state collected one-way from agents.",
+    "overviewTitle": "Containers",
+    "overviewDescription": "Running containers and resource usage",
+    "allAgents": "All agents",
+    "agentFilter": "Agent filter",
+    "statusFilter": "Status filter",
+    "search": "Search containers",
+    "placeholder": "Search name or hash",
+    "empty": "No connected containers"
+  },
+  "apps": {
+    "create": "Create VM",
+    "batchStart": "Batch start",
+    "batchStop": "Batch stop",
+    "snapshot": "Create snapshot",
+    "viewSettings": "View settings",
+    "console": "Console",
+    "uptime": "Uptime: {value}",
+    "updatedAt": "Updated: {value}",
+    "stats": {
+      "machines": "Virtual machines",
+      "machinesHelper": "Across 2 hosts",
+      "running": "Running",
+      "runningHelper": "Console ready",
+      "warning": "Needs attention",
+      "warningHelper": "Resource or snapshot policy issue",
+      "memory": "Memory",
+      "disk": "Disk"
+    },
+    "networkTitle": "Network and images",
+    "networkDescription": "Default VM network, image templates, and host pool usage.",
+    "defaultNetwork": "Default network",
+    "imageCache": "Image cache",
+    "hostPool": "Host pool",
+    "dhcpEnabled": "10.0.1.0/24 · DHCP enabled",
+    "imageTemplates": "6 templates",
+    "hostPoolValue": "2 schedulable hosts",
+    "hostPoolHelper": "14 vCPU / 38 GB memory remaining"
+  },
+  "ai": {
+    "agent": "Agent",
+    "runtimeTitle": "Runtime configuration",
+    "runtimeDescription": "Current agent execution environment.",
+    "toolCallsEnabled": "Tool calls enabled",
+    "queueIdle": "Local task queue idle",
+    "modelRoutingDefault": "Model routing uses default policy",
+    "normal": "Normal",
+    "create": "Create agent",
+    "runTask": "Run task",
+    "modelSettings": "Model settings"
+  },
+  "applications": {
+    "all": "All"
+  }
+}

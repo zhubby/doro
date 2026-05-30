@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { Plug, Server, Terminal as TerminalIcon, Unplug } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
@@ -33,6 +34,8 @@ function hasShellCapability(host: Host) {
 }
 
 export function TerminalPage() {
+  const t = useTranslations("dashboard.terminal");
+  const tCommon = useTranslations("common");
   const terminalNode = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
@@ -65,7 +68,7 @@ export function TerminalPage() {
     if (terminalNode.current) {
       terminal.open(terminalNode.current);
       requestAnimationFrame(() => fitTerminal(fitAddon));
-      terminal.writeln("选择 Agent 后连接终端。");
+      terminal.writeln(t("chooseAgent"));
     }
     function handleResize() {
       fitTerminal(fitAddon);
@@ -95,7 +98,7 @@ export function TerminalPage() {
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,7 +114,7 @@ export function TerminalPage() {
         setSelectedHostId((current) => current || shellHosts[0]?.id || "");
         setError(null);
       } else {
-        setError(result.error ?? "无法加载 Agent");
+        setError(result.error ?? t("loadingAgentsFailed"));
       }
       setLoading(false);
     }
@@ -119,7 +122,7 @@ export function TerminalPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId) ?? null,
@@ -134,7 +137,7 @@ export function TerminalPage() {
     }
     setError(null);
     terminalRef.current?.reset();
-    terminalRef.current?.writeln("正在连接 Agent 终端...");
+    terminalRef.current?.writeln(t("connecting"));
     fitTerminal(fitAddonRef.current);
     const cols = terminalRef.current?.cols ?? TERMINAL_COLS;
     const rows = terminalRef.current?.rows ?? TERMINAL_ROWS;
@@ -144,7 +147,7 @@ export function TerminalPage() {
       rows,
     );
     if (!url) {
-      setError("未登录");
+      setError(tCommon("errors.notSignedIn"));
       return;
     }
     const socket = new WebSocket(url);
@@ -158,14 +161,14 @@ export function TerminalPage() {
       terminalRef.current?.write(String(event.data));
     };
     socket.onerror = () => {
-      const message = "终端连接失败";
+      const message = t("connectionFailed");
       setError(message);
       terminalRef.current?.writeln(`\r\n[${message}]`);
     };
     socket.onclose = () => {
       setConnected(false);
       socketRef.current = null;
-      terminalRef.current?.writeln("\r\n[终端已断开]");
+      terminalRef.current?.writeln(`\r\n[${t("disconnected")}]`);
     };
   }
 
@@ -191,7 +194,7 @@ export function TerminalPage() {
               className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               disabled={loading || connected}
             >
-              {hosts.length === 0 ? <option value="">暂无可用 Agent</option> : null}
+              {hosts.length === 0 ? <option value="">{t("noAgents")}</option> : null}
               {hosts.map((host) => (
                 <option key={host.id} value={host.id}>
                   {hostLabel(host)}
@@ -200,11 +203,19 @@ export function TerminalPage() {
             </select>
             <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">
-                {selectedHost ? hostLabel(selectedHost) : "未选择 Agent"}
+                {selectedHost ? hostLabel(selectedHost) : t("unselected")}
               </p>
-              <p className="mt-1">状态：{selectedHost?.status ?? "unknown"}</p>
-              <p className="mt-1">主机：{selectedHost?.hostname ?? "-"}</p>
-              <p className="mt-1">终端：{connected ? "已连接" : "未连接"}</p>
+              <p className="mt-1">
+                {t("status", { value: selectedHost?.status ?? "unknown" })}
+              </p>
+              <p className="mt-1">
+                {t("host", { value: selectedHost?.hostname ?? "-" })}
+              </p>
+              <p className="mt-1">
+                {t("terminal", {
+                  value: connected ? t("connected") : t("notConnected"),
+                })}
+              </p>
             </div>
             <Button
               type="button"
@@ -218,7 +229,7 @@ export function TerminalPage() {
               ) : (
                 <Plug className="size-4" aria-hidden="true" />
               )}
-              {connected ? "断开" : "连接"}
+              {connected ? tCommon("actions.disconnect") : tCommon("actions.connect")}
             </Button>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>

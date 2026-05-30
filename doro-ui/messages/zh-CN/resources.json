@@ -1,0 +1,116 @@
+{
+  "columns": {
+    "agent": "Agent",
+    "backup": "最近备份",
+    "createdAt": "创建时间",
+    "expiresAt": "有效期",
+    "host": "目标主机",
+    "image": "镜像",
+    "lastRun": "最近运行",
+    "lastSeen": "最后心跳",
+    "memory": "内存",
+    "model": "模型",
+    "name": "名称",
+    "primaryDomain": "主域名",
+    "reason": "原因",
+    "retention": "保留策略",
+    "rootPath": "站点目录 / 代理目标",
+    "runtime": "运行环境",
+    "schedule": "执行周期",
+    "size": "数据量",
+    "ssl": "SSL",
+    "status": "状态",
+    "steps": "步骤",
+    "tags": "标签",
+    "task": "任务",
+    "traffic": "流量",
+    "type": "类型",
+    "updatedAt": "更新时间",
+    "version": "版本"
+  },
+  "list": {
+    "search": "搜索",
+    "refresh": "刷新",
+    "columnSettings": "列设置"
+  },
+  "tasks": {
+    "empty": "暂无任务",
+    "steps": "{count} 步",
+    "unassigned": "未指定"
+  },
+  "cron": {
+    "title": "计划任务",
+    "description": "展示备份、巡检、清理等自动化任务，沿用 1Panel 的任务列表模式。",
+    "create": "创建任务",
+    "run": "执行",
+    "enable": "启用",
+    "disable": "停用"
+  },
+  "websites": {
+    "title": "网站",
+    "description": "复刻 1Panel 网站列表的域名、SSL、运行环境和操作入口。",
+    "create": "创建网站",
+    "renewCertificate": "续签证书"
+  },
+  "databases": {
+    "title": "数据库",
+    "description": "复用标准列表模式展示数据库实例、备份和连接状态。",
+    "create": "创建数据库"
+  },
+  "containers": {
+    "title": "容器",
+    "description": "来自 Agent 单向采集的容器运行状态。",
+    "overviewTitle": "容器",
+    "overviewDescription": "运行中的容器与资源占用",
+    "allAgents": "全部 Agent",
+    "agentFilter": "Agent 筛选",
+    "statusFilter": "状态筛选",
+    "search": "搜索容器",
+    "placeholder": "搜索名称或 Hash",
+    "empty": "暂无已连接容器"
+  },
+  "apps": {
+    "create": "创建虚拟机",
+    "batchStart": "批量启动",
+    "batchStop": "批量停止",
+    "snapshot": "创建快照",
+    "viewSettings": "视图设置",
+    "console": "控制台",
+    "uptime": "运行时间：{value}",
+    "updatedAt": "更新时间：{value}",
+    "stats": {
+      "machines": "虚拟机",
+      "machinesHelper": "跨 2 台宿主机",
+      "running": "运行中",
+      "runningHelper": "可直接进入控制台",
+      "warning": "需关注",
+      "warningHelper": "资源或快照策略异常",
+      "memory": "内存",
+      "disk": "磁盘"
+    },
+    "networkTitle": "网络与镜像",
+    "networkDescription": "虚拟机默认网络、镜像模板和宿主机池的占用情况。",
+    "defaultNetwork": "默认网络",
+    "imageCache": "镜像缓存",
+    "hostPool": "宿主机池",
+    "dhcpEnabled": "10.0.1.0/24 · DHCP 已启用",
+    "imageTemplates": "6 个模板",
+    "hostPoolValue": "2 台可调度",
+    "hostPoolHelper": "剩余 14 vCPU / 38 GB 内存"
+  },
+  "ai": {
+    "agent": "智能体",
+    "runtimeTitle": "运行配置",
+    "runtimeDescription": "当前智能体执行环境概览。",
+    "toolCallsEnabled": "工具调用已开启",
+    "queueIdle": "本地任务队列空闲",
+    "modelRoutingDefault": "模型路由使用默认策略",
+    "normal": "正常",
+    "create": "创建智能体",
+    "runTask": "运行任务",
+    "modelSettings": "模型设置"
+  },
+  "applications": {
+    "all": "全部"
+  }
+}

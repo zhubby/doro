@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { AppShell } from "@/components/layout/app-shell";
+import { usePathname, useRouter } from "@/i18n/navigation";
 import { currentUser } from "@/lib/control-plane-api";
 import type { UserSummary } from "@/types/api";
 
@@ -16,6 +17,7 @@ type AuthGateProps = {
 export function AuthGate({ children }: AuthGateProps) {
   const router = useRouter();
   const pathname = usePathname();
+  const t = useTranslations("auth");
   const [state, setState] = useState<AuthState>("checking");
   const [user, setUser] = useState<UserSummary | null>(null);
 
@@ -42,7 +44,7 @@ export function AuthGate({ children }: AuthGateProps) {
   if (state === "checking") {
     return (
       <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
-        正在验证登录状态...
+        {t("checking")}
       </div>
     );
   }

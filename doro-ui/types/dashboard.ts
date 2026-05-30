@@ -1,9 +1,22 @@
 import type { ElementType } from "react";
 
 export type NavigationItem = {
-  label: string;
+  id:
+    | "overview"
+    | "hosts"
+    | "tasks"
+    | "approvals"
+    | "apps"
+    | "ai"
+    | "terminal"
+    | "websites"
+    | "databases"
+    | "containers"
+    | "system"
+    | "logs"
+    | "cron"
+    | "settings";
   href: string;
-  description: string;
   icon: ElementType;
   count?: number;
 };
