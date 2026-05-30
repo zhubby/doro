@@ -5,23 +5,32 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DockerConfig {
+pub struct DockerProviderConfig {
     pub socket_path: Option<String>,
 }
 
-impl DockerConfig {
+impl DockerProviderConfig {
     pub fn new(socket_path: Option<String>) -> Self {
         Self { socket_path }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DockerHealth {
+pub struct ContainerRuntimeInfo {
     pub id: Option<String>,
     pub server_version: Option<String>,
     pub docker_root_dir: Option<String>,
     pub containers: Option<i64>,
     pub images: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContainerRuntimeSnapshot {
+    pub runtime: String,
+    pub daemon: Option<ContainerRuntimeInfo>,
+    pub containers: Vec<ContainerSummary>,
+    pub networks: Vec<NetworkSummary>,
+    pub volumes: Vec<VolumeSummary>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -209,16 +218,16 @@ pub struct VolumeOperationResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "resource", content = "command", rename_all = "snake_case")]
-pub enum DockerCommand {
-    Image(DockerImageCommand),
-    Container(DockerContainerCommand),
-    Network(DockerNetworkCommand),
-    Volume(DockerVolumeCommand),
+pub enum ContainerRuntimeCommand {
+    Image(ContainerImageCommand),
+    Container(ContainerCommand),
+    Network(ContainerNetworkCommand),
+    Volume(ContainerVolumeCommand),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
-pub enum DockerImageCommand {
+pub enum ContainerImageCommand {
     List,
     Inspect { reference: String },
     Pull(PullImageRequest),
@@ -227,7 +236,7 @@ pub enum DockerImageCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
-pub enum DockerContainerCommand {
+pub enum ContainerCommand {
     List { filter: ContainerListFilter },
     Inspect { id_or_name: String },
     Create(CreateContainerRequest),
@@ -239,7 +248,7 @@ pub enum DockerContainerCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
-pub enum DockerNetworkCommand {
+pub enum ContainerNetworkCommand {
     List,
     Create(CreateNetworkRequest),
     Remove { name_or_id: String },
@@ -249,7 +258,7 @@ pub enum DockerNetworkCommand {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
-pub enum DockerVolumeCommand {
+pub enum ContainerVolumeCommand {
     List,
     Inspect { name: String },
     Create(CreateVolumeRequest),
@@ -257,24 +266,24 @@ pub enum DockerVolumeCommand {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DockerCommandEnvelope {
+pub struct ContainerRuntimeCommandEnvelope {
     pub command_id: Uuid,
     pub task_id: Option<Uuid>,
     pub step_id: Option<Uuid>,
-    pub command: DockerCommand,
+    pub command: ContainerRuntimeCommand,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum DockerCommandStatus {
+pub enum ContainerCommandStatus {
     Succeeded,
     Failed,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct DockerCommandResult {
+pub struct ContainerCommandResult {
     pub command_id: Uuid,
-    pub status: DockerCommandStatus,
+    pub status: ContainerCommandStatus,
     pub message: String,
     pub details: Value,
 }

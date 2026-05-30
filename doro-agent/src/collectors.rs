@@ -1,4 +1,7 @@
 use chrono::Utc;
+use doro_container::ContainerRuntimeSnapshot;
+use doro_container::DockerProvider;
+use doro_container::DockerProviderConfig;
 use doro_protocol::MetricSnapshot;
 use serde_json::Value;
 use serde_json::json;
@@ -29,7 +32,7 @@ pub struct MetricsCapture {
 #[derive(Debug, Clone)]
 pub enum CollectorEvent {
     Metrics(MetricsCapture),
-    Containers(Value),
+    Containers(ContainerRuntimeSnapshot),
     Error {
         collector: &'static str,
         message: String,
@@ -64,8 +67,8 @@ impl LocalCollectors {
         let mut events = vec![CollectorEvent::Metrics(self.collect_metrics(host_id))];
 
         if self.config.container_metrics_enabled {
-            match crate::docker::collect_snapshot(self.config.docker_socket_path.as_deref()).await {
-                Ok(payload) => events.push(CollectorEvent::Containers(payload)),
+            match collect_container_snapshot(self.config.docker_socket_path.clone()).await {
+                Ok(snapshot) => events.push(CollectorEvent::Containers(snapshot)),
                 Err(error) => events.push(CollectorEvent::Error {
                     collector: "containers",
                     message: error.to_string(),
@@ -282,6 +285,13 @@ impl LocalCollectors {
                 .collect::<Vec<_>>()
         )
     }
+}
+
+async fn collect_container_snapshot(
+    socket_path: Option<String>,
+) -> Result<ContainerRuntimeSnapshot, doro_container::ContainerProviderError> {
+    let provider = DockerProvider::connect(&DockerProviderConfig::new(socket_path))?;
+    provider.snapshot().await
 }
 
 pub fn system_profile() -> Value {

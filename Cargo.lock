@@ -969,12 +969,11 @@ name = "doro-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bollard",
  "chrono",
  "doro-config",
+ "doro-container",
  "doro-protocol",
  "doro-vm",
- "futures-util",
  "nvml-wrapper",
  "portable-pty",
  "serde",
@@ -1028,6 +1027,20 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "toml",
+ "uuid",
+]
+
+[[package]]
+name = "doro-container"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bollard",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
  "uuid",
 ]
 

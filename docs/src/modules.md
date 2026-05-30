@@ -6,7 +6,9 @@
 
 `doro-control-plane` exposes `/api/v1`, owns task orchestration, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
 
-`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional Docker state over Unix sockets, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream.
+`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream.
+
+`doro-container` owns the provider-neutral container runtime boundary. It defines container inventory, lifecycle, image, network, volume, snapshot, and command abstractions, and exports the direct Docker provider backed by Bollard. Docker socket handling, Bollard model conversion, and runtime-specific container/image/network/volume operations belong in this crate rather than in the agent or control plane.
 
 `doro-vm` owns the provider-neutral virtual machine boundary. It defines the virtual machine provider traits, lifecycle/image/snapshot/console abstractions, command envelopes, and the direct QEMU provider. QEMU process arguments, QMP/QGA socket paths, VM state files, image scanning, NAT/bridge validation, and console endpoint construction belong in this crate rather than in the agent or control plane.
 

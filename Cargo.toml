@@ -5,6 +5,7 @@ members = [
     "doro-ai",
     "doro-cli",
     "doro-config",
+    "doro-container",
     "doro-control-plane",
     "doro-protocol",
     "doro-store",
@@ -17,6 +18,7 @@ doro-agent = { path = "doro-agent" }
 doro-ai = { path = "doro-ai" }
 doro-cli = { path = "doro-cli" }
 doro-config = { path = "doro-config" }
+doro-container = { path = "doro-container" }
 doro-control-plane = { path = "doro-control-plane" }
 doro-protocol = { path = "doro-protocol" }
 doro-store = { path = "doro-store" }

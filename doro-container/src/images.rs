@@ -1,5 +1,5 @@
-use super::DockerClient;
-use super::DockerError;
+use super::ContainerProviderError;
+use super::DockerProvider;
 use super::ImageDetail;
 use super::ImageOperationResult;
 use super::ImageSummary;
@@ -12,8 +12,8 @@ use futures_util::stream::StreamExt;
 use serde_json::json;
 use std::collections::HashMap;
 
-impl DockerClient {
-    pub async fn images(&self) -> Result<Vec<ImageSummary>, DockerError> {
+impl DockerProvider {
+    pub async fn images(&self) -> Result<Vec<ImageSummary>, ContainerProviderError> {
         let images = self
             .docker()
             .list_images::<String>(Some(ListImagesOptions {
@@ -34,7 +34,10 @@ impl DockerClient {
             .collect())
     }
 
-    pub async fn inspect_image(&self, reference: &str) -> Result<ImageDetail, DockerError> {
+    pub async fn inspect_image(
+        &self,
+        reference: &str,
+    ) -> Result<ImageDetail, ContainerProviderError> {
         require_identifier(reference, "image reference")?;
         let image = self.docker().inspect_image(reference).await?;
         Ok(ImageDetail {
@@ -50,7 +53,7 @@ impl DockerClient {
     pub async fn pull_image(
         &self,
         request: PullImageRequest,
-    ) -> Result<ImageOperationResult, DockerError> {
+    ) -> Result<ImageOperationResult, ContainerProviderError> {
         require_identifier(&request.reference, "image reference")?;
         let mut stream = self.docker().create_image(
             Some(CreateImageOptions {
@@ -76,7 +79,7 @@ impl DockerClient {
     pub async fn remove_image(
         &self,
         request: RemoveImageRequest,
-    ) -> Result<ImageOperationResult, DockerError> {
+    ) -> Result<ImageOperationResult, ContainerProviderError> {
         require_identifier(&request.reference, "image reference")?;
         let deleted = self
             .docker()
@@ -97,9 +100,11 @@ impl DockerClient {
     }
 }
 
-fn require_identifier(value: &str, field: &'static str) -> Result<(), DockerError> {
+fn require_identifier(value: &str, field: &'static str) -> Result<(), ContainerProviderError> {
     if value.trim().is_empty() {
-        return Err(DockerError::InvalidRequest(format!("{field} is required")));
+        return Err(ContainerProviderError::InvalidRequest(format!(
+            "{field} is required"
+        )));
     }
     Ok(())
 }

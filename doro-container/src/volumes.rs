@@ -1,6 +1,6 @@
+use super::ContainerProviderError;
 use super::CreateVolumeRequest;
-use super::DockerClient;
-use super::DockerError;
+use super::DockerProvider;
 use super::RemoveVolumeRequest;
 use super::VolumeDetail;
 use super::VolumeOperationResult;
@@ -9,8 +9,8 @@ use bollard::volume::CreateVolumeOptions;
 use bollard::volume::RemoveVolumeOptions;
 use serde_json::json;
 
-impl DockerClient {
-    pub async fn volumes(&self) -> Result<Vec<VolumeSummary>, DockerError> {
+impl DockerProvider {
+    pub async fn volumes(&self) -> Result<Vec<VolumeSummary>, ContainerProviderError> {
         let volumes = self.docker().list_volumes::<String>(None).await?;
         Ok(volumes
             .volumes
@@ -27,7 +27,7 @@ impl DockerClient {
             .collect())
     }
 
-    pub async fn inspect_volume(&self, name: &str) -> Result<VolumeDetail, DockerError> {
+    pub async fn inspect_volume(&self, name: &str) -> Result<VolumeDetail, ContainerProviderError> {
         require_identifier(name, "volume name")?;
         let volume = self.docker().inspect_volume(name).await?;
         Ok(VolumeDetail {
@@ -45,7 +45,7 @@ impl DockerClient {
     pub async fn create_volume(
         &self,
         request: CreateVolumeRequest,
-    ) -> Result<VolumeOperationResult, DockerError> {
+    ) -> Result<VolumeOperationResult, ContainerProviderError> {
         require_identifier(&request.name, "volume name")?;
         let driver = if request.driver.trim().is_empty() {
             "local".to_string()
@@ -74,7 +74,7 @@ impl DockerClient {
     pub async fn remove_volume(
         &self,
         request: RemoveVolumeRequest,
-    ) -> Result<VolumeOperationResult, DockerError> {
+    ) -> Result<VolumeOperationResult, ContainerProviderError> {
         require_identifier(&request.name, "volume name")?;
         self.docker()
             .remove_volume(
@@ -92,9 +92,11 @@ impl DockerClient {
     }
 }
 
-fn require_identifier(value: &str, field: &'static str) -> Result<(), DockerError> {
+fn require_identifier(value: &str, field: &'static str) -> Result<(), ContainerProviderError> {
     if value.trim().is_empty() {
-        return Err(DockerError::InvalidRequest(format!("{field} is required")));
+        return Err(ContainerProviderError::InvalidRequest(format!(
+            "{field} is required"
+        )));
     }
     Ok(())
 }

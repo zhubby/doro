@@ -8,12 +8,11 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-bollard = { workspace = true }
 chrono = { workspace = true }
 doro-config = { workspace = true }
+doro-container = { workspace = true }
 doro-protocol = { workspace = true }
 doro-vm = { workspace = true }
-futures-util = { workspace = true }
 nvml-wrapper = { workspace = true, optional = true }
 portable-pty = { workspace = true }
 serde = { workspace = true }

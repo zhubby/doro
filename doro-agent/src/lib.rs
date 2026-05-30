@@ -4,6 +4,11 @@ use collectors::CollectorEvent;
 use collectors::LocalCollectors;
 use collectors::MetricsCapture;
 use collectors::system_profile;
+use doro_container::ContainerProvider;
+use doro_container::ContainerRuntimeSnapshot;
+use doro_container::ContainerSummary;
+use doro_container::DockerProvider;
+use doro_container::DockerProviderConfig;
 use doro_protocol::AgentCapability;
 use doro_protocol::AgentEvent;
 use doro_protocol::CapabilityName;
@@ -44,7 +49,6 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 mod collectors;
-pub mod docker;
 mod terminal;
 
 const INITIAL_RECONNECT_DELAY: Duration = Duration::from_secs(2);
@@ -213,6 +217,42 @@ impl AgentConfig {
 }
 
 #[derive(Clone)]
+struct ContainerRuntime {
+    provider: Result<Arc<dyn ContainerProvider>, String>,
+}
+
+impl std::fmt::Debug for ContainerRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ContainerRuntime")
+    }
+}
+
+impl ContainerRuntime {
+    fn from_config(config: &AgentConfig) -> Option<Self> {
+        if !config.container_metrics_enabled && !config.docker_manage_enabled {
+            return None;
+        }
+        let provider = DockerProvider::connect(&DockerProviderConfig::new(
+            config.docker_socket_path.clone(),
+        ))
+        .map(|provider| Arc::new(provider) as Arc<dyn ContainerProvider>)
+        .map_err(|error| error.to_string());
+        Some(Self { provider })
+    }
+
+    async fn snapshot(
+        &self,
+    ) -> Result<ContainerRuntimeSnapshot, doro_container::ContainerProviderError> {
+        match &self.provider {
+            Ok(provider) => provider.snapshot().await,
+            Err(error) => Err(doro_container::ContainerProviderError::InvalidRequest(
+                format!("failed to initialize container provider: {error}"),
+            )),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct VmRuntime {
     provider: Arc<dyn VirtualMachineProvider>,
 }
@@ -256,13 +296,19 @@ impl VmRuntime {
 #[derive(Debug, Clone)]
 pub struct Agent {
     config: AgentConfig,
+    container_runtime: Option<ContainerRuntime>,
     vm_runtime: Option<VmRuntime>,
 }
 
 impl Agent {
     pub fn new(config: AgentConfig) -> Self {
+        let container_runtime = ContainerRuntime::from_config(&config);
         let vm_runtime = VmRuntime::from_config(&config);
-        Self { config, vm_runtime }
+        Self {
+            config,
+            container_runtime,
+            vm_runtime,
+        }
     }
 
     pub fn host(&self) -> Host {
@@ -396,12 +442,12 @@ impl Agent {
         &self,
         agent_id: Uuid,
         command_id: String,
-        payload: serde_json::Value,
+        snapshot: ContainerRuntimeSnapshot,
     ) -> grpc::AgentEvent {
         self.grpc_event(
             agent_id,
-            grpc::agent_event::Event::ContainerSnapshot(container_snapshot_from_payload(
-                command_id, payload,
+            grpc::agent_event::Event::ContainerSnapshot(container_snapshot_from_runtime(
+                command_id, snapshot,
             )),
         )
     }
@@ -792,9 +838,8 @@ async fn open_agent_stream(
                         CollectorEvent::Metrics(metrics) => {
                             metrics_agent.metrics_snapshot_event(agent_id, metrics)
                         }
-                        CollectorEvent::Containers(payload) => {
-                            metrics_agent.container_snapshot_event(agent_id, String::new(), payload)
-                        }
+                        CollectorEvent::Containers(snapshot) => metrics_agent
+                            .container_snapshot_event(agent_id, String::new(), snapshot),
                         CollectorEvent::Error { collector, message } => metrics_agent
                             .collector_error_event(agent_id, String::new(), collector, message),
                     };
@@ -881,91 +926,41 @@ async fn wait_for_shutdown_signal() {
     }
 }
 
-fn container_snapshot_from_payload(
+fn container_snapshot_from_runtime(
     command_id: String,
-    payload: serde_json::Value,
+    snapshot: ContainerRuntimeSnapshot,
 ) -> grpc::ContainerSnapshotEvent {
-    let runtime = payload
-        .get("runtime")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or("docker")
-        .to_string();
-    let containers = payload
-        .get("containers")
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(container_observation_from_json)
-        .collect();
     let extra_json = serde_json::json!({
-        "daemon": payload.get("daemon").cloned().unwrap_or(serde_json::Value::Null),
-        "networks": payload.get("networks").cloned().unwrap_or_else(|| serde_json::json!([])),
-        "volumes": payload.get("volumes").cloned().unwrap_or_else(|| serde_json::json!([])),
+        "daemon": snapshot.daemon,
+        "networks": snapshot.networks,
+        "volumes": snapshot.volumes,
     })
     .to_string();
 
     grpc::ContainerSnapshotEvent {
         command_id,
-        runtime,
-        containers,
+        runtime: snapshot.runtime,
+        containers: snapshot
+            .containers
+            .into_iter()
+            .map(container_observation_from_summary)
+            .collect(),
         extra_json,
     }
 }
 
-fn container_observation_from_json(container: &serde_json::Value) -> grpc::ContainerObservation {
+fn container_observation_from_summary(container: ContainerSummary) -> grpc::ContainerObservation {
     grpc::ContainerObservation {
-        id: container
-            .get("id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        names: container
-            .get("names")
-            .and_then(serde_json::Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(serde_json::Value::as_str)
-            .map(ToString::to_string)
-            .collect(),
-        image: container
-            .get("image")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        image_id: container
-            .get("image_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        command: container
-            .get("command")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        created: container
-            .get("created")
-            .and_then(serde_json::Value::as_i64)
-            .unwrap_or_default(),
-        ports_json: container
-            .get("ports")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([]))
-            .to_string(),
-        labels_json: container
-            .get("labels")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!({}))
-            .to_string(),
-        state: container
-            .get("state")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        status: container
-            .get("status")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
+        id: container.id.unwrap_or_default(),
+        names: container.names,
+        image: container.image.unwrap_or_default(),
+        image_id: container.image_id.unwrap_or_default(),
+        command: container.command.unwrap_or_default(),
+        created: container.created.unwrap_or_default(),
+        ports_json: container.ports.to_string(),
+        labels_json: container.labels.to_string(),
+        state: container.state.unwrap_or_default(),
+        status: container.status.unwrap_or_default(),
     }
 }
 
@@ -993,16 +988,23 @@ async fn handle_command(
         }
         Some(grpc::control_plane_command::Command::CollectContainers(_)) => {
             tracing::info!(command_id = %command_id, "collecting containers by control-plane request");
-            let event =
-                match docker::collect_snapshot(agent.config.docker_socket_path.as_deref()).await {
-                    Ok(payload) => agent.container_snapshot_event(agent_id, command_id, payload),
+            let event = match &agent.container_runtime {
+                Some(runtime) => match runtime.snapshot().await {
+                    Ok(snapshot) => agent.container_snapshot_event(agent_id, command_id, snapshot),
                     Err(error) => agent.command_result_event(
                         agent_id,
                         command_id,
                         grpc::CommandStatus::Failed,
                         error.to_string(),
                     ),
-                };
+                },
+                None => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    "container provider is not enabled",
+                ),
+            };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue command result event");
             }
@@ -1354,10 +1356,24 @@ mod tests {
         let event = agent.container_snapshot_event(
             agent_id,
             command_id.clone(),
-            serde_json::json!({
-                "runtime": "docker",
-                "containers": [{"id": "abc", "names": ["/db"], "image": "postgres"}]
-            }),
+            ContainerRuntimeSnapshot {
+                runtime: "docker".to_string(),
+                daemon: None,
+                containers: vec![ContainerSummary {
+                    id: Some("abc".to_string()),
+                    names: vec!["/db".to_string()],
+                    image: Some("postgres".to_string()),
+                    image_id: None,
+                    command: None,
+                    created: None,
+                    ports: serde_json::json!([]),
+                    labels: serde_json::json!({}),
+                    state: None,
+                    status: None,
+                }],
+                networks: Vec::new(),
+                volumes: Vec::new(),
+            },
         );
 
         let Some(grpc::agent_event::Event::ContainerSnapshot(snapshot)) = event.event else {

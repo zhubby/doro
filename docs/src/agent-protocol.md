@@ -60,10 +60,10 @@ Interactive terminal sessions use the same agent stream plus a browser WebSocket
 
 Local system collection is a one-way agent-to-control-plane flow over `OpenAgentStream`. It does not introduce MQTT, WebSocket, or direct UI-to-agent access.
 
-The base system collector is supported on macOS and Linux. Docker collection is also supported on both platforms when Docker exposes a Unix socket; the agent uses `docker_socket_path` when set, otherwise bollard follows `DOCKER_HOST=unix://...` or the platform default Docker socket. GPU collection is Linux/NVIDIA-only and requires building the agent with the `gpu` feature.
+The base system collector is supported on macOS and Linux. Container collection is implemented through `doro-container`; the current provider is Docker over a Unix socket. The agent uses `docker_socket_path` when set, otherwise the Docker provider follows `DOCKER_HOST=unix://...` or the platform default Docker socket. GPU collection is Linux/NVIDIA-only and requires building the agent with the `gpu` feature.
 
 - `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
-- `container.snapshot`: read-only Docker observations. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
+- `container.snapshot`: read-only container runtime observations from the configured `doro-container` provider. The current Docker provider reports Docker runtime data without changing the existing protocol shape. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
 - `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
 - `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.

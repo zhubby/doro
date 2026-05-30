@@ -1,6 +1,6 @@
+use super::ContainerProviderError;
 use super::CreateNetworkRequest;
-use super::DockerClient;
-use super::DockerError;
+use super::DockerProvider;
 use super::NetworkContainerRequest;
 use super::NetworkOperationResult;
 use super::NetworkSummary;
@@ -12,8 +12,8 @@ use bollard::network::DisconnectNetworkOptions;
 use serde_json::json;
 use std::collections::HashMap;
 
-impl DockerClient {
-    pub async fn networks(&self) -> Result<Vec<NetworkSummary>, DockerError> {
+impl DockerProvider {
+    pub async fn networks(&self) -> Result<Vec<NetworkSummary>, ContainerProviderError> {
         let networks = self.docker().list_networks::<String>(None).await?;
         Ok(networks
             .into_iter()
@@ -32,7 +32,7 @@ impl DockerClient {
     pub async fn create_network(
         &self,
         request: CreateNetworkRequest,
-    ) -> Result<NetworkOperationResult, DockerError> {
+    ) -> Result<NetworkOperationResult, ContainerProviderError> {
         require_identifier(&request.name, "network name")?;
         let driver = if request.driver.trim().is_empty() {
             "bridge".to_string()
@@ -65,7 +65,7 @@ impl DockerClient {
     pub async fn remove_network(
         &self,
         name_or_id: &str,
-    ) -> Result<NetworkOperationResult, DockerError> {
+    ) -> Result<NetworkOperationResult, ContainerProviderError> {
         require_identifier(name_or_id, "network name or id")?;
         self.docker().remove_network(name_or_id).await?;
         Ok(NetworkOperationResult {
@@ -79,7 +79,7 @@ impl DockerClient {
     pub async fn connect_network(
         &self,
         request: NetworkContainerRequest,
-    ) -> Result<NetworkOperationResult, DockerError> {
+    ) -> Result<NetworkOperationResult, ContainerProviderError> {
         require_identifier(&request.network, "network name or id")?;
         require_identifier(&request.container, "container id or name")?;
         self.docker()
@@ -102,7 +102,7 @@ impl DockerClient {
     pub async fn disconnect_network(
         &self,
         request: NetworkContainerRequest,
-    ) -> Result<NetworkOperationResult, DockerError> {
+    ) -> Result<NetworkOperationResult, ContainerProviderError> {
         require_identifier(&request.network, "network name or id")?;
         require_identifier(&request.container, "container id or name")?;
         self.docker()
@@ -123,9 +123,11 @@ impl DockerClient {
     }
 }
 
-fn require_identifier(value: &str, field: &'static str) -> Result<(), DockerError> {
+fn require_identifier(value: &str, field: &'static str) -> Result<(), ContainerProviderError> {
     if value.trim().is_empty() {
-        return Err(DockerError::InvalidRequest(format!("{field} is required")));
+        return Err(ContainerProviderError::InvalidRequest(format!(
+            "{field} is required"
+        )));
     }
     Ok(())
 }

@@ -1,10 +1,10 @@
 use super::ContainerDetail;
 use super::ContainerListFilter;
 use super::ContainerOperationResult;
+use super::ContainerProviderError;
 use super::ContainerSummary;
 use super::CreateContainerRequest;
-use super::DockerClient;
-use super::DockerError;
+use super::DockerProvider;
 use super::RemoveContainerRequest;
 use super::RestartContainerRequest;
 use super::StopContainerRequest;
@@ -16,11 +16,11 @@ use bollard::container::RestartContainerOptions;
 use bollard::container::StopContainerOptions;
 use serde_json::json;
 
-impl DockerClient {
+impl DockerProvider {
     pub async fn containers(
         &self,
         filter: ContainerListFilter,
-    ) -> Result<Vec<ContainerSummary>, DockerError> {
+    ) -> Result<Vec<ContainerSummary>, ContainerProviderError> {
         let containers = self
             .docker()
             .list_containers::<String>(Some(ListContainersOptions {
@@ -48,7 +48,7 @@ impl DockerClient {
     pub async fn inspect_container(
         &self,
         id_or_name: &str,
-    ) -> Result<ContainerDetail, DockerError> {
+    ) -> Result<ContainerDetail, ContainerProviderError> {
         require_identifier(id_or_name, "container id or name")?;
         let container = self.docker().inspect_container(id_or_name, None).await?;
         Ok(ContainerDetail {
@@ -65,7 +65,7 @@ impl DockerClient {
     pub async fn create_container(
         &self,
         request: CreateContainerRequest,
-    ) -> Result<ContainerOperationResult, DockerError> {
+    ) -> Result<ContainerOperationResult, ContainerProviderError> {
         require_identifier(&request.name, "container name")?;
         require_identifier(&request.image, "container image")?;
         let response = self
@@ -95,7 +95,7 @@ impl DockerClient {
     pub async fn start_container(
         &self,
         id_or_name: &str,
-    ) -> Result<ContainerOperationResult, DockerError> {
+    ) -> Result<ContainerOperationResult, ContainerProviderError> {
         require_identifier(id_or_name, "container id or name")?;
         self.docker()
             .start_container::<String>(id_or_name, None)
@@ -106,7 +106,7 @@ impl DockerClient {
     pub async fn stop_container(
         &self,
         request: StopContainerRequest,
-    ) -> Result<ContainerOperationResult, DockerError> {
+    ) -> Result<ContainerOperationResult, ContainerProviderError> {
         require_identifier(&request.id_or_name, "container id or name")?;
         self.docker()
             .stop_container(
@@ -122,7 +122,7 @@ impl DockerClient {
     pub async fn restart_container(
         &self,
         request: RestartContainerRequest,
-    ) -> Result<ContainerOperationResult, DockerError> {
+    ) -> Result<ContainerOperationResult, ContainerProviderError> {
         require_identifier(&request.id_or_name, "container id or name")?;
         self.docker()
             .restart_container(
@@ -138,7 +138,7 @@ impl DockerClient {
     pub async fn remove_container(
         &self,
         request: RemoveContainerRequest,
-    ) -> Result<ContainerOperationResult, DockerError> {
+    ) -> Result<ContainerOperationResult, ContainerProviderError> {
         require_identifier(&request.id_or_name, "container id or name")?;
         self.docker()
             .remove_container(
@@ -181,9 +181,11 @@ fn simple_result(id_or_name: &str, action: &str) -> ContainerOperationResult {
     }
 }
 
-fn require_identifier(value: &str, field: &'static str) -> Result<(), DockerError> {
+fn require_identifier(value: &str, field: &'static str) -> Result<(), ContainerProviderError> {
     if value.trim().is_empty() {
-        return Err(DockerError::InvalidRequest(format!("{field} is required")));
+        return Err(ContainerProviderError::InvalidRequest(format!(
+            "{field} is required"
+        )));
     }
     Ok(())
 }
