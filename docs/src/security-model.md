@@ -10,6 +10,7 @@ High-risk capabilities include:
 - File writes.
 - Service stop or restart.
 - Container deletion or destructive mutation.
+- Virtual machine creation, deletion, snapshot mutation, lifecycle changes, bridge networking, and console access.
 - Network exposure and port publishing.
 - Database restore.
 

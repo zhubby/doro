@@ -6,6 +6,8 @@ import type {
   CreateApprovalResponse,
   CreateEnrollmentTokenRequest,
   CreateEnrollmentTokenResponse,
+  CreateVirtualMachineRequest,
+  CreateVirtualMachineSnapshotRequest,
   CurrentUserResponse,
   LatestMetricResponse,
   ListAppsResponse,
@@ -15,6 +17,10 @@ import type {
   ListMetricSnapshotsResponse,
   ListRuntimeLogsResponse,
   ListTasksResponse,
+  ListVirtualMachineImagesResponse,
+  ListVirtualMachineSnapshotsResponse,
+  ListVirtualMachineTemplatesResponse,
+  ListVirtualMachinesResponse,
   LoginRequest,
   RefreshTokenRequest,
   RegisterRequest,
@@ -25,6 +31,9 @@ import type {
   TerminalCommandResponse,
   UpdateHostRequest,
   UpdateHostResponse,
+  VirtualMachineActionRequest,
+  VirtualMachineActionResponse,
+  VirtualMachineConsoleResponse,
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
@@ -306,6 +315,72 @@ export async function getHostContainers(hostId: string) {
 
 export async function refreshContainers() {
   return getJson<ListHostContainersResponse>("/api/v1/containers");
+}
+
+export async function refreshVirtualMachines() {
+  return getJson<ListVirtualMachinesResponse>("/api/v1/virtual-machines");
+}
+
+export async function getHostVirtualMachines(hostId: string) {
+  return getJson<ListVirtualMachinesResponse>(
+    `/api/v1/hosts/${hostId}/virtual-machines`,
+  );
+}
+
+export async function createVirtualMachine(request: CreateVirtualMachineRequest) {
+  return authedRequest<VirtualMachineActionResponse>("/api/v1/virtual-machines", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function virtualMachineAction(
+  vmId: string,
+  action: "start" | "stop" | "restart" | "delete",
+  request: VirtualMachineActionRequest = { reason: null },
+) {
+  return authedRequest<VirtualMachineActionResponse>(
+    `/api/v1/virtual-machines/${vmId}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getVirtualMachineImages() {
+  return getJson<ListVirtualMachineImagesResponse>("/api/v1/virtual-machines/images");
+}
+
+export async function getVirtualMachineTemplates() {
+  return getJson<ListVirtualMachineTemplatesResponse>(
+    "/api/v1/virtual-machines/templates",
+  );
+}
+
+export async function getVirtualMachineSnapshots(vmId: string) {
+  return getJson<ListVirtualMachineSnapshotsResponse>(
+    `/api/v1/virtual-machines/${vmId}/snapshots`,
+  );
+}
+
+export async function createVirtualMachineSnapshot(
+  vmId: string,
+  request: CreateVirtualMachineSnapshotRequest,
+) {
+  return authedRequest<VirtualMachineActionResponse>(
+    `/api/v1/virtual-machines/${vmId}/snapshots`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getVirtualMachineConsole(vmId: string) {
+  return getJson<VirtualMachineConsoleResponse>(
+    `/api/v1/virtual-machines/${vmId}/console`,
+  );
 }
 
 export async function getControlPlaneEnvironment() {

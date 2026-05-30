@@ -147,6 +147,14 @@ pub struct AgentConfig {
     pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
     pub docker_manage_enabled: bool,
+    pub vm_manage_enabled: bool,
+    pub qemu_binary_dir: Option<String>,
+    pub vm_state_dir: Option<String>,
+    pub vm_image_dir: Option<String>,
+    pub vm_bridge_names: Vec<String>,
+    pub vm_user_network_enabled: bool,
+    pub vm_console_enabled: bool,
+    pub vm_vnc_bind: String,
     pub gpu_metrics_enabled: bool,
 }
 
@@ -165,6 +173,14 @@ impl Default for AgentConfig {
             container_metrics_enabled: false,
             docker_socket_path: None,
             docker_manage_enabled: false,
+            vm_manage_enabled: false,
+            qemu_binary_dir: None,
+            vm_state_dir: None,
+            vm_image_dir: None,
+            vm_bridge_names: Vec::new(),
+            vm_user_network_enabled: true,
+            vm_console_enabled: true,
+            vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
         }
     }

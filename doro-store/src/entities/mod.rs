@@ -21,4 +21,8 @@ pub mod task_runs;
 pub mod task_steps;
 pub mod tasks;
 pub mod users;
+pub mod virtual_machine_images;
+pub mod virtual_machine_snapshots;
+pub mod virtual_machine_templates;
+pub mod virtual_machines;
 pub mod websites;

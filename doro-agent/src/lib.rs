@@ -16,9 +16,20 @@ use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use doro_protocol::protobuf_timestamp_from_utc;
 use doro_protocol::protobuf_timestamp_now;
+use doro_vm::QemuProvider;
+use doro_vm::QemuProviderConfig;
+use doro_vm::VirtualMachineProvider;
+use doro_vm::VmCommand;
+use doro_vm::VmCommandEnvelope;
+use doro_vm::VmCommandStatus;
+use doro_vm::VmProviderError;
+use doro_vm::VmRuntimeState;
+use doro_vm::VmStatus;
+use doro_vm::network::NetworkPolicy;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
@@ -132,6 +143,14 @@ pub struct AgentConfig {
     pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
     pub docker_manage_enabled: bool,
+    pub vm_manage_enabled: bool,
+    pub qemu_binary_dir: Option<String>,
+    pub vm_state_dir: Option<String>,
+    pub vm_image_dir: Option<String>,
+    pub vm_bridge_names: Vec<String>,
+    pub vm_user_network_enabled: bool,
+    pub vm_console_enabled: bool,
+    pub vm_vnc_bind: String,
     pub gpu_metrics_enabled: bool,
 }
 
@@ -154,6 +173,14 @@ impl AgentConfig {
             container_metrics_enabled: false,
             docker_socket_path: None,
             docker_manage_enabled: false,
+            vm_manage_enabled: false,
+            qemu_binary_dir: None,
+            vm_state_dir: None,
+            vm_image_dir: None,
+            vm_bridge_names: Vec::new(),
+            vm_user_network_enabled: true,
+            vm_console_enabled: true,
+            vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
         }
     }
@@ -172,19 +199,70 @@ impl AgentConfig {
             container_metrics_enabled: config.container_metrics_enabled,
             docker_socket_path: config.docker_socket_path.clone(),
             docker_manage_enabled: config.docker_manage_enabled,
+            vm_manage_enabled: config.vm_manage_enabled,
+            qemu_binary_dir: config.qemu_binary_dir.clone(),
+            vm_state_dir: config.vm_state_dir.clone(),
+            vm_image_dir: config.vm_image_dir.clone(),
+            vm_bridge_names: config.vm_bridge_names.clone(),
+            vm_user_network_enabled: config.vm_user_network_enabled,
+            vm_console_enabled: config.vm_console_enabled,
+            vm_vnc_bind: config.vm_vnc_bind.clone(),
             gpu_metrics_enabled: config.gpu_metrics_enabled,
         }
+    }
+}
+
+#[derive(Clone)]
+struct VmRuntime {
+    provider: Arc<dyn VirtualMachineProvider>,
+}
+
+impl std::fmt::Debug for VmRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("VmRuntime")
+    }
+}
+
+impl VmRuntime {
+    fn from_config(config: &AgentConfig) -> Option<Self> {
+        if !config.vm_manage_enabled {
+            return None;
+        }
+        let provider = QemuProvider::new(QemuProviderConfig {
+            binary_dir: config.qemu_binary_dir.as_ref().map(PathBuf::from),
+            state_dir: config
+                .vm_state_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".doro/vms")),
+            image_dir: config
+                .vm_image_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".doro/vm-images")),
+            network_policy: NetworkPolicy {
+                user_nat_enabled: config.vm_user_network_enabled,
+                allowed_bridges: config.vm_bridge_names.clone(),
+            },
+            vnc_bind_host: config.vm_vnc_bind.clone(),
+            vnc_display_base: 10,
+        });
+        Some(Self {
+            provider: Arc::new(provider),
+        })
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct Agent {
     config: AgentConfig,
+    vm_runtime: Option<VmRuntime>,
 }
 
 impl Agent {
     pub fn new(config: AgentConfig) -> Self {
-        Self { config }
+        let vm_runtime = VmRuntime::from_config(&config);
+        Self { config, vm_runtime }
     }
 
     pub fn host(&self) -> Host {
@@ -225,6 +303,13 @@ impl Agent {
                 description:
                     "Manage Docker images, containers, networks, and volumes after approval"
                         .to_string(),
+            });
+        }
+        if self.vm_runtime.is_some() {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::VirtualMachinesManage,
+                risk: CapabilityRisk::High,
+                description: "Manage QEMU virtual machines after approval".to_string(),
             });
         }
         capabilities
@@ -318,6 +403,49 @@ impl Agent {
             grpc::agent_event::Event::ContainerSnapshot(container_snapshot_from_payload(
                 command_id, payload,
             )),
+        )
+    }
+
+    pub fn virtual_machine_snapshot_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        states: Vec<VmRuntimeState>,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::VirtualMachineSnapshot(grpc::VirtualMachineSnapshotEvent {
+                command_id,
+                provider: "qemu".to_string(),
+                virtual_machines: states
+                    .into_iter()
+                    .map(virtual_machine_observation_from_state)
+                    .collect(),
+                extra_json: serde_json::json!({}).to_string(),
+            }),
+        )
+    }
+
+    pub fn virtual_machine_command_result_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        result: doro_vm::VmCommandResult,
+    ) -> grpc::AgentEvent {
+        let status = match result.status {
+            VmCommandStatus::Succeeded => grpc::CommandStatus::Succeeded,
+            VmCommandStatus::Failed => grpc::CommandStatus::Failed,
+        };
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::VirtualMachineCommandResult(
+                grpc::VirtualMachineCommandResultEvent {
+                    command_id,
+                    status: status as i32,
+                    message: result.message,
+                    details_json: result.details.to_string(),
+                },
+            ),
         )
     }
 
@@ -879,6 +1007,65 @@ async fn handle_command(
                 tracing::warn!("failed to enqueue command result event");
             }
         }
+        Some(grpc::control_plane_command::Command::CollectVirtualMachines(_)) => {
+            tracing::info!(command_id = %command_id, "collecting virtual machines by control-plane request");
+            let event = match &agent.vm_runtime {
+                Some(runtime) => match runtime.provider.list().await {
+                    Ok(states) => {
+                        agent.virtual_machine_snapshot_event(agent_id, command_id, states)
+                    }
+                    Err(error) => agent.command_result_event(
+                        agent_id,
+                        command_id,
+                        grpc::CommandStatus::Failed,
+                        error.to_string(),
+                    ),
+                },
+                None => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    "virtual machine provider is not enabled",
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue virtual machine snapshot event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::RunVirtualMachineCommand(vm_command)) => {
+            tracing::info!(command_id = %command_id, "executing virtual machine command by control-plane request");
+            let event = match &agent.vm_runtime {
+                Some(runtime) => {
+                    match serde_json::from_str::<VmCommandEnvelope>(&vm_command.command_json) {
+                        Ok(envelope) => match execute_vm_command(runtime, envelope).await {
+                            Ok(result) => agent
+                                .virtual_machine_command_result_event(agent_id, command_id, result),
+                            Err(error) => agent.command_result_event(
+                                agent_id,
+                                command_id,
+                                grpc::CommandStatus::Failed,
+                                error.to_string(),
+                            ),
+                        },
+                        Err(error) => agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            format!("invalid virtual machine command payload: {error}"),
+                        ),
+                    }
+                }
+                None => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    "virtual machine provider is not enabled",
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue virtual machine command result event");
+            }
+        }
         Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {
             tracing::info!(command_id = %command_id, "executing terminal command by control-plane request");
             let event = match terminal
@@ -1004,6 +1191,87 @@ async fn handle_command(
     AgentCommandAction::Continue
 }
 
+async fn execute_vm_command(
+    runtime: &VmRuntime,
+    envelope: VmCommandEnvelope,
+) -> Result<doro_vm::VmCommandResult, VmProviderError> {
+    match envelope.command {
+        VmCommand::Create { spec } => {
+            let state = runtime.provider.create(*spec).await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: Some(state.id.clone()),
+                status: VmCommandStatus::Succeeded,
+                message: "virtual machine created".to_string(),
+                details: serde_json::to_value(state)?,
+            })
+        }
+        VmCommand::Start { id } => runtime.provider.start(&id).await,
+        VmCommand::Stop { id, mode } => runtime.provider.stop(&id, mode).await,
+        VmCommand::Restart { id } => runtime.provider.restart(&id).await,
+        VmCommand::Delete { id, mode } => runtime.provider.delete(&id, mode).await,
+        VmCommand::Snapshot { id, request } => {
+            let snapshot = runtime.provider.snapshot(&id, request).await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: Some(id),
+                status: VmCommandStatus::Succeeded,
+                message: "virtual machine snapshot created".to_string(),
+                details: serde_json::to_value(snapshot)?,
+            })
+        }
+        VmCommand::Console { id } => {
+            let console = runtime.provider.console(&id).await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: Some(id),
+                status: VmCommandStatus::Succeeded,
+                message: "virtual machine console resolved".to_string(),
+                details: serde_json::to_value(console)?,
+            })
+        }
+    }
+}
+
+fn virtual_machine_observation_from_state(
+    state: VmRuntimeState,
+) -> grpc::VirtualMachineObservation {
+    grpc::VirtualMachineObservation {
+        vm_ref: state.id.to_string(),
+        name: state.name,
+        status: serialize_vm_status(state.status).to_string(),
+        cpu_cores: u32::from(state.cpu_cores),
+        memory_mib: state.memory_mib,
+        disk_gb: state.disk_gb,
+        image: state
+            .metadata
+            .get("image")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        networks_json: serde_json::to_string(&state.networks).unwrap_or_else(|_| "[]".to_string()),
+        console_json: state
+            .console
+            .and_then(|console| serde_json::to_string(&console).ok())
+            .unwrap_or_else(|| "null".to_string()),
+        metadata_json: state.metadata.to_string(),
+        created_at: state.created_at.map(protobuf_timestamp_from_utc),
+        observed_at: Some(protobuf_timestamp_from_utc(state.observed_at)),
+    }
+}
+
+fn serialize_vm_status(status: VmStatus) -> &'static str {
+    match status {
+        VmStatus::Unknown => "unknown",
+        VmStatus::Stopped => "stopped",
+        VmStatus::Starting => "starting",
+        VmStatus::Running => "running",
+        VmStatus::Paused => "paused",
+        VmStatus::Stopping => "stopping",
+        VmStatus::Failed => "failed",
+    }
+}
+
 fn parse_uuid(value: &str, field: &str) -> anyhow::Result<Uuid> {
     value
         .parse()
@@ -1013,6 +1281,32 @@ fn parse_uuid(value: &str, field: &str) -> anyhow::Result<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_agent_config(agent_id: Uuid) -> AgentConfig {
+        AgentConfig {
+            agent_id: Some(agent_id),
+            host_id: Uuid::new_v4(),
+            hostname: "doro-test".to_string(),
+            control_plane_url: "http://127.0.0.1:8788".to_string(),
+            enrollment_token: None,
+            heartbeat_interval: Duration::from_secs(30),
+            metrics_enabled: true,
+            metrics_interval: Duration::from_secs(10),
+            process_names: Vec::new(),
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            docker_manage_enabled: false,
+            vm_manage_enabled: false,
+            qemu_binary_dir: None,
+            vm_state_dir: None,
+            vm_image_dir: None,
+            vm_bridge_names: Vec::new(),
+            vm_user_network_enabled: true,
+            vm_console_enabled: true,
+            vm_vnc_bind: "127.0.0.1".to_string(),
+            gpu_metrics_enabled: false,
+        }
+    }
 
     #[test]
     fn agent_config_uses_persisted_identity() {
@@ -1037,19 +1331,8 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
         let agent = Agent::new(AgentConfig {
-            agent_id: Some(agent_id),
             host_id,
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
+            ..test_agent_config(agent_id)
         });
 
         let event = agent.connected_event(agent_id);
@@ -1066,21 +1349,7 @@ mod tests {
     fn container_snapshot_event_preserves_command_id() {
         let agent_id = Uuid::new_v4();
         let command_id = Uuid::new_v4().to_string();
-        let agent = Agent::new(AgentConfig {
-            agent_id: Some(agent_id),
-            host_id: Uuid::new_v4(),
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
-        });
+        let agent = Agent::new(test_agent_config(agent_id));
 
         let event = agent.container_snapshot_event(
             agent_id,
@@ -1102,21 +1371,7 @@ mod tests {
     #[test]
     fn log_line_event_preserves_runtime_log_fields() {
         let agent_id = Uuid::new_v4();
-        let agent = Agent::new(AgentConfig {
-            agent_id: Some(agent_id),
-            host_id: Uuid::new_v4(),
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
-        });
+        let agent = Agent::new(test_agent_config(agent_id));
         let log_id = Uuid::new_v4();
 
         let event = agent.log_line_event(
@@ -1166,21 +1421,7 @@ mod tests {
     #[tokio::test]
     async fn handle_command_continues_for_ack() {
         let agent_id = Uuid::new_v4();
-        let agent = Agent::new(AgentConfig {
-            agent_id: Some(agent_id),
-            host_id: Uuid::new_v4(),
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
-        });
+        let agent = Agent::new(test_agent_config(agent_id));
         let (sender, _receiver) = mpsc::channel(1);
         let command = grpc::ControlPlaneCommand {
             command_id: Uuid::new_v4().to_string(),
@@ -1192,7 +1433,10 @@ mod tests {
             )),
         };
 
-        let terminal = TerminalManager::new().expect("terminal should start");
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
         let action = handle_command(command, &agent, agent_id, &sender, &terminal).await;
 
         assert_eq!(action, AgentCommandAction::Continue);
@@ -1201,21 +1445,7 @@ mod tests {
     #[tokio::test]
     async fn handle_command_returns_reconnect_for_shutdown_command() {
         let agent_id = Uuid::new_v4();
-        let agent = Agent::new(AgentConfig {
-            agent_id: Some(agent_id),
-            host_id: Uuid::new_v4(),
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
-        });
+        let agent = Agent::new(test_agent_config(agent_id));
         let (sender, _receiver) = mpsc::channel(1);
         let command = grpc::ControlPlaneCommand {
             command_id: Uuid::new_v4().to_string(),
@@ -1227,7 +1457,10 @@ mod tests {
             )),
         };
 
-        let terminal = TerminalManager::new().expect("terminal should start");
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
         let action = handle_command(command, &agent, agent_id, &sender, &terminal).await;
 
         assert_eq!(action, AgentCommandAction::Reconnect);
@@ -1235,21 +1468,7 @@ mod tests {
 
     #[test]
     fn docker_manage_capability_is_declared_only_when_enabled() {
-        let base_config = AgentConfig {
-            agent_id: Some(Uuid::new_v4()),
-            host_id: Uuid::new_v4(),
-            hostname: "doro-test".to_string(),
-            control_plane_url: "http://127.0.0.1:8788".to_string(),
-            enrollment_token: None,
-            heartbeat_interval: Duration::from_secs(30),
-            metrics_enabled: true,
-            metrics_interval: Duration::from_secs(10),
-            process_names: Vec::new(),
-            container_metrics_enabled: false,
-            docker_socket_path: None,
-            docker_manage_enabled: false,
-            gpu_metrics_enabled: false,
-        };
+        let base_config = test_agent_config(Uuid::new_v4());
         let agent = Agent::new(base_config.clone());
 
         assert!(

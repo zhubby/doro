@@ -8,6 +8,7 @@ members = [
     "doro-control-plane",
     "doro-protocol",
     "doro-store",
+    "doro-vm",
 ]
 
 
@@ -19,8 +20,10 @@ doro-config = { path = "doro-config" }
 doro-control-plane = { path = "doro-control-plane" }
 doro-protocol = { path = "doro-protocol" }
 doro-store = { path = "doro-store" }
+doro-vm = { path = "doro-vm" }
 
 anyhow = "1"
+async-trait = "0.1"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["json", "macros", "tokio", "ws"] }
 base64 = "0.22"
@@ -34,6 +37,7 @@ nvml-wrapper = "0.10"
 prost = "0.13"
 prost-types = "0.13"
 portable-pty = "0.8"
+qapi = { version = "0.15.0", features = ["qmp", "qga", "async-tokio-net"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 serde = { version = "1", features = ["derive"] }

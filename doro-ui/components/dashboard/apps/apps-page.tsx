@@ -23,11 +23,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
-import { virtualMachines } from "@/lib/mock-data";
 import type { ResourceStatus, VirtualMachineResource } from "@/types/dashboard";
+import type { Host, VirtualMachine } from "@/types/api";
 import { useTranslations } from "next-intl";
 
 type AppsPageProps = {
+  hosts?: Host[];
+  machines?: VirtualMachine[];
   apiError?: string | null;
 };
 
@@ -112,11 +114,48 @@ function VirtualMachineCard({ machine }: { machine: VirtualMachineResource }) {
   );
 }
 
-export function AppsPage({ apiError }: AppsPageProps) {
+function resourceStatus(status: VirtualMachine["status"]): ResourceStatus {
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "starting" || status === "paused" || status === "stopping" || status === "failed") {
+    return "warning";
+  }
+  return "stopped";
+}
+
+function formatMemory(memoryMib: number) {
+  if (memoryMib >= 1024) {
+    return `${Math.round(memoryMib / 1024)} GB`;
+  }
+  return `${memoryMib} MB`;
+}
+
+function toResource(machine: VirtualMachine, hostNames: Map<string, string>): VirtualMachineResource {
+  return {
+    id: machine.id,
+    name: machine.name,
+    status: resourceStatus(machine.status),
+    host: hostNames.get(machine.host_id) ?? machine.host_id,
+    image: machine.image,
+    cpu: `${machine.cpu_cores} vCPU`,
+    memory: formatMemory(machine.memory_mib),
+    disk: `${machine.disk_gb} GB`,
+    address: machine.networks[0]?.mode ?? "user_nat",
+    uptime: machine.status === "running" ? "运行中" : "未运行",
+    updatedAt: new Date(machine.observed_at).toLocaleString("zh-CN"),
+  };
+}
+
+export function AppsPage({ hosts = [], machines = [], apiError }: AppsPageProps) {
   const [activeStatus, setActiveStatus] = useState<ResourceStatus | "all">("all");
   const t = useTranslations("resources.apps");
   const tCommon = useTranslations("common");
   const tStatus = useTranslations("common.status");
+  const rows = useMemo(() => {
+    const hostNames = new Map(hosts.map((host) => [host.id, host.display_name || host.hostname]));
+    return machines.map((machine) => toResource(machine, hostNames));
+  }, [hosts, machines]);
   const filters = useMemo<FilterChip[]>(() => {
     const statuses: Array<ResourceStatus | "all"> = [
       "all",
@@ -130,21 +169,21 @@ export function AppsPage({ apiError }: AppsPageProps) {
       label: status === "all" ? tStatus("all") : tStatus(status),
       count:
         status === "all"
-          ? virtualMachines.length
-          : virtualMachines.filter((machine) => machine.status === status).length,
+          ? rows.length
+          : rows.filter((machine) => machine.status === status).length,
     }));
-  }, [tStatus]);
+  }, [rows, tStatus]);
   const filteredMachines = useMemo(() => {
     if (activeStatus === "all") {
-      return virtualMachines;
+      return rows;
     }
 
-    return virtualMachines.filter((machine) => machine.status === activeStatus);
-  }, [activeStatus]);
-  const runningCount = virtualMachines.filter(
+    return rows.filter((machine) => machine.status === activeStatus);
+  }, [activeStatus, rows]);
+  const runningCount = rows.filter(
     (machine) => machine.status === "running",
   ).length;
-  const warningCount = virtualMachines.filter(
+  const warningCount = rows.filter(
     (machine) => machine.status === "warning",
   ).length;
 
@@ -160,7 +199,7 @@ export function AppsPage({ apiError }: AppsPageProps) {
         {[
           {
             label: t("stats.machines"),
-            value: virtualMachines.length,
+            value: rows.length,
             helper: t("stats.machinesHelper"),
           },
           {
@@ -224,9 +263,15 @@ export function AppsPage({ apiError }: AppsPageProps) {
         />
 
         <div className="grid gap-4">
-          {filteredMachines.map((machine) => (
-            <VirtualMachineCard key={machine.id} machine={machine} />
-          ))}
+          {filteredMachines.length > 0 ? (
+            filteredMachines.map((machine) => (
+              <VirtualMachineCard key={machine.id} machine={machine} />
+            ))
+          ) : (
+            <div className="rounded-lg border border-dashed p-8 text-sm text-muted-foreground">
+              暂无虚拟机。启用 Agent 的 QEMU 能力后，刷新会显示宿主机上报的虚拟机。
+            </div>
+          )}
         </div>
       </PageSection>
 

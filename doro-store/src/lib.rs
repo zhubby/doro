@@ -15,6 +15,11 @@ use doro_protocol::MetricSnapshot;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::TaskStep;
+use doro_protocol::VirtualMachine;
+use doro_protocol::VirtualMachineImage;
+use doro_protocol::VirtualMachineNetwork;
+use doro_protocol::VirtualMachineStatus;
+use doro_protocol::VirtualMachineTemplate;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ColumnTrait;
 use sea_orm::ConnectOptions;
@@ -121,6 +126,24 @@ pub struct NewContainerObservation {
     pub status: String,
     pub ports: Value,
     pub labels: Value,
+    pub created_at: Option<DateTime<Utc>>,
+    pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewVirtualMachineObservation {
+    pub host_id: Uuid,
+    pub provider: String,
+    pub vm_ref: String,
+    pub name: String,
+    pub status: VirtualMachineStatus,
+    pub image: String,
+    pub cpu_cores: u16,
+    pub memory_mib: u32,
+    pub disk_gb: u32,
+    pub networks: Vec<VirtualMachineNetwork>,
+    pub console: Option<Value>,
+    pub metadata: Value,
     pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
 }
@@ -260,6 +283,10 @@ impl Store {
 
     pub fn containers(&self) -> ContainerRepository<'_> {
         ContainerRepository { store: self }
+    }
+
+    pub fn virtual_machines(&self) -> VirtualMachineRepository<'_> {
+        VirtualMachineRepository { store: self }
     }
 
     pub fn settings(&self) -> SettingsRepository<'_> {
@@ -1055,6 +1082,143 @@ impl ContainerRepository<'_> {
     }
 }
 
+pub struct VirtualMachineRepository<'a> {
+    store: &'a Store,
+}
+
+impl VirtualMachineRepository<'_> {
+    pub async fn upsert_many(
+        &self,
+        virtual_machines: Vec<NewVirtualMachineObservation>,
+    ) -> Result<(), DbErr> {
+        for vm in virtual_machines {
+            entities::virtual_machines::Entity::insert(entities::virtual_machines::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                host_id: Set(vm.host_id),
+                provider: Set(vm.provider),
+                vm_ref: Set(vm.vm_ref),
+                name: Set(vm.name),
+                status: Set(serialize_virtual_machine_status(vm.status)),
+                image: Set(vm.image),
+                cpu_cores: Set(i32::from(vm.cpu_cores)),
+                memory_mib: Set(vm.memory_mib.min(i32::MAX as u32) as i32),
+                disk_gb: Set(vm.disk_gb.min(i32::MAX as u32) as i32),
+                networks: Set(serde_json::to_value(vm.networks).unwrap_or_else(|_| json!([]))),
+                console: Set(vm.console),
+                metadata: Set(vm.metadata),
+                created_at: Set(vm.created_at.map(Into::into)),
+                observed_at: Set(vm.observed_at.into()),
+            })
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    entities::virtual_machines::Column::HostId,
+                    entities::virtual_machines::Column::Provider,
+                    entities::virtual_machines::Column::VmRef,
+                ])
+                .update_columns([
+                    entities::virtual_machines::Column::Name,
+                    entities::virtual_machines::Column::Status,
+                    entities::virtual_machines::Column::Image,
+                    entities::virtual_machines::Column::CpuCores,
+                    entities::virtual_machines::Column::MemoryMib,
+                    entities::virtual_machines::Column::DiskGb,
+                    entities::virtual_machines::Column::Networks,
+                    entities::virtual_machines::Column::Console,
+                    entities::virtual_machines::Column::Metadata,
+                    entities::virtual_machines::Column::CreatedAt,
+                    entities::virtual_machines::Column::ObservedAt,
+                ])
+                .to_owned(),
+            )
+            .exec(self.store.connection())
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn list(&self) -> Result<Vec<VirtualMachine>, DbErr> {
+        let rows = entities::virtual_machines::Entity::find()
+            .order_by(entities::virtual_machines::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(virtual_machine_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn list_by_host(&self, host_id: Uuid) -> Result<Vec<VirtualMachine>, DbErr> {
+        let rows = entities::virtual_machines::Entity::find()
+            .filter(entities::virtual_machines::Column::HostId.eq(host_id))
+            .order_by(entities::virtual_machines::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(virtual_machine_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn images(&self) -> Result<Vec<VirtualMachineImage>, DbErr> {
+        let rows = entities::virtual_machine_images::Entity::find()
+            .order_by(entities::virtual_machine_images::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|image| VirtualMachineImage {
+                id: image.image_ref,
+                name: image.name,
+                path: image.path,
+                os_family: image.os_family,
+                architecture: image.architecture,
+            })
+            .collect())
+    }
+
+    pub async fn templates(&self) -> Result<Vec<VirtualMachineTemplate>, DbErr> {
+        let rows = entities::virtual_machine_templates::Entity::find()
+            .order_by(
+                entities::virtual_machine_templates::Column::Name,
+                Order::Asc,
+            )
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|template| VirtualMachineTemplate {
+                id: template.template_ref,
+                name: template.name,
+                image_id: template.image_ref,
+                cpu_cores: template.cpu_cores.max(0).min(u16::MAX as i32) as u16,
+                memory_mib: template.memory_mib.max(0) as u32,
+                disk_gb: template.disk_gb.max(0) as u32,
+                description: template.description,
+            })
+            .collect())
+    }
+}
+
+fn virtual_machine_model_to_protocol(vm: entities::virtual_machines::Model) -> VirtualMachine {
+    VirtualMachine {
+        id: vm.id,
+        host_id: vm.host_id,
+        vm_ref: vm.vm_ref,
+        name: vm.name,
+        status: parse_virtual_machine_status(&vm.status).unwrap_or(VirtualMachineStatus::Unknown),
+        provider: vm.provider,
+        image: vm.image,
+        cpu_cores: vm.cpu_cores.max(0).min(u16::MAX as i32) as u16,
+        memory_mib: vm.memory_mib.max(0) as u32,
+        disk_gb: vm.disk_gb.max(0) as u32,
+        networks: serde_json::from_value(vm.networks).unwrap_or_default(),
+        console: vm.console,
+        metadata: vm.metadata,
+        created_at: vm.created_at.map(Into::into),
+        observed_at: vm.observed_at.into(),
+    }
+}
+
 pub struct SettingsRepository<'a> {
     store: &'a Store,
 }
@@ -1704,6 +1868,7 @@ fn serialize_capability_name(name: CapabilityName) -> String {
         CapabilityName::LogsRead => "logs_read",
         CapabilityName::ServicesManage => "services_manage",
         CapabilityName::ContainersManage => "containers_manage",
+        CapabilityName::VirtualMachinesManage => "virtual_machines_manage",
         CapabilityName::FilesRead => "files_read",
         CapabilityName::FilesWrite => "files_write",
         CapabilityName::ShellExecute => "shell_execute",
@@ -1719,11 +1884,38 @@ fn parse_capability_name(value: &str) -> Option<CapabilityName> {
         "logs_read" => Some(CapabilityName::LogsRead),
         "services_manage" => Some(CapabilityName::ServicesManage),
         "containers_manage" => Some(CapabilityName::ContainersManage),
+        "virtual_machines_manage" => Some(CapabilityName::VirtualMachinesManage),
         "files_read" => Some(CapabilityName::FilesRead),
         "files_write" => Some(CapabilityName::FilesWrite),
         "shell_execute" => Some(CapabilityName::ShellExecute),
         "network_expose" => Some(CapabilityName::NetworkExpose),
         "database_restore" => Some(CapabilityName::DatabaseRestore),
+        _ => None,
+    }
+}
+
+fn serialize_virtual_machine_status(status: VirtualMachineStatus) -> String {
+    match status {
+        VirtualMachineStatus::Unknown => "unknown",
+        VirtualMachineStatus::Stopped => "stopped",
+        VirtualMachineStatus::Starting => "starting",
+        VirtualMachineStatus::Running => "running",
+        VirtualMachineStatus::Paused => "paused",
+        VirtualMachineStatus::Stopping => "stopping",
+        VirtualMachineStatus::Failed => "failed",
+    }
+    .to_string()
+}
+
+fn parse_virtual_machine_status(value: &str) -> Option<VirtualMachineStatus> {
+    match value {
+        "unknown" => Some(VirtualMachineStatus::Unknown),
+        "stopped" => Some(VirtualMachineStatus::Stopped),
+        "starting" => Some(VirtualMachineStatus::Starting),
+        "running" => Some(VirtualMachineStatus::Running),
+        "paused" => Some(VirtualMachineStatus::Paused),
+        "stopping" => Some(VirtualMachineStatus::Stopping),
+        "failed" => Some(VirtualMachineStatus::Failed),
         _ => None,
     }
 }

@@ -8,7 +8,9 @@
 
 `doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional Docker state over Unix sockets, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream.
 
-`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, approvals, events, app catalog state, container observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
+`doro-vm` owns the provider-neutral virtual machine boundary. It defines the virtual machine provider traits, lifecycle/image/snapshot/console abstractions, command envelopes, and the direct QEMU provider. QEMU process arguments, QMP/QGA socket paths, VM state files, image scanning, NAT/bridge validation, and console endpoint construction belong in this crate rather than in the agent or control plane.
+
+`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, approvals, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
 
 The first durable schema is organized into table families:
 
@@ -16,9 +18,9 @@ The first durable schema is organized into table families:
 - Observability: `metric_snapshots`, `agent_events`, and `operation_logs`.
 - Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`. Approvals are
   durable control-plane records with explicit expiration and decision metadata.
-- Configuration and resource directory: `settings`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
+- Configuration and resource directory: `settings`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
 
-The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as metric snapshots, current container rows, and audit events.
+The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as metric snapshots, current container rows, current virtual machine rows, and audit events.
 
 `doro-ai` owns provider abstraction and planning. It can draft task steps, but the control plane still decides dispatch and approval.
 
@@ -28,6 +30,6 @@ The control plane should access these tables through typed `doro-store` reposito
 
 ## UI
 
-`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, apps, websites, containers, databases, logs, AI, and settings.
+`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, websites, containers, databases, logs, AI, and settings.
 
 The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state. UI API types should come from `doro-ui/types/api.ts`, which re-exports ts-rs bindings generated from `doro-protocol`.

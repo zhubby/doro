@@ -51,6 +51,8 @@ message AgentEvent {
     TerminalOutputEvent terminal_output = 12;
     TerminalSessionClosedEvent terminal_session_closed = 13;
     LogLineEvent log_line = 14;
+    VirtualMachineSnapshotEvent virtual_machine_snapshot = 15;
+    VirtualMachineCommandResultEvent virtual_machine_command_result = 16;
   }
 }
 
@@ -66,6 +68,8 @@ message ControlPlaneCommand {
     TerminalInputCommand terminal_input = 8;
     ResizeTerminalSessionCommand resize_terminal_session = 9;
     CloseTerminalSessionCommand close_terminal_session = 10;
+    CollectVirtualMachinesCommand collect_virtual_machines = 11;
+    RunVirtualMachineCommandCommand run_virtual_machine_command = 12;
   }
 }
 
@@ -75,6 +79,15 @@ message AckCommand {
 
 message CollectContainersCommand {
   string runtime = 1;
+}
+
+message CollectVirtualMachinesCommand {
+  string provider = 1;
+}
+
+message RunVirtualMachineCommandCommand {
+  string command_id = 1;
+  string command_json = 2;
 }
 
 message ShutdownCommand {
@@ -150,6 +163,28 @@ message ContainerObservation {
   string status = 10;
 }
 
+message VirtualMachineSnapshotEvent {
+  string command_id = 1;
+  string provider = 2;
+  repeated VirtualMachineObservation virtual_machines = 3;
+  string extra_json = 4;
+}
+
+message VirtualMachineObservation {
+  string vm_ref = 1;
+  string name = 2;
+  string status = 3;
+  uint32 cpu_cores = 4;
+  uint32 memory_mib = 5;
+  uint32 disk_gb = 6;
+  string image = 7;
+  string networks_json = 8;
+  string console_json = 9;
+  string metadata_json = 10;
+  google.protobuf.Timestamp created_at = 11;
+  google.protobuf.Timestamp observed_at = 12;
+}
+
 message CollectorErrorEvent {
   string command_id = 1;
   string collector = 2;
@@ -175,6 +210,13 @@ message TerminalCommandResultEvent {
   int32 exit_code = 4;
   google.protobuf.Timestamp started_at = 5;
   google.protobuf.Timestamp finished_at = 6;
+}
+
+message VirtualMachineCommandResultEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string message = 3;
+  string details_json = 4;
 }
 
 message TerminalOutputEvent {

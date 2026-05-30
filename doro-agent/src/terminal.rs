@@ -401,8 +401,11 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_command_returns_output_and_exit_code() {
-        let terminal = TerminalManager::new().expect("terminal should start");
-        let output = terminal
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
+        let output = match terminal
             .execute(TerminalCommand {
                 command_id: "test-command".to_string(),
                 input: "printf doro".to_string(),
@@ -411,7 +414,10 @@ mod tests {
                 timeout: Duration::from_secs(5),
             })
             .await
-            .expect("command should run");
+        {
+            Ok(output) => output,
+            Err(error) => panic!("command should run: {error}"),
+        };
 
         assert!(output.output.contains("doro"));
         assert_eq!(output.exit_code, Some(0), "{output:?}");
@@ -420,8 +426,11 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_command_reports_non_zero_exit_code() {
-        let terminal = TerminalManager::new().expect("terminal should start");
-        let output = terminal
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
+        let output = match terminal
             .execute(TerminalCommand {
                 command_id: "test-false".to_string(),
                 input: "false".to_string(),
@@ -430,7 +439,10 @@ mod tests {
                 timeout: Duration::from_secs(5),
             })
             .await
-            .expect("command should run");
+        {
+            Ok(output) => output,
+            Err(error) => panic!("command should run: {error}"),
+        };
 
         assert_eq!(output.exit_code, Some(1), "{output:?}");
         assert!(!output.timed_out);
@@ -438,8 +450,11 @@ mod tests {
 
     #[tokio::test]
     async fn terminal_command_times_out_and_recovers() {
-        let terminal = TerminalManager::new().expect("terminal should start");
-        let timed_out = terminal
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
+        let timed_out = match terminal
             .execute(TerminalCommand {
                 command_id: "test-timeout".to_string(),
                 input: "sleep 1".to_string(),
@@ -448,12 +463,15 @@ mod tests {
                 timeout: Duration::from_millis(100),
             })
             .await
-            .expect("command should return timeout output");
+        {
+            Ok(output) => output,
+            Err(error) => panic!("command should return timeout output: {error}"),
+        };
 
         assert!(timed_out.timed_out);
         assert_eq!(timed_out.exit_code, None);
 
-        let recovered = terminal
+        let recovered = match terminal
             .execute(TerminalCommand {
                 command_id: "test-recovered".to_string(),
                 input: "printf recovered".to_string(),
@@ -462,7 +480,10 @@ mod tests {
                 timeout: Duration::from_secs(5),
             })
             .await
-            .expect("terminal should recover after timeout");
+        {
+            Ok(output) => output,
+            Err(error) => panic!("terminal should recover after timeout: {error}"),
+        };
 
         assert!(recovered.output.contains("recovered"));
         assert_eq!(recovered.exit_code, Some(0), "{recovered:?}");

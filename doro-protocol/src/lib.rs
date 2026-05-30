@@ -82,6 +82,7 @@ pub enum CapabilityName {
     LogsRead,
     ServicesManage,
     ContainersManage,
+    VirtualMachinesManage,
     FilesRead,
     FilesWrite,
     ShellExecute,
@@ -210,6 +211,143 @@ pub struct HostContainer {
     pub labels: Value,
     pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "VirtualMachineStatus.ts")]
+pub enum VirtualMachineStatus {
+    Unknown,
+    Stopped,
+    Starting,
+    Running,
+    Paused,
+    Stopping,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "VirtualMachineNetworkMode.ts")]
+pub enum VirtualMachineNetworkMode {
+    UserNat,
+    BridgeTap,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachinePortForward.ts")]
+pub struct VirtualMachinePortForward {
+    pub host_port: u16,
+    pub guest_port: u16,
+    pub protocol: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineNetwork.ts")]
+pub struct VirtualMachineNetwork {
+    pub mode: VirtualMachineNetworkMode,
+    pub bridge: Option<String>,
+    pub mac_address: Option<String>,
+    pub port_forwards: Vec<VirtualMachinePortForward>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineDisk.ts")]
+pub struct VirtualMachineDisk {
+    pub path: String,
+    pub size_gb: u32,
+    pub format: String,
+    pub boot: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineImage.ts")]
+pub struct VirtualMachineImage {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub os_family: Option<String>,
+    pub architecture: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "VirtualMachine.ts")]
+pub struct VirtualMachine {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub vm_ref: String,
+    pub name: String,
+    pub status: VirtualMachineStatus,
+    pub provider: String,
+    pub image: String,
+    pub cpu_cores: u16,
+    pub memory_mib: u32,
+    pub disk_gb: u32,
+    pub networks: Vec<VirtualMachineNetwork>,
+    pub console: Option<Value>,
+    pub metadata: Value,
+    pub created_at: Option<DateTime<Utc>>,
+    pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineTemplate.ts")]
+pub struct VirtualMachineTemplate {
+    pub id: String,
+    pub name: String,
+    pub image_id: String,
+    pub cpu_cores: u16,
+    pub memory_mib: u32,
+    pub disk_gb: u32,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineSnapshot.ts")]
+pub struct VirtualMachineSnapshot {
+    pub id: Uuid,
+    pub vm_id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "CreateVirtualMachineRequest.ts")]
+pub struct CreateVirtualMachineRequest {
+    pub host_id: Uuid,
+    pub name: String,
+    pub image_id: String,
+    pub cpu_cores: u16,
+    pub memory_mib: u32,
+    pub disk_gb: u32,
+    pub networks: Vec<VirtualMachineNetwork>,
+    pub cloud_init: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "VirtualMachineActionRequest.ts")]
+pub struct VirtualMachineActionRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "VirtualMachineActionResponse.ts")]
+pub struct VirtualMachineActionResponse {
+    pub task: Task,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateVirtualMachineSnapshotRequest.ts")]
+pub struct CreateVirtualMachineSnapshotRequest {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "VirtualMachineConsoleResponse.ts")]
+pub struct VirtualMachineConsoleResponse {
+    pub item: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
@@ -376,6 +514,30 @@ pub struct ListHostContainersResponse {
     pub items: Vec<HostContainer>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListVirtualMachinesResponse.ts")]
+pub struct ListVirtualMachinesResponse {
+    pub items: Vec<VirtualMachine>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListVirtualMachineImagesResponse.ts")]
+pub struct ListVirtualMachineImagesResponse {
+    pub items: Vec<VirtualMachineImage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListVirtualMachineTemplatesResponse.ts")]
+pub struct ListVirtualMachineTemplatesResponse {
+    pub items: Vec<VirtualMachineTemplate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListVirtualMachineSnapshotsResponse.ts")]
+pub struct ListVirtualMachineSnapshotsResponse {
+    pub items: Vec<VirtualMachineSnapshot>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "ControlPlaneEnvironment.ts")]
 pub struct ControlPlaneEnvironment {
@@ -441,6 +603,7 @@ pub fn high_risk_capabilities() -> Vec<CapabilityName> {
         CapabilityName::ShellExecute,
         CapabilityName::FilesWrite,
         CapabilityName::ContainersManage,
+        CapabilityName::VirtualMachinesManage,
         CapabilityName::ServicesManage,
         CapabilityName::NetworkExpose,
         CapabilityName::DatabaseRestore,
@@ -502,6 +665,20 @@ mod tests {
         assert!(ResolveApprovalResponse::export_all(&cfg).is_ok());
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
         assert!(HostContainer::export_all(&cfg).is_ok());
+        assert!(VirtualMachineStatus::export_all(&cfg).is_ok());
+        assert!(VirtualMachineNetworkMode::export_all(&cfg).is_ok());
+        assert!(VirtualMachinePortForward::export_all(&cfg).is_ok());
+        assert!(VirtualMachineNetwork::export_all(&cfg).is_ok());
+        assert!(VirtualMachineDisk::export_all(&cfg).is_ok());
+        assert!(VirtualMachineImage::export_all(&cfg).is_ok());
+        assert!(VirtualMachine::export_all(&cfg).is_ok());
+        assert!(VirtualMachineTemplate::export_all(&cfg).is_ok());
+        assert!(VirtualMachineSnapshot::export_all(&cfg).is_ok());
+        assert!(CreateVirtualMachineRequest::export_all(&cfg).is_ok());
+        assert!(VirtualMachineActionRequest::export_all(&cfg).is_ok());
+        assert!(VirtualMachineActionResponse::export_all(&cfg).is_ok());
+        assert!(CreateVirtualMachineSnapshotRequest::export_all(&cfg).is_ok());
+        assert!(VirtualMachineConsoleResponse::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());
@@ -523,6 +700,10 @@ mod tests {
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
         assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
+        assert!(ListVirtualMachinesResponse::export_all(&cfg).is_ok());
+        assert!(ListVirtualMachineImagesResponse::export_all(&cfg).is_ok());
+        assert!(ListVirtualMachineTemplatesResponse::export_all(&cfg).is_ok());
+        assert!(ListVirtualMachineSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ControlPlaneEnvironment::export_all(&cfg).is_ok());
         assert!(ControlPlaneEnvironmentResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());

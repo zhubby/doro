@@ -973,6 +973,7 @@ dependencies = [
  "chrono",
  "doro-config",
  "doro-protocol",
+ "doro-vm",
  "futures-util",
  "nvml-wrapper",
  "portable-pty",
@@ -1086,6 +1087,21 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "doro-vm"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "qapi",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -1216,6 +1232,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
+name = "futures"
+version = "0.3.31"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65bc07b1a8bc7c85c5f2e110c476c7389b4554ba72af57d8445ea63a576b0876"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1288,6 +1319,7 @@ version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -2652,6 +2684,77 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
+]
+
+[[package]]
+name = "qapi"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b047adab56acc4948d4b9b58693c1f33fd13efef2d6bb5f0f66a47436ceada8"
+dependencies = [
+ "bytes",
+ "futures",
+ "log",
+ "memchr",
+ "qapi-qga",
+ "qapi-qmp",
+ "qapi-spec",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "qapi-codegen"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb959fed63a69baa2e3ae57224d885e686bc3f56c9bb3b03406969980ea57a44"
+dependencies = [
+ "qapi-parser",
+]
+
+[[package]]
+name = "qapi-parser"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b37f643cfdf67a409a9323334138a11636a5db5d56cedcc780d7a82a7fb7659"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "qapi-qga"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2945a1829999b7e600b98c8326615ece10df20bc9e9ab12ec057a6aa29b7317d"
+dependencies = [
+ "qapi-codegen",
+ "qapi-spec",
+ "serde",
+]
+
+[[package]]
+name = "qapi-qmp"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45303cac879d89361cad0287ae15f9ae1e7799b904b474152414aeece39b9875"
+dependencies = [
+ "qapi-codegen",
+ "qapi-spec",
+ "serde",
+]
+
+[[package]]
+name = "qapi-spec"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "49e6bdbbe5d13015b21a49a778a29ae3cee9c450c3154e1648aed670d57fe5ba"
+dependencies = [
+ "base64",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

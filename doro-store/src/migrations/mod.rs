@@ -40,6 +40,10 @@ pub(crate) fn all() -> &'static [Migration] {
             id: "202605300001_approval_expiration",
             sql: include_str!("../../migrations/202605300001_approval_expiration.sql"),
         },
+        Migration {
+            id: "202605300002_virtual_machines",
+            sql: include_str!("../../migrations/202605300002_virtual_machines.sql"),
+        },
     ]
 }
 

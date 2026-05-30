@@ -44,6 +44,8 @@ use doro_protocol::CreateApprovalResponse;
 use doro_protocol::CreateEnrollmentTokenRequest;
 use doro_protocol::CreateEnrollmentTokenResponse;
 use doro_protocol::CreateTaskRequest;
+use doro_protocol::CreateVirtualMachineRequest;
+use doro_protocol::CreateVirtualMachineSnapshotRequest;
 use doro_protocol::CurrentUserResponse;
 use doro_protocol::EnrollmentToken;
 use doro_protocol::HealthResponse;
@@ -56,6 +58,10 @@ use doro_protocol::ListHostsResponse;
 use doro_protocol::ListMetricSnapshotsResponse;
 use doro_protocol::ListRuntimeLogsResponse;
 use doro_protocol::ListTasksResponse;
+use doro_protocol::ListVirtualMachineImagesResponse;
+use doro_protocol::ListVirtualMachineSnapshotsResponse;
+use doro_protocol::ListVirtualMachineTemplatesResponse;
+use doro_protocol::ListVirtualMachinesResponse;
 use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::RefreshTokenRequest;
@@ -66,11 +72,17 @@ use doro_protocol::RuntimeLogEntry;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
+use doro_protocol::TaskStep;
 use doro_protocol::TerminalCommandRequest;
 use doro_protocol::TerminalCommandResponse;
 use doro_protocol::UpdateHostRequest;
 use doro_protocol::UpdateHostResponse;
 use doro_protocol::UserSummary;
+use doro_protocol::VirtualMachineActionRequest;
+use doro_protocol::VirtualMachineActionResponse;
+use doro_protocol::VirtualMachineConsoleResponse;
+use doro_protocol::VirtualMachineNetworkMode;
+use doro_protocol::VirtualMachineStatus;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
@@ -85,6 +97,7 @@ use doro_store::NewMetricSnapshot;
 use doro_store::NewRefreshToken;
 use doro_store::NewTask;
 use doro_store::NewUser;
+use doro_store::NewVirtualMachineObservation;
 use doro_store::Store;
 use doro_store::StoredUser;
 use futures_util::SinkExt;
@@ -270,6 +283,8 @@ struct AgentStreamHandle {
 #[derive(Debug)]
 enum AgentCommandReply {
     ContainerSnapshot(grpc::ContainerSnapshotEvent),
+    VirtualMachineSnapshot(grpc::VirtualMachineSnapshotEvent),
+    VirtualMachineCommandResult,
     TerminalCommandResult(grpc::TerminalCommandResultEvent),
     Failed(String),
 }
@@ -373,6 +388,64 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::TerminalCommandResult(_))) => Err(
                 ContainerRefreshError::AgentFailed("unexpected terminal response".to_string()),
             ),
+            Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(_)))
+            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult)) => {
+                Err(ContainerRefreshError::AgentFailed(
+                    "unexpected virtual machine response".to_string(),
+                ))
+            }
+            Ok(Err(_)) => Err(ContainerRefreshError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(ContainerRefreshError::Timeout)
+            }
+        }
+    }
+
+    async fn collect_virtual_machines(
+        &self,
+        host_id: Uuid,
+    ) -> Result<grpc::VirtualMachineSnapshotEvent, ContainerRefreshError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(ContainerRefreshError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(
+                grpc::control_plane_command::Command::CollectVirtualMachines(
+                    grpc::CollectVirtualMachinesCommand {
+                        provider: "qemu".to_string(),
+                    },
+                ),
+            ),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(ContainerRefreshError::NoStream);
+        }
+
+        match tokio::time::timeout(CONTAINER_REFRESH_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(snapshot))) => Ok(snapshot),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(ContainerRefreshError::AgentFailed(message))
+            }
+            Ok(Ok(_)) => Err(ContainerRefreshError::AgentFailed(
+                "unexpected agent response".to_string(),
+            )),
             Ok(Err(_)) => Err(ContainerRefreshError::NoStream),
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
@@ -432,6 +505,12 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::ContainerSnapshot(_))) => Err(
                 TerminalCommandError::AgentFailed("unexpected container response".to_string()),
             ),
+            Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(_)))
+            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult)) => {
+                Err(TerminalCommandError::AgentFailed(
+                    "unexpected virtual machine response".to_string(),
+                ))
+            }
             Ok(Err(_)) => Err(TerminalCommandError::NoStream),
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
@@ -553,10 +632,10 @@ impl AgentStreamRegistry {
 
     async fn publish_terminal_output(&self, session_id: &str, data: String) {
         let sender = self.terminal_sessions.lock().await.get(session_id).cloned();
-        if let Some(sender) = sender {
-            if sender.send(data).is_err() {
-                self.terminal_sessions.lock().await.remove(session_id);
-            }
+        if let Some(sender) = sender
+            && sender.send(data).is_err()
+        {
+            self.terminal_sessions.lock().await.remove(session_id);
         }
     }
 
@@ -695,6 +774,46 @@ pub fn app_with_auth_and_streams(
             get(list_host_containers),
         )
         .route("/api/v1/containers", get(refresh_containers))
+        .route(
+            "/api/v1/virtual-machines",
+            get(refresh_virtual_machines).post(create_virtual_machine),
+        )
+        .route(
+            "/api/v1/hosts/:host_id/virtual-machines",
+            get(list_host_virtual_machines),
+        )
+        .route(
+            "/api/v1/virtual-machines/images",
+            get(list_virtual_machine_images),
+        )
+        .route(
+            "/api/v1/virtual-machines/templates",
+            get(list_virtual_machine_templates),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/start",
+            axum::routing::post(start_virtual_machine),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/stop",
+            axum::routing::post(stop_virtual_machine),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/restart",
+            axum::routing::post(restart_virtual_machine),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/delete",
+            axum::routing::post(delete_virtual_machine),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/snapshots",
+            get(list_virtual_machine_snapshots).post(create_virtual_machine_snapshot),
+        )
+        .route(
+            "/api/v1/virtual-machines/:vm_id/console",
+            get(virtual_machine_console),
+        )
         .route(
             "/api/v1/control-plane/environment",
             get(control_plane_environment),
@@ -1072,6 +1191,25 @@ impl AgentControlPlane for GrpcAgentService {
                         {
                             let _ = reply_sender
                                 .send(AgentCommandReply::ContainerSnapshot(snapshot.clone()));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::VirtualMachineSnapshot(snapshot)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && !snapshot.command_id.is_empty()
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&snapshot.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::VirtualMachineSnapshot(snapshot.clone()));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::VirtualMachineCommandResult(result)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ =
+                                reply_sender.send(AgentCommandReply::VirtualMachineCommandResult);
                         }
                     }
                     Some(grpc::agent_event::Event::CommandResult(result)) => {
@@ -1481,6 +1619,274 @@ async fn refresh_containers(
         items.extend(state.store.containers().list_by_host(host.id).await?);
     }
     Ok(Json(ListHostContainersResponse { items }))
+}
+
+async fn refresh_virtual_machines(
+    State(state): State<AppState>,
+) -> Result<Json<ListVirtualMachinesResponse>, AppError> {
+    let hosts = state.store.hosts().list().await?;
+    let online_hosts = hosts
+        .into_iter()
+        .filter(|host| host.status == HostStatus::Online)
+        .filter(|host| {
+            host.capabilities
+                .iter()
+                .any(|capability| capability.name == CapabilityName::VirtualMachinesManage)
+        })
+        .collect::<Vec<_>>();
+    if online_hosts.is_empty() {
+        return Ok(Json(ListVirtualMachinesResponse {
+            items: state.store.virtual_machines().list().await?,
+        }));
+    }
+
+    for host in &online_hosts {
+        let snapshot = state
+            .agent_streams
+            .collect_virtual_machines(host.id)
+            .await
+            .map_err(container_refresh_app_error)?;
+        let payload = virtual_machine_snapshot_payload(&snapshot);
+        ingest_agent_event(
+            &state.store,
+            Some(host.id),
+            "virtual_machine.snapshot",
+            &payload,
+            Utc::now(),
+        )
+        .await?;
+    }
+
+    Ok(Json(ListVirtualMachinesResponse {
+        items: state.store.virtual_machines().list().await?,
+    }))
+}
+
+async fn list_host_virtual_machines(
+    State(state): State<AppState>,
+    AxumPath(host_id): AxumPath<Uuid>,
+) -> Result<Json<ListVirtualMachinesResponse>, AppError> {
+    Ok(Json(ListVirtualMachinesResponse {
+        items: state.store.virtual_machines().list_by_host(host_id).await?,
+    }))
+}
+
+async fn list_virtual_machine_images(
+    State(state): State<AppState>,
+) -> Result<Json<ListVirtualMachineImagesResponse>, AppError> {
+    Ok(Json(ListVirtualMachineImagesResponse {
+        items: state.store.virtual_machines().images().await?,
+    }))
+}
+
+async fn list_virtual_machine_templates(
+    State(state): State<AppState>,
+) -> Result<Json<ListVirtualMachineTemplatesResponse>, AppError> {
+    Ok(Json(ListVirtualMachineTemplatesResponse {
+        items: state.store.virtual_machines().templates().await?,
+    }))
+}
+
+async fn create_virtual_machine(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<CreateVirtualMachineRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    validate_virtual_machine_create_request(&request)?;
+    let task = create_virtual_machine_task(
+        &state,
+        current_user.username,
+        request.host_id,
+        format!("create virtual machine {}", request.name),
+        "Create QEMU virtual machine",
+        serde_json::to_value(request)?,
+    )
+    .await?;
+    Ok(Json(VirtualMachineActionResponse { task }))
+}
+
+async fn start_virtual_machine(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+    Json(request): Json<VirtualMachineActionRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    vm_action_task(state, current_user, vm_id, "start", request).await
+}
+
+async fn stop_virtual_machine(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+    Json(request): Json<VirtualMachineActionRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    vm_action_task(state, current_user, vm_id, "stop", request).await
+}
+
+async fn restart_virtual_machine(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+    Json(request): Json<VirtualMachineActionRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    vm_action_task(state, current_user, vm_id, "restart", request).await
+}
+
+async fn delete_virtual_machine(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+    Json(request): Json<VirtualMachineActionRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    vm_action_task(state, current_user, vm_id, "delete", request).await
+}
+
+async fn vm_action_task(
+    state: AppState,
+    current_user: CurrentUser,
+    vm_id: Uuid,
+    action: &'static str,
+    request: VirtualMachineActionRequest,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    let vm = state
+        .store
+        .virtual_machines()
+        .list()
+        .await?
+        .into_iter()
+        .find(|vm| vm.id == vm_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "virtual machine not found"))?;
+    let task = create_virtual_machine_task(
+        &state,
+        current_user.username,
+        vm.host_id,
+        format!("{action} virtual machine {}", vm.name),
+        format!("{action} QEMU virtual machine"),
+        serde_json::json!({
+            "action": action,
+            "vm_id": vm.id,
+            "vm_ref": vm.vm_ref,
+            "reason": request.reason,
+        }),
+    )
+    .await?;
+    Ok(Json(VirtualMachineActionResponse { task }))
+}
+
+async fn list_virtual_machine_snapshots(
+    State(_state): State<AppState>,
+    AxumPath(_vm_id): AxumPath<Uuid>,
+) -> Result<Json<ListVirtualMachineSnapshotsResponse>, AppError> {
+    Ok(Json(ListVirtualMachineSnapshotsResponse {
+        items: Vec::new(),
+    }))
+}
+
+async fn create_virtual_machine_snapshot(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+    Json(request): Json<CreateVirtualMachineSnapshotRequest>,
+) -> Result<Json<VirtualMachineActionResponse>, AppError> {
+    let vm = state
+        .store
+        .virtual_machines()
+        .list()
+        .await?
+        .into_iter()
+        .find(|vm| vm.id == vm_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "virtual machine not found"))?;
+    let task = create_virtual_machine_task(
+        &state,
+        current_user.username,
+        vm.host_id,
+        format!("snapshot virtual machine {}", vm.name),
+        "Create QEMU virtual machine snapshot",
+        serde_json::json!({
+            "action": "snapshot",
+            "vm_id": vm.id,
+            "vm_ref": vm.vm_ref,
+            "name": request.name,
+            "description": request.description,
+        }),
+    )
+    .await?;
+    Ok(Json(VirtualMachineActionResponse { task }))
+}
+
+async fn virtual_machine_console(
+    State(state): State<AppState>,
+    AxumPath(vm_id): AxumPath<Uuid>,
+) -> Result<Json<VirtualMachineConsoleResponse>, AppError> {
+    let vm = state
+        .store
+        .virtual_machines()
+        .list()
+        .await?
+        .into_iter()
+        .find(|vm| vm.id == vm_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "virtual machine not found"))?;
+    Ok(Json(VirtualMachineConsoleResponse {
+        item: vm.console.unwrap_or_else(|| serde_json::json!({})),
+    }))
+}
+
+fn validate_virtual_machine_create_request(
+    request: &CreateVirtualMachineRequest,
+) -> Result<(), AppError> {
+    if request.name.trim().is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "virtual machine name is required",
+        ));
+    }
+    if request.cpu_cores == 0 || request.memory_mib < 128 || request.disk_gb == 0 {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "virtual machine resources are invalid",
+        ));
+    }
+    if request.networks.iter().any(|network| {
+        network.mode == VirtualMachineNetworkMode::BridgeTap && network.bridge.is_none()
+    }) {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "bridge network requires bridge name",
+        ));
+    }
+    Ok(())
+}
+
+async fn create_virtual_machine_task(
+    state: &AppState,
+    created_by: String,
+    host_id: Uuid,
+    title: String,
+    summary: impl Into<String>,
+    payload: Value,
+) -> Result<Task, AppError> {
+    let step_id = Uuid::new_v4();
+    let task = state
+        .store
+        .tasks()
+        .create_with_steps(NewTask {
+            id: Uuid::new_v4(),
+            host_id: Some(host_id),
+            title,
+            prompt: None,
+            status: TaskStatus::WaitingApproval,
+            created_by,
+            created_at: Utc::now(),
+            steps: vec![TaskStep {
+                id: step_id,
+                capability: CapabilityName::VirtualMachinesManage,
+                risk: CapabilityRisk::High,
+                summary: summary.into(),
+                payload,
+            }],
+        })
+        .await?;
+    Ok(task)
 }
 
 async fn control_plane_environment(
@@ -2172,6 +2578,19 @@ fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(String, Value)
                 "fields": parse_event_payload(&line.fields_json),
             }),
         )),
+        grpc::agent_event::Event::VirtualMachineSnapshot(snapshot) => Some((
+            "virtual_machine.snapshot".to_string(),
+            virtual_machine_snapshot_payload(snapshot),
+        )),
+        grpc::agent_event::Event::VirtualMachineCommandResult(result) => Some((
+            "virtual_machine.command_result".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "status": result.status,
+                "message": result.message,
+                "details": parse_event_payload(&result.details_json),
+            }),
+        )),
     }
 }
 
@@ -2218,6 +2637,32 @@ fn container_observation_payload(container: &grpc::ContainerObservation) -> Valu
     })
 }
 
+fn virtual_machine_snapshot_payload(snapshot: &grpc::VirtualMachineSnapshotEvent) -> Value {
+    serde_json::json!({
+        "command_id": snapshot.command_id,
+        "provider": snapshot.provider,
+        "virtual_machines": snapshot.virtual_machines.iter().map(virtual_machine_observation_payload).collect::<Vec<_>>(),
+        "extra": parse_event_payload(&snapshot.extra_json),
+    })
+}
+
+fn virtual_machine_observation_payload(vm: &grpc::VirtualMachineObservation) -> Value {
+    serde_json::json!({
+        "vm_ref": vm.vm_ref,
+        "name": vm.name,
+        "status": vm.status,
+        "cpu_cores": vm.cpu_cores,
+        "memory_mib": vm.memory_mib,
+        "disk_gb": vm.disk_gb,
+        "image": vm.image,
+        "networks": parse_event_payload(&vm.networks_json),
+        "console": parse_event_payload(&vm.console_json),
+        "metadata": parse_event_payload(&vm.metadata_json),
+        "created_at": vm.created_at.as_ref().and_then(timestamp_to_utc),
+        "observed_at": vm.observed_at.as_ref().and_then(timestamp_to_utc),
+    })
+}
+
 async fn ingest_agent_event(
     store: &Store,
     host_id: Option<Uuid>,
@@ -2237,9 +2682,107 @@ async fn ingest_agent_event(
                 store.containers().upsert_many(containers).await?;
             }
         }
+        "virtual_machine.snapshot" => {
+            if let Some(host_id) = host_id {
+                let vms = virtual_machine_observations_from_payload(host_id, payload, recorded_at);
+                store.virtual_machines().upsert_many(vms).await?;
+            }
+        }
         _ => {}
     }
     Ok(())
+}
+
+fn virtual_machine_observations_from_payload(
+    host_id: Uuid,
+    payload: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Vec<NewVirtualMachineObservation> {
+    let provider = payload
+        .get("provider")
+        .and_then(Value::as_str)
+        .unwrap_or("qemu");
+    payload
+        .get("virtual_machines")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|vm| virtual_machine_observation(host_id, provider, vm, recorded_at))
+        .collect()
+}
+
+fn virtual_machine_observation(
+    host_id: Uuid,
+    provider: &str,
+    vm: &Value,
+    recorded_at: DateTime<Utc>,
+) -> Option<NewVirtualMachineObservation> {
+    let vm_ref = vm.get("vm_ref").and_then(Value::as_str)?.to_string();
+    let status = match vm
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+    {
+        "stopped" => VirtualMachineStatus::Stopped,
+        "starting" => VirtualMachineStatus::Starting,
+        "running" => VirtualMachineStatus::Running,
+        "paused" => VirtualMachineStatus::Paused,
+        "stopping" => VirtualMachineStatus::Stopping,
+        "failed" => VirtualMachineStatus::Failed,
+        _ => VirtualMachineStatus::Unknown,
+    };
+    Some(NewVirtualMachineObservation {
+        host_id,
+        provider: provider.to_string(),
+        vm_ref,
+        name: vm
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unnamed-vm")
+            .to_string(),
+        status,
+        image: vm
+            .get("image")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        cpu_cores: vm
+            .get("cpu_cores")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(u16::MAX as u64) as u16,
+        memory_mib: vm
+            .get("memory_mib")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32,
+        disk_gb: vm
+            .get("disk_gb")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32,
+        networks: vm
+            .get("networks")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default(),
+        console: vm.get("console").cloned().filter(|value| !value.is_null()),
+        metadata: vm
+            .get("metadata")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({})),
+        created_at: vm
+            .get("created_at")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc)),
+        observed_at: vm
+            .get("observed_at")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or(recorded_at),
+    })
 }
 
 fn metric_snapshot_from_payload(
@@ -2812,21 +3355,20 @@ mod tests {
             let registry = registry.clone();
             async move { registry.collect_containers(host_id).await }
         });
-        let command = receiver
-            .recv()
-            .await
-            .expect("registry should send collect command")
-            .expect("command stream item should be ok");
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send collect command"),
+        };
         assert!(matches!(
             command.command,
             Some(grpc::control_plane_command::Command::CollectContainers(_))
         ));
-        let reply_sender = pending
-            .lock()
-            .await
-            .remove(&command.command_id)
-            .expect("command should have pending waiter");
-        reply_sender
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
             .send(AgentCommandReply::ContainerSnapshot(
                 grpc::ContainerSnapshotEvent {
                     command_id: command.command_id,
@@ -2835,12 +3377,16 @@ mod tests {
                     extra_json: "{}".to_string(),
                 },
             ))
-            .expect("waiter should receive snapshot");
+            .is_err()
+        {
+            panic!("waiter should receive snapshot");
+        }
 
-        let snapshot = collect
-            .await
-            .expect("collect task should complete")
-            .expect("snapshot should succeed");
+        let snapshot = match collect.await {
+            Ok(Ok(snapshot)) => snapshot,
+            Ok(Err(error)) => panic!("snapshot should succeed: {error:?}"),
+            Err(error) => panic!("collect task should complete: {error}"),
+        };
         assert_eq!(snapshot.runtime, "docker");
     }
 
@@ -2866,21 +3412,20 @@ mod tests {
                     .await
             }
         });
-        let command = receiver
-            .recv()
-            .await
-            .expect("registry should send terminal command")
-            .expect("command stream item should be ok");
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send terminal command"),
+        };
         assert!(matches!(
             command.command,
             Some(grpc::control_plane_command::Command::RunTerminalCommand(_))
         ));
-        let reply_sender = pending
-            .lock()
-            .await
-            .remove(&command.command_id)
-            .expect("command should have pending waiter");
-        reply_sender
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
             .send(AgentCommandReply::TerminalCommandResult(
                 grpc::TerminalCommandResultEvent {
                     command_id: command.command_id,
@@ -2891,12 +3436,16 @@ mod tests {
                     finished_at: Some(protobuf_timestamp_now()),
                 },
             ))
-            .expect("waiter should receive terminal result");
+            .is_err()
+        {
+            panic!("waiter should receive terminal result");
+        }
 
-        let result = execute
-            .await
-            .expect("execute task should complete")
-            .expect("terminal command should succeed");
+        let result = match execute.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => panic!("terminal command should succeed: {error:?}"),
+            Err(error) => panic!("execute task should complete: {error}"),
+        };
         assert_eq!(result.output, "/tmp");
         assert_eq!(result.exit_code, 0);
     }
@@ -2914,12 +3463,12 @@ mod tests {
         registry
             .open_terminal_session(host_id, session_id.clone(), 100, 30, output_sender)
             .await
-            .expect("terminal session should open");
-        let command = receiver
-            .recv()
-            .await
-            .expect("registry should send open terminal command")
-            .expect("command stream item should be ok");
+            .unwrap_or_else(|error| panic!("terminal session should open: {error:?}"));
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send open terminal command"),
+        };
         assert!(matches!(
             command.command,
             Some(grpc::control_plane_command::Command::OpenTerminalSession(_))
@@ -2928,10 +3477,10 @@ mod tests {
         registry
             .publish_terminal_output(&session_id, "hello".to_string())
             .await;
-        let output = output_receiver
-            .recv()
-            .await
-            .expect("websocket output channel should receive terminal output");
+        let output = match output_receiver.recv().await {
+            Some(output) => output,
+            None => panic!("websocket output channel should receive terminal output"),
+        };
         assert_eq!(output, "hello");
 
         registry
@@ -2949,11 +3498,11 @@ mod tests {
 
         registry.shutdown_all("control-plane shutting down").await;
 
-        let command = receiver
-            .recv()
-            .await
-            .expect("registry should send shutdown command")
-            .expect("command stream item should be ok");
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send shutdown command"),
+        };
         let Some(grpc::control_plane_command::Command::Shutdown(shutdown)) = command.command else {
             panic!("shutdown_all should send shutdown command");
         };

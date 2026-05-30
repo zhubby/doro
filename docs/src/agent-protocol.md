@@ -22,6 +22,14 @@ process_names = []
 container_metrics_enabled = false
 docker_socket_path = "/var/run/docker.sock"
 gpu_metrics_enabled = false
+vm_manage_enabled = false
+qemu_binary_dir = "/usr/local/bin"
+vm_state_dir = "/var/lib/doro/vms"
+vm_image_dir = "/var/lib/doro/vm-images"
+vm_bridge_names = []
+vm_user_network_enabled = true
+vm_console_enabled = true
+vm_vnc_bind = "127.0.0.1"
 ```
 
 On first run, `doro agent` requires `enrollment_token`. If `agent_id` and `host_id` are missing, the agent calls `Enroll`, writes the returned identifiers back to the config file, and uses those identifiers for subsequent heartbeats and streams.
@@ -44,7 +52,7 @@ The initial service surface is:
 
 The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, runtime log lines, and local observation events. The control plane responds with an `ack` command and persists inbound operational events. During control-plane maintenance or process shutdown, the control plane sends a `shutdown` command so the agent can close the current stream promptly and wait before reconnecting; this is not a request to stop the agent process or mark a task failed. If the connection fails or the stream closes, including after a shutdown command, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds.
 
-The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
+The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
 Interactive terminal sessions use the same agent stream plus a browser WebSocket bridge. The UI connects to `/api/v1/terminal/:host_id/ws`, the control plane sends `OpenTerminalSessionCommand`, browser keypresses become `TerminalInputCommand`, terminal resizes become `ResizeTerminalSessionCommand`, and agent PTY output returns as `TerminalOutputEvent`. Closing the browser socket sends `CloseTerminalSessionCommand`, and the agent confirms with `TerminalSessionClosedEvent`.
 
@@ -56,6 +64,8 @@ The base system collector is supported on macOS and Linux. Docker collection is 
 
 - `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
 - `container.snapshot`: read-only Docker observations. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
+- `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
+- `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
@@ -70,6 +80,7 @@ Agent protocol traffic is persisted by `doro-store`:
 - Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
 - `metrics.snapshot` payloads are normalized into `metric_snapshots`.
 - `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
+- `virtual_machine.snapshot` payloads update current `virtual_machines` rows by host, provider, and VM reference.
 
 Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
 

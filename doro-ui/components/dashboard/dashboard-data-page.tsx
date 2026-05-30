@@ -10,6 +10,7 @@ import {
   getHosts,
   getSettings,
   getTasks,
+  refreshVirtualMachines,
 } from "@/lib/control-plane-api";
 import { OverviewPage } from "@/components/dashboard/overview/overview-page";
 import { HostsPage } from "@/components/dashboard/hosts/hosts-page";
@@ -25,6 +26,7 @@ import type {
   MetricSnapshot,
   SettingsResponse,
   Task,
+  VirtualMachine,
 } from "@/types/api";
 
 type DashboardData = {
@@ -35,6 +37,7 @@ type DashboardData = {
   controlPlaneEnvironment: ControlPlaneEnvironment | null;
   metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
+  virtualMachines: VirtualMachine[];
   error: string | null;
 };
 
@@ -46,6 +49,7 @@ const emptyData: DashboardData = {
   controlPlaneEnvironment: null,
   metricHistoryByHost: {},
   settings: null,
+  virtualMachines: [],
   error: null,
 };
 
@@ -61,12 +65,15 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
-      const [hosts, tasks, approvals, apps, settings] = await Promise.all([
+      const [hosts, tasks, approvals, apps, settings, virtualMachines] = await Promise.all([
         getHosts(),
         getTasks(),
         getApprovals(),
         getApps(),
         getSettings(),
+        view === "apps"
+          ? refreshVirtualMachines()
+          : Promise.resolve({ data: null, error: null }),
       ]);
       if (cancelled) {
         return;
@@ -91,6 +98,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
         approvals.error ??
         apps.error ??
         settings.error ??
+        virtualMachines.error ??
         metricResults.find((result) => result.error)?.error ??
         controlPlaneEnvironment.error ??
         null;
@@ -121,6 +129,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
             controlPlaneEnvironment.data?.item ?? current.controlPlaneEnvironment,
           metricHistoryByHost,
           settings: settings.data,
+          virtualMachines: virtualMachines.data?.items ?? current.virtualMachines,
           error: null,
         };
       });
@@ -203,7 +212,7 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
     );
   }
   if (view === "apps") {
-    return <AppsPage apiError={data.error} />;
+    return <AppsPage machines={data.virtualMachines} hosts={data.hosts} apiError={data.error} />;
   }
   if (view === "settings") {
     return <SettingsPage settings={data.settings} apiError={data.error} />;
