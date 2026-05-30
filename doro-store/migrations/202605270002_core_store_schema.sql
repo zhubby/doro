@@ -124,6 +124,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     reason TEXT NOT NULL,
     status TEXT NOT NULL,
     requested_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
     resolved_at TIMESTAMPTZ,
     resolved_by TEXT,
     decision_note TEXT

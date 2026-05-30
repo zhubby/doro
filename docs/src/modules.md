@@ -14,7 +14,8 @@ The first durable schema is organized into table families:
 
 - Identity: `hosts`, `agents`, `enrollment_tokens`, and `agent_capabilities`.
 - Observability: `metric_snapshots`, `agent_events`, and `operation_logs`.
-- Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`.
+- Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`. Approvals are
+  durable control-plane records with explicit expiration and decision metadata.
 - Configuration and resource directory: `settings`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
 
 The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as metric snapshots, current container rows, and audit events.

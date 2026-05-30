@@ -14,6 +14,7 @@ pub struct Model {
     pub resolved_at: Option<DateTimeWithTimeZone>,
     pub resolved_by: Option<String>,
     pub decision_note: Option<String>,
+    pub expires_at: DateTimeWithTimeZone,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

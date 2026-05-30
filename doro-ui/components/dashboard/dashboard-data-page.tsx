@@ -175,7 +175,32 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
     return <TasksPage tasks={data.tasks} apiError={data.error} />;
   }
   if (view === "approvals") {
-    return <ApprovalsPage approvals={data.approvals} apiError={data.error} />;
+    return (
+      <ApprovalsPage
+        approvals={data.approvals}
+        apiError={data.error}
+        onApprovalCreated={(approval) => {
+          setData((current) => ({
+            ...current,
+            approvals: [approval, ...current.approvals],
+          }));
+        }}
+        onApprovalDeleted={(approvalId) => {
+          setData((current) => ({
+            ...current,
+            approvals: current.approvals.filter((approval) => approval.id !== approvalId),
+          }));
+        }}
+        onApprovalUpdated={(approval) => {
+          setData((current) => ({
+            ...current,
+            approvals: current.approvals.map((item) =>
+              item.id === approval.id ? approval : item,
+            ),
+          }));
+        }}
+      />
+    );
   }
   if (view === "apps") {
     return <AppsPage apiError={data.error} />;

@@ -90,6 +90,9 @@ The `agents` table is the durable identity table. The initial status values are 
 - `AgentCapability`: an action class the agent can perform.
 - `Task`: a control-plane unit of work.
 - `TaskStep`: a capability-bound operation inside a task.
-- `ApprovalRequest`: an explicit approval gate for risky steps.
+- `ApprovalRequest`: an explicit approval gate for risky steps. Approval requests
+  carry `requested_at` and `expires_at`; pending approvals become expired after
+  their validity window and can no longer be approved or denied. Terminal
+  decision states are `approved`, `denied`, and `expired`.
 - `AgentEvent`: event stream from agent to control plane.
 - `MetricSnapshot`: point-in-time host metrics.

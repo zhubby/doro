@@ -2,6 +2,8 @@ import type {
   AuthStatusResponse,
   AuthTokenResponse,
   ControlPlaneEnvironmentResponse,
+  CreateApprovalRequest,
+  CreateApprovalResponse,
   CreateEnrollmentTokenRequest,
   CreateEnrollmentTokenResponse,
   CurrentUserResponse,
@@ -16,6 +18,8 @@ import type {
   LoginRequest,
   RefreshTokenRequest,
   RegisterRequest,
+  ResolveApprovalRequest,
+  ResolveApprovalResponse,
   SettingsResponse,
   TerminalCommandRequest,
   TerminalCommandResponse,
@@ -314,6 +318,45 @@ export async function getTasks() {
 
 export async function getApprovals() {
   return getJson<ListApprovalsResponse>("/api/v1/approvals");
+}
+
+export async function createApproval(request: CreateApprovalRequest) {
+  return authedRequest<CreateApprovalResponse>("/api/v1/approvals", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function deleteApproval(approvalId: string) {
+  return authedRequest<null>(`/api/v1/approvals/${approvalId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function approveApproval(
+  approvalId: string,
+  request: ResolveApprovalRequest = { decision_note: null },
+) {
+  return authedRequest<ResolveApprovalResponse>(
+    `/api/v1/approvals/${approvalId}/approve`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function denyApproval(
+  approvalId: string,
+  request: ResolveApprovalRequest = { decision_note: null },
+) {
+  return authedRequest<ResolveApprovalResponse>(
+    `/api/v1/approvals/${approvalId}/deny`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export async function getApps() {

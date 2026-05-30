@@ -63,6 +63,16 @@ pub struct NewTask {
 }
 
 #[derive(Debug, Clone)]
+pub struct NewApproval {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub step_id: Uuid,
+    pub reason: String,
+    pub requested_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct AgentRegistration {
     pub agent_id: Uuid,
     pub host_id: Uuid,
@@ -668,6 +678,7 @@ impl TaskRepository<'_> {
                     reason: Set(format!("step requires {:?} capability approval", step.risk)),
                     status: Set(serialize_approval_status(ApprovalStatus::Pending)),
                     requested_at: Set(new_task.created_at.into()),
+                    expires_at: Set((new_task.created_at + chrono::Duration::hours(24)).into()),
                     resolved_at: Set(None),
                     resolved_by: Set(None),
                     decision_note: Set(None),
@@ -723,21 +734,168 @@ pub struct ApprovalRepository<'a> {
 
 impl ApprovalRepository<'_> {
     pub async fn list(&self) -> Result<Vec<ApprovalRequest>, DbErr> {
+        self.expire_pending(Utc::now()).await?;
         let approvals = entities::approvals::Entity::find()
             .order_by(entities::approvals::Column::RequestedAt, Order::Desc)
             .all(self.store.connection())
             .await?;
         Ok(approvals
             .into_iter()
-            .map(|approval| ApprovalRequest {
-                id: approval.id,
-                task_id: approval.task_id,
-                step_id: approval.step_id,
-                reason: approval.reason,
-                status: parse_approval_status(&approval.status).unwrap_or(ApprovalStatus::Pending),
-                requested_at: approval.requested_at.into(),
-            })
+            .map(approval_model_to_protocol)
             .collect())
+    }
+
+    pub async fn create(&self, approval: NewApproval) -> Result<ApprovalRequest, DbErr> {
+        let step = entities::task_steps::Entity::find()
+            .filter(entities::task_steps::Column::Id.eq(approval.step_id))
+            .filter(entities::task_steps::Column::TaskId.eq(approval.task_id))
+            .one(self.store.connection())
+            .await?;
+        if step.is_none() {
+            return Err(DbErr::RecordNotFound(
+                "task step not found for approval".to_string(),
+            ));
+        }
+
+        let model = entities::approvals::ActiveModel {
+            id: Set(approval.id),
+            task_id: Set(approval.task_id),
+            step_id: Set(approval.step_id),
+            reason: Set(approval.reason),
+            status: Set(serialize_approval_status(ApprovalStatus::Pending)),
+            requested_at: Set(approval.requested_at.into()),
+            expires_at: Set(approval.expires_at.into()),
+            resolved_at: Set(None),
+            resolved_by: Set(None),
+            decision_note: Set(None),
+        }
+        .insert(self.store.connection())
+        .await?;
+
+        Ok(approval_model_to_protocol(model))
+    }
+
+    pub async fn delete(&self, approval_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::approvals::Entity::delete_by_id(approval_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    pub async fn approve(
+        &self,
+        approval_id: Uuid,
+        resolved_by: String,
+        decision_note: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<ApprovalRequest, DbErr> {
+        self.resolve(
+            approval_id,
+            ApprovalStatus::Approved,
+            resolved_by,
+            decision_note,
+            now,
+        )
+        .await
+    }
+
+    pub async fn deny(
+        &self,
+        approval_id: Uuid,
+        resolved_by: String,
+        decision_note: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<ApprovalRequest, DbErr> {
+        self.resolve(
+            approval_id,
+            ApprovalStatus::Denied,
+            resolved_by,
+            decision_note,
+            now,
+        )
+        .await
+    }
+
+    async fn resolve(
+        &self,
+        approval_id: Uuid,
+        status: ApprovalStatus,
+        resolved_by: String,
+        decision_note: Option<String>,
+        now: DateTime<Utc>,
+    ) -> Result<ApprovalRequest, DbErr> {
+        self.expire_pending(now).await?;
+        let approval = entities::approvals::Entity::find_by_id(approval_id)
+            .one(self.store.connection())
+            .await?
+            .ok_or_else(|| DbErr::RecordNotFound("approval not found".to_string()))?;
+        match parse_approval_status(&approval.status).unwrap_or(ApprovalStatus::Pending) {
+            ApprovalStatus::Pending => {}
+            ApprovalStatus::Expired => return Err(DbErr::Custom("approval expired".to_string())),
+            ApprovalStatus::Approved | ApprovalStatus::Denied => {
+                return Err(DbErr::Custom("approval already resolved".to_string()));
+            }
+        }
+
+        let model = entities::approvals::ActiveModel {
+            id: Set(approval.id),
+            task_id: Set(approval.task_id),
+            step_id: Set(approval.step_id),
+            reason: Set(approval.reason),
+            status: Set(serialize_approval_status(status)),
+            requested_at: Set(approval.requested_at),
+            expires_at: Set(approval.expires_at),
+            resolved_at: Set(Some(now.into())),
+            resolved_by: Set(Some(resolved_by)),
+            decision_note: Set(decision_note),
+        }
+        .update(self.store.connection())
+        .await?;
+
+        Ok(approval_model_to_protocol(model))
+    }
+
+    async fn expire_pending(&self, now: DateTime<Utc>) -> Result<(), DbErr> {
+        entities::approvals::Entity::update_many()
+            .col_expr(
+                entities::approvals::Column::Status,
+                sea_orm::sea_query::Expr::value(serialize_approval_status(ApprovalStatus::Expired)),
+            )
+            .col_expr(
+                entities::approvals::Column::ResolvedAt,
+                sea_orm::sea_query::Expr::value(now),
+            )
+            .col_expr(
+                entities::approvals::Column::ResolvedBy,
+                sea_orm::sea_query::Expr::value("system"),
+            )
+            .col_expr(
+                entities::approvals::Column::DecisionNote,
+                sea_orm::sea_query::Expr::value("approval expired"),
+            )
+            .filter(
+                entities::approvals::Column::Status
+                    .eq(serialize_approval_status(ApprovalStatus::Pending)),
+            )
+            .filter(entities::approvals::Column::ExpiresAt.lte(now))
+            .exec(self.store.connection())
+            .await?;
+        Ok(())
+    }
+}
+
+fn approval_model_to_protocol(approval: entities::approvals::Model) -> ApprovalRequest {
+    ApprovalRequest {
+        id: approval.id,
+        task_id: approval.task_id,
+        step_id: approval.step_id,
+        reason: approval.reason,
+        status: parse_approval_status(&approval.status).unwrap_or(ApprovalStatus::Pending),
+        requested_at: approval.requested_at.into(),
+        expires_at: approval.expires_at.into(),
+        resolved_at: approval.resolved_at.map(Into::into),
+        resolved_by: approval.resolved_by,
+        decision_note: approval.decision_note,
     }
 }
 
@@ -1718,6 +1876,145 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn creates_approval_for_matching_task_step() -> anyhow::Result<()> {
+        let task_id = Uuid::new_v4();
+        let step_id = Uuid::new_v4();
+        let approval_id = Uuid::new_v4();
+        let requested_at = Utc::now();
+        let expires_at = requested_at + chrono::Duration::hours(24);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[task_step_model(task_id, step_id)]])
+            .append_query_results([[approval_model_with_ids(
+                approval_id,
+                task_id,
+                step_id,
+                ApprovalStatus::Pending,
+                requested_at,
+                expires_at,
+            )]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let approval = store
+            .approvals()
+            .create(NewApproval {
+                id: approval_id,
+                task_id,
+                step_id,
+                reason: "high risk step".to_string(),
+                requested_at,
+                expires_at,
+            })
+            .await?;
+
+        assert_eq!(approval.task_id, task_id);
+        assert_eq!(approval.step_id, step_id);
+        assert_eq!(approval.status, ApprovalStatus::Pending);
+        assert_eq!(approval.expires_at, expires_at);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lists_approvals_after_refreshing_expired_pending_rows() -> anyhow::Result<()> {
+        let model = approval_model(
+            ApprovalStatus::Expired,
+            Utc::now() - chrono::Duration::hours(25),
+            Utc::now() - chrono::Duration::hours(1),
+        );
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([mock_exec_result()])
+            .append_query_results([[model]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let approvals = store.approvals().list().await?;
+
+        assert_eq!(approvals.len(), 1);
+        assert_eq!(approvals[0].status, ApprovalStatus::Expired);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn approves_pending_approval() -> anyhow::Result<()> {
+        let now = Utc::now();
+        let model = approval_model(
+            ApprovalStatus::Pending,
+            now - chrono::Duration::minutes(5),
+            now + chrono::Duration::hours(1),
+        );
+        let approval_id = model.id;
+        let mut resolved_model = model.clone();
+        resolved_model.status = serialize_approval_status(ApprovalStatus::Approved);
+        resolved_model.resolved_at = Some(now.into());
+        resolved_model.resolved_by = Some("admin".to_string());
+        resolved_model.decision_note = Some("ok".to_string());
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[model]])
+            .append_query_results([[resolved_model]])
+            .append_exec_results([mock_exec_result()])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let approval = store
+            .approvals()
+            .approve(
+                approval_id,
+                "admin".to_string(),
+                Some("ok".to_string()),
+                now,
+            )
+            .await?;
+
+        assert_eq!(approval.status, ApprovalStatus::Approved);
+        assert_eq!(approval.resolved_by.as_deref(), Some("admin"));
+        assert_eq!(approval.decision_note.as_deref(), Some("ok"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn denies_resolution_for_expired_approval() {
+        let now = Utc::now();
+        let model = approval_model(
+            ApprovalStatus::Expired,
+            now - chrono::Duration::hours(25),
+            now - chrono::Duration::hours(1),
+        );
+        let approval_id = model.id;
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([mock_exec_result()])
+            .append_query_results([[model]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let error = match store
+            .approvals()
+            .deny(approval_id, "admin".to_string(), None, now)
+            .await
+        {
+            Ok(_) => panic!("expired approval should not resolve"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("approval expired"));
+    }
+
+    #[tokio::test]
+    async fn delete_approval_reports_missing_row() -> anyhow::Result<()> {
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 0,
+            }])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let deleted = store.approvals().delete(Uuid::new_v4()).await?;
+
+        assert!(!deleted);
+        Ok(())
+    }
+
     #[test]
     fn normalize_labels_trims_and_deduplicates_values() {
         let labels = normalize_labels(vec![
@@ -1837,6 +2134,57 @@ mod tests {
             used_at,
             used_by_agent_id,
             created_at: Utc::now().into(),
+        }
+    }
+
+    fn task_step_model(task_id: Uuid, step_id: Uuid) -> entities::task_steps::Model {
+        entities::task_steps::Model {
+            id: step_id,
+            task_id,
+            position: 0,
+            capability: "shell_execute".to_string(),
+            risk: "high".to_string(),
+            summary: "execute command".to_string(),
+            payload: json!({}),
+            status: "pending".to_string(),
+            created_at: Utc::now().into(),
+        }
+    }
+
+    fn approval_model(
+        status: ApprovalStatus,
+        requested_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> entities::approvals::Model {
+        approval_model_with_ids(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            status,
+            requested_at,
+            expires_at,
+        )
+    }
+
+    fn approval_model_with_ids(
+        id: Uuid,
+        task_id: Uuid,
+        step_id: Uuid,
+        status: ApprovalStatus,
+        requested_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> entities::approvals::Model {
+        entities::approvals::Model {
+            id,
+            task_id,
+            step_id,
+            reason: "high risk step".to_string(),
+            status: serialize_approval_status(status),
+            requested_at: requested_at.into(),
+            expires_at: expires_at.into(),
+            resolved_at: None,
+            resolved_by: None,
+            decision_note: None,
         }
     }
 }

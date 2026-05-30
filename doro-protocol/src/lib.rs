@@ -141,6 +141,10 @@ pub struct ApprovalRequest {
     pub reason: String,
     pub status: ApprovalStatus,
     pub requested_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by: Option<String>,
+    pub decision_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -151,6 +155,33 @@ pub enum ApprovalStatus {
     Approved,
     Denied,
     Expired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateApprovalRequest.ts")]
+pub struct CreateApprovalRequest {
+    pub task_id: Uuid,
+    pub step_id: Uuid,
+    pub reason: String,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateApprovalResponse.ts")]
+pub struct CreateApprovalResponse {
+    pub item: ApprovalRequest,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ResolveApprovalRequest.ts")]
+pub struct ResolveApprovalRequest {
+    pub decision_note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ResolveApprovalResponse.ts")]
+pub struct ResolveApprovalResponse {
+    pub item: ApprovalRequest,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
@@ -465,6 +496,10 @@ mod tests {
         assert!(TaskStep::export_all(&cfg).is_ok());
         assert!(ApprovalRequest::export_all(&cfg).is_ok());
         assert!(ApprovalStatus::export_all(&cfg).is_ok());
+        assert!(CreateApprovalRequest::export_all(&cfg).is_ok());
+        assert!(CreateApprovalResponse::export_all(&cfg).is_ok());
+        assert!(ResolveApprovalRequest::export_all(&cfg).is_ok());
+        assert!(ResolveApprovalResponse::export_all(&cfg).is_ok());
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
         assert!(HostContainer::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());

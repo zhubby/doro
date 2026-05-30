@@ -39,6 +39,8 @@ use doro_protocol::CapabilityName;
 use doro_protocol::CapabilityRisk;
 use doro_protocol::ControlPlaneEnvironment;
 use doro_protocol::ControlPlaneEnvironmentResponse;
+use doro_protocol::CreateApprovalRequest;
+use doro_protocol::CreateApprovalResponse;
 use doro_protocol::CreateEnrollmentTokenRequest;
 use doro_protocol::CreateEnrollmentTokenResponse;
 use doro_protocol::CreateTaskRequest;
@@ -58,6 +60,8 @@ use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::RefreshTokenRequest;
 use doro_protocol::RegisterRequest;
+use doro_protocol::ResolveApprovalRequest;
+use doro_protocol::ResolveApprovalResponse;
 use doro_protocol::RuntimeLogEntry;
 use doro_protocol::SettingsResponse;
 use doro_protocol::Task;
@@ -74,6 +78,7 @@ use doro_protocol::protobuf_timestamp_now;
 use doro_store::AgentHeartbeat;
 use doro_store::AgentRegistration;
 use doro_store::NewAgentEvent;
+use doro_store::NewApproval;
 use doro_store::NewContainerObservation;
 use doro_store::NewEnrollmentToken;
 use doro_store::NewMetricSnapshot;
@@ -122,6 +127,7 @@ use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 const CONTAINER_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
+const DEFAULT_APPROVAL_TTL_HOURS: i64 = 24;
 const DEFAULT_TERMINAL_TIMEOUT_SECONDS: u32 = 30;
 const MAX_TERMINAL_TIMEOUT_SECONDS: u32 = 120;
 const RUNTIME_LOG_LIMIT: usize = 500;
@@ -698,7 +704,22 @@ pub fn app_with_auth_and_streams(
             "/api/v1/terminal/commands",
             axum::routing::post(run_terminal_command),
         )
-        .route("/api/v1/approvals", get(list_approvals))
+        .route(
+            "/api/v1/approvals",
+            get(list_approvals).post(create_approval),
+        )
+        .route(
+            "/api/v1/approvals/:approval_id",
+            axum::routing::delete(delete_approval),
+        )
+        .route(
+            "/api/v1/approvals/:approval_id/approve",
+            axum::routing::post(approve_approval),
+        )
+        .route(
+            "/api/v1/approvals/:approval_id/deny",
+            axum::routing::post(deny_approval),
+        )
         .route("/api/v1/apps", get(list_apps))
         .route("/api/v1/settings", get(settings))
         .route("/api/v1/logs/control-plane", get(list_control_plane_logs))
@@ -1819,6 +1840,106 @@ async fn list_approvals(
     }))
 }
 
+async fn create_approval(
+    State(state): State<AppState>,
+    Json(request): Json<CreateApprovalRequest>,
+) -> Result<Json<CreateApprovalResponse>, AppError> {
+    let requested_at = Utc::now();
+    let reason = request.reason.trim().to_string();
+    if reason.is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "approval reason is required",
+        ));
+    }
+    let expires_at = request
+        .expires_at
+        .unwrap_or_else(|| requested_at + ChronoDuration::hours(DEFAULT_APPROVAL_TTL_HOURS));
+    if expires_at <= requested_at {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "approval expires_at must be in the future",
+        ));
+    }
+
+    match state
+        .store
+        .approvals()
+        .create(NewApproval {
+            id: Uuid::new_v4(),
+            task_id: request.task_id,
+            step_id: request.step_id,
+            reason,
+            requested_at,
+            expires_at,
+        })
+        .await
+    {
+        Ok(item) => Ok(Json(CreateApprovalResponse { item })),
+        Err(error) => Err(approval_store_app_error(error)),
+    }
+}
+
+async fn delete_approval(
+    State(state): State<AppState>,
+    AxumPath(approval_id): AxumPath<Uuid>,
+) -> Result<StatusCode, AppError> {
+    if state.store.approvals().delete(approval_id).await? {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+
+    Err(AppError::status(
+        StatusCode::NOT_FOUND,
+        "approval not found",
+    ))
+}
+
+async fn approve_approval(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(approval_id): AxumPath<Uuid>,
+    Json(request): Json<ResolveApprovalRequest>,
+) -> Result<Json<ResolveApprovalResponse>, AppError> {
+    let decision_note = normalize_optional_text(request.decision_note);
+    match state
+        .store
+        .approvals()
+        .approve(
+            approval_id,
+            current_user.username,
+            decision_note,
+            Utc::now(),
+        )
+        .await
+    {
+        Ok(item) => Ok(Json(ResolveApprovalResponse { item })),
+        Err(error) => Err(approval_store_app_error(error)),
+    }
+}
+
+async fn deny_approval(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(approval_id): AxumPath<Uuid>,
+    Json(request): Json<ResolveApprovalRequest>,
+) -> Result<Json<ResolveApprovalResponse>, AppError> {
+    let decision_note = normalize_optional_text(request.decision_note);
+    match state
+        .store
+        .approvals()
+        .deny(
+            approval_id,
+            current_user.username,
+            decision_note,
+            Utc::now(),
+        )
+        .await
+    {
+        Ok(item) => Ok(Json(ResolveApprovalResponse { item })),
+        Err(error) => Err(approval_store_app_error(error)),
+    }
+}
+
 async fn list_apps(State(state): State<AppState>) -> Result<Json<ListAppsResponse>, AppError> {
     Ok(Json(ListAppsResponse {
         items: state.store.apps().list().await?,
@@ -2290,6 +2411,27 @@ fn terminal_command_app_error(error: TerminalCommandError) -> AppError {
             format!("agent terminal command failed: {message}"),
         ),
     }
+}
+
+fn approval_store_app_error(error: sea_orm::DbErr) -> AppError {
+    match &error {
+        sea_orm::DbErr::RecordNotFound(_) => {
+            AppError::status(StatusCode::NOT_FOUND, "approval target not found")
+        }
+        sea_orm::DbErr::Custom(message)
+            if message.contains("approval expired")
+                || message.contains("approval already resolved") =>
+        {
+            AppError::status(StatusCode::CONFLICT, message.clone())
+        }
+        _ => error.into(),
+    }
+}
+
+fn normalize_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn command_status_label(status: i32) -> &'static str {
