@@ -46,6 +46,7 @@ use doro_protocol::CreateEnrollmentTokenResponse;
 use doro_protocol::CreateTaskRequest;
 use doro_protocol::CreateVirtualMachineRequest;
 use doro_protocol::CreateVirtualMachineSnapshotRequest;
+use doro_protocol::CreateWebsiteRequest;
 use doro_protocol::CurrentUserResponse;
 use doro_protocol::EnrollmentToken;
 use doro_protocol::FileDirectoryResponse;
@@ -70,6 +71,7 @@ use doro_protocol::ListVirtualMachineImagesResponse;
 use doro_protocol::ListVirtualMachineSnapshotsResponse;
 use doro_protocol::ListVirtualMachineTemplatesResponse;
 use doro_protocol::ListVirtualMachinesResponse;
+use doro_protocol::ListWebsitesResponse;
 use doro_protocol::LoginRequest;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::RefreshTokenRequest;
@@ -85,12 +87,19 @@ use doro_protocol::TerminalCommandRequest;
 use doro_protocol::TerminalCommandResponse;
 use doro_protocol::UpdateHostRequest;
 use doro_protocol::UpdateHostResponse;
+use doro_protocol::UpdateWebsiteRequest;
 use doro_protocol::UserSummary;
 use doro_protocol::VirtualMachineActionRequest;
 use doro_protocol::VirtualMachineActionResponse;
 use doro_protocol::VirtualMachineConsoleResponse;
 use doro_protocol::VirtualMachineNetworkMode;
 use doro_protocol::VirtualMachineStatus;
+use doro_protocol::Website;
+use doro_protocol::WebsiteActionRequest;
+use doro_protocol::WebsiteActionResponse;
+use doro_protocol::WebsiteKind;
+use doro_protocol::WebsiteProtocol;
+use doro_protocol::WebsiteStatus;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlane;
 use doro_protocol::grpc::agent_control_plane_server::AgentControlPlaneServer;
@@ -106,8 +115,13 @@ use doro_store::NewRefreshToken;
 use doro_store::NewTask;
 use doro_store::NewUser;
 use doro_store::NewVirtualMachineObservation;
+use doro_store::NewWebsite;
 use doro_store::Store;
 use doro_store::StoredUser;
+use doro_store::WebsiteChanges;
+use doro_website::WebsiteRuntime;
+use doro_website::WebsiteRuntimeConfig;
+use doro_website::WebsiteRuntimeHandle;
 use futures_util::SinkExt;
 use futures_util::StreamExt;
 use jsonwebtoken::DecodingKey;
@@ -165,6 +179,8 @@ pub struct AppState {
     agent_streams: AgentStreamRegistry,
     logs: LogHub,
     control_plane_environment: ControlPlaneEnvironment,
+    website_runtime: WebsiteRuntimeHandle,
+    website_http_port: u16,
 }
 
 #[derive(Debug, Clone)]
@@ -916,12 +932,32 @@ pub fn app_with_auth_and_streams(
     agent_streams: AgentStreamRegistry,
     logs: LogHub,
 ) -> Router {
+    app_with_auth_streams_and_websites(
+        store,
+        auth,
+        agent_streams,
+        logs,
+        WebsiteRuntimeHandle::default(),
+        WebsiteRuntimeConfig::default().http_port().unwrap_or(8080),
+    )
+}
+
+pub fn app_with_auth_streams_and_websites(
+    store: Store,
+    auth: AuthService,
+    agent_streams: AgentStreamRegistry,
+    logs: LogHub,
+    website_runtime: WebsiteRuntimeHandle,
+    website_http_port: u16,
+) -> Router {
     let state = AppState {
         store,
         auth,
         agent_streams,
         logs,
         control_plane_environment: collect_control_plane_environment(),
+        website_runtime,
+        website_http_port,
     };
 
     let protected_routes = Router::new()
@@ -987,6 +1023,25 @@ pub fn app_with_auth_and_streams(
         .route(
             "/api/v1/control-plane/environment",
             get(control_plane_environment),
+        )
+        .route("/api/v1/websites", get(list_websites).post(create_website))
+        .route(
+            "/api/v1/websites/:website_id",
+            get(get_website)
+                .patch(update_website)
+                .delete(delete_website),
+        )
+        .route(
+            "/api/v1/websites/:website_id/start",
+            axum::routing::post(start_website),
+        )
+        .route(
+            "/api/v1/websites/:website_id/stop",
+            axum::routing::post(stop_website),
+        )
+        .route(
+            "/api/v1/websites/:website_id/restart",
+            axum::routing::post(restart_website),
         )
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
         .route(
@@ -1059,6 +1114,17 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let auth = AuthService::load_or_create(&store, config.security.jwt_secret.as_deref()).await?;
     let logs = LogHub::default();
     logs.register_control_plane_global();
+    let website_config = WebsiteRuntimeConfig {
+        enabled: config.websites.enabled,
+        http_bind: config.websites.http_bind.clone(),
+    };
+    let website_http_port = website_config.http_port().unwrap_or(8080);
+    let website_runtime = WebsiteRuntime::new(website_config);
+    let website_runtime_handle = website_runtime.handle();
+    let running_websites = store.websites().running().await?;
+    let route_count = website_runtime_handle.reload(&running_websites)?;
+    tracing::info!(route_count, "loaded website proxy routes");
+    let _website_proxy_thread = website_runtime.start()?;
 
     let console_listener = tokio::net::TcpListener::bind(console_addr).await?;
     tracing::info!("doro control-plane console listening on http://{console_addr}");
@@ -1076,6 +1142,7 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let console_store = store.clone();
     let console_streams = agent_streams.clone();
     let console_logs = logs.clone();
+    let console_website_runtime = website_runtime_handle.clone();
     let agent_store = store.clone();
     let grpc_streams = agent_streams.clone();
     let agent_logs = logs.clone();
@@ -1091,7 +1158,14 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let console_server = async move {
         axum::serve(
             console_listener,
-            app_with_auth_and_streams(console_store, auth, console_streams, console_logs),
+            app_with_auth_streams_and_websites(
+                console_store,
+                auth,
+                console_streams,
+                console_logs,
+                console_website_runtime,
+                website_http_port,
+            ),
         )
         .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
         .await
@@ -2079,6 +2153,381 @@ async fn create_virtual_machine_task(
     Ok(task)
 }
 
+async fn list_websites(
+    State(state): State<AppState>,
+) -> Result<Json<ListWebsitesResponse>, AppError> {
+    Ok(Json(ListWebsitesResponse {
+        items: state.store.websites().list().await?,
+    }))
+}
+
+async fn get_website(
+    State(state): State<AppState>,
+    AxumPath(website_id): AxumPath<Uuid>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let item = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    Ok(Json(WebsiteActionResponse { item, task: None }))
+}
+
+async fn create_website(
+    State(state): State<AppState>,
+    Json(request): Json<CreateWebsiteRequest>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let changes = validate_website_request(
+        request.name,
+        request.primary_domain,
+        request.aliases,
+        request.listen_port.unwrap_or(state.website_http_port),
+        request.upstream_url,
+        request.notes,
+    )?;
+    let now = Utc::now();
+    let item = match state
+        .store
+        .websites()
+        .create(NewWebsite {
+            id: Uuid::new_v4(),
+            host_id: None,
+            name: changes.name,
+            primary_domain: changes.primary_domain,
+            aliases: changes.aliases,
+            status: WebsiteStatus::Stopped,
+            kind: WebsiteKind::ReverseProxy,
+            protocol: WebsiteProtocol::Http,
+            listen_port: changes.listen_port,
+            upstream_url: changes.upstream_url,
+            app_install_id: None,
+            tls_certificate_id: None,
+            config: serde_json::json!({}),
+            notes: changes.notes,
+            created_at: now,
+        })
+        .await
+    {
+        Ok(item) => item,
+        Err(error) => return Err(website_store_app_error(error)),
+    };
+    record_website_event(&state, "website.created", &item).await?;
+    Ok(Json(WebsiteActionResponse { item, task: None }))
+}
+
+async fn update_website(
+    State(state): State<AppState>,
+    AxumPath(website_id): AxumPath<Uuid>,
+    Json(request): Json<UpdateWebsiteRequest>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let existing = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    if existing.status != WebsiteStatus::Stopped {
+        return Err(AppError::status(
+            StatusCode::CONFLICT,
+            "website must be stopped before configuration changes",
+        ));
+    }
+    let changes = validate_website_request(
+        request.name,
+        request.primary_domain,
+        request.aliases,
+        request.listen_port.unwrap_or(state.website_http_port),
+        request.upstream_url,
+        request.notes,
+    )?;
+    let item = match state
+        .store
+        .websites()
+        .update_stopped(website_id, changes)
+        .await
+    {
+        Ok(Some(item)) => item,
+        Ok(None) => return Err(AppError::status(StatusCode::NOT_FOUND, "website not found")),
+        Err(error) => return Err(website_store_app_error(error)),
+    };
+    record_website_event(&state, "website.updated", &item).await?;
+    Ok(Json(WebsiteActionResponse { item, task: None }))
+}
+
+async fn start_website(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(website_id): AxumPath<Uuid>,
+    Json(request): Json<WebsiteActionRequest>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    website_network_expose_task(state, current_user, website_id, "start", request).await
+}
+
+async fn restart_website(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    AxumPath(website_id): AxumPath<Uuid>,
+    Json(request): Json<WebsiteActionRequest>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    website_network_expose_task(state, current_user, website_id, "restart", request).await
+}
+
+async fn stop_website(
+    State(state): State<AppState>,
+    AxumPath(website_id): AxumPath<Uuid>,
+    Json(_request): Json<WebsiteActionRequest>,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let item = state
+        .store
+        .websites()
+        .set_status(website_id, WebsiteStatus::Stopped, None)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    reload_website_routes(&state).await?;
+    record_website_event(&state, "website.stopped", &item).await?;
+    Ok(Json(WebsiteActionResponse { item, task: None }))
+}
+
+async fn delete_website(
+    State(state): State<AppState>,
+    AxumPath(website_id): AxumPath<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let item = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    if !state.store.websites().delete(website_id).await? {
+        return Err(AppError::status(StatusCode::NOT_FOUND, "website not found"));
+    }
+    reload_website_routes(&state).await?;
+    record_website_event(&state, "website.deleted", &item).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn website_network_expose_task(
+    state: AppState,
+    current_user: CurrentUser,
+    website_id: Uuid,
+    action: &'static str,
+    request: WebsiteActionRequest,
+) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let item = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    let task = create_website_task(
+        &state,
+        current_user.username,
+        format!("{action} website {}", item.primary_domain),
+        format!("{action} website reverse proxy route"),
+        serde_json::json!({
+            "resource": "website",
+            "action": action,
+            "website_id": website_id,
+            "reason": request.reason,
+        }),
+    )
+    .await?;
+    Ok(Json(WebsiteActionResponse {
+        item,
+        task: Some(task),
+    }))
+}
+
+async fn create_website_task(
+    state: &AppState,
+    created_by: String,
+    title: String,
+    summary: impl Into<String>,
+    payload: Value,
+) -> Result<Task, AppError> {
+    let step_id = Uuid::new_v4();
+    state
+        .store
+        .tasks()
+        .create_with_steps(NewTask {
+            id: Uuid::new_v4(),
+            host_id: None,
+            title,
+            prompt: None,
+            status: TaskStatus::WaitingApproval,
+            created_by,
+            created_at: Utc::now(),
+            steps: vec![TaskStep {
+                id: step_id,
+                capability: CapabilityName::NetworkExpose,
+                risk: CapabilityRisk::High,
+                summary: summary.into(),
+                payload,
+            }],
+        })
+        .await
+        .map_err(AppError::from)
+}
+
+async fn apply_approved_website_task(state: &AppState, task_id: Uuid, step_id: Uuid) {
+    let Ok(tasks) = state.store.tasks().list().await else {
+        tracing::warn!("failed to inspect task after approval");
+        return;
+    };
+    let Some(task) = tasks.into_iter().find(|task| task.id == task_id) else {
+        return;
+    };
+    let Some(step) = task.steps.into_iter().find(|step| step.id == step_id) else {
+        return;
+    };
+    if step.capability != CapabilityName::NetworkExpose {
+        return;
+    }
+    if step.payload.get("resource").and_then(Value::as_str) != Some("website") {
+        return;
+    }
+    let Some(website_id) = step
+        .payload
+        .get("website_id")
+        .and_then(Value::as_str)
+        .and_then(|value| Uuid::parse_str(value).ok())
+    else {
+        tracing::warn!(task_id = %task.id, "approved website task has invalid website_id");
+        return;
+    };
+    if let Err(error) = apply_website_route(state, website_id).await {
+        tracing::warn!(?error, website_id = %website_id, "failed to apply approved website route");
+    }
+}
+
+async fn apply_website_route(state: &AppState, website_id: Uuid) -> Result<(), AppError> {
+    let item = state
+        .store
+        .websites()
+        .set_status(website_id, WebsiteStatus::Running, None)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    if let Err(error) = reload_website_routes(state).await {
+        let message = error.0.to_string();
+        let _ = state
+            .store
+            .websites()
+            .set_status(website_id, WebsiteStatus::Warning, Some(message))
+            .await;
+        let _ = reload_website_routes(state).await;
+        return Err(error);
+    }
+    record_website_event(state, "website.running", &item).await?;
+    Ok(())
+}
+
+async fn reload_website_routes(state: &AppState) -> Result<(), AppError> {
+    let websites = state.store.websites().running().await?;
+    state
+        .website_runtime
+        .reload(&websites)
+        .map(|route_count| {
+            tracing::info!(route_count, "reloaded website proxy routes");
+        })
+        .map_err(|error| AppError::status(StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+async fn record_website_event(
+    state: &AppState,
+    event_type: &str,
+    website: &Website,
+) -> Result<(), AppError> {
+    state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: website.host_id,
+            event_type: event_type.to_string(),
+            event_json: serde_json::json!({
+                "website_id": website.id,
+                "primary_domain": website.primary_domain,
+                "status": website.status,
+            }),
+            recorded_at: Utc::now(),
+        })
+        .await?;
+    Ok(())
+}
+
+fn validate_website_request(
+    name: String,
+    primary_domain: String,
+    aliases: Vec<String>,
+    listen_port: u16,
+    upstream_url: String,
+    notes: Option<String>,
+) -> Result<WebsiteChanges, AppError> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website name is required",
+        ));
+    }
+    let primary_domain = normalize_domain_input(&primary_domain)
+        .ok_or_else(|| AppError::status(StatusCode::BAD_REQUEST, "website domain is required"))?;
+    let aliases = aliases
+        .into_iter()
+        .filter_map(|alias| normalize_domain_input(&alias))
+        .filter(|alias| alias != &primary_domain)
+        .collect::<Vec<_>>();
+    if listen_port == 0 {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website listen port is invalid",
+        ));
+    }
+    let upstream_url = upstream_url.trim().to_string();
+    let validation_website = Website {
+        id: Uuid::new_v4(),
+        host_id: None,
+        name: name.clone(),
+        primary_domain: primary_domain.clone(),
+        aliases: aliases.clone(),
+        status: WebsiteStatus::Running,
+        kind: WebsiteKind::ReverseProxy,
+        protocol: WebsiteProtocol::Http,
+        listen_port,
+        upstream: doro_protocol::WebsiteProxyTarget {
+            url: upstream_url.clone(),
+        },
+        app_install_id: None,
+        tls_certificate_id: None,
+        config: serde_json::json!({}),
+        notes: None,
+        last_runtime_error: None,
+        last_checked_at: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    doro_website::WebsiteRoute::from_website(&validation_website)
+        .map_err(|error| AppError::status(StatusCode::BAD_REQUEST, error.to_string()))?;
+    Ok(WebsiteChanges {
+        name,
+        primary_domain,
+        aliases,
+        listen_port,
+        upstream_url,
+        notes: normalize_optional_text(notes),
+    })
+}
+
+fn normalize_domain_input(value: &str) -> Option<String> {
+    let domain = value.trim().trim_end_matches('.').to_ascii_lowercase();
+    if domain.is_empty() || domain.contains('/') || domain.contains(':') {
+        None
+    } else {
+        Some(domain)
+    }
+}
+
 async fn control_plane_environment(
     State(state): State<AppState>,
 ) -> Json<ControlPlaneEnvironmentResponse> {
@@ -2727,7 +3176,10 @@ async fn approve_approval(
         )
         .await
     {
-        Ok(item) => Ok(Json(ResolveApprovalResponse { item })),
+        Ok(item) => {
+            apply_approved_website_task(&state, item.task_id, item.step_id).await;
+            Ok(Json(ResolveApprovalResponse { item }))
+        }
         Err(error) => Err(approval_store_app_error(error)),
     }
 }
@@ -3476,6 +3928,17 @@ fn approval_store_app_error(error: sea_orm::DbErr) -> AppError {
         sea_orm::DbErr::Custom(message)
             if message.contains("approval expired")
                 || message.contains("approval already resolved") =>
+        {
+            AppError::status(StatusCode::CONFLICT, message.clone())
+        }
+        _ => error.into(),
+    }
+}
+
+fn website_store_app_error(error: sea_orm::DbErr) -> AppError {
+    match &error {
+        sea_orm::DbErr::Custom(message)
+            if message.contains("already exists") || message.contains("must be stopped") =>
         {
             AppError::status(StatusCode::CONFLICT, message.clone())
         }

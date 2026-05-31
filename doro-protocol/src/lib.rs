@@ -215,6 +215,93 @@ pub struct HostContainer {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(export_to = "WebsiteStatus.ts")]
+pub enum WebsiteStatus {
+    Stopped,
+    Running,
+    Warning,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "WebsiteKind.ts")]
+pub enum WebsiteKind {
+    ReverseProxy,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "WebsiteProtocol.ts")]
+pub enum WebsiteProtocol {
+    Http,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "WebsiteProxyTarget.ts")]
+pub struct WebsiteProxyTarget {
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "Website.ts")]
+pub struct Website {
+    pub id: Uuid,
+    pub host_id: Option<Uuid>,
+    pub name: String,
+    pub primary_domain: String,
+    pub aliases: Vec<String>,
+    pub status: WebsiteStatus,
+    pub kind: WebsiteKind,
+    pub protocol: WebsiteProtocol,
+    pub listen_port: u16,
+    pub upstream: WebsiteProxyTarget,
+    pub app_install_id: Option<Uuid>,
+    pub tls_certificate_id: Option<Uuid>,
+    pub config: Value,
+    pub notes: Option<String>,
+    pub last_runtime_error: Option<String>,
+    pub last_checked_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateWebsiteRequest.ts")]
+pub struct CreateWebsiteRequest {
+    pub name: String,
+    pub primary_domain: String,
+    pub aliases: Vec<String>,
+    pub listen_port: Option<u16>,
+    pub upstream_url: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateWebsiteRequest.ts")]
+pub struct UpdateWebsiteRequest {
+    pub name: String,
+    pub primary_domain: String,
+    pub aliases: Vec<String>,
+    pub listen_port: Option<u16>,
+    pub upstream_url: String,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "WebsiteActionRequest.ts")]
+pub struct WebsiteActionRequest {
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "WebsiteActionResponse.ts")]
+pub struct WebsiteActionResponse {
+    pub item: Website,
+    pub task: Option<Task>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
 #[ts(export_to = "VirtualMachineStatus.ts")]
 pub enum VirtualMachineStatus {
     Unknown,
@@ -602,6 +689,12 @@ pub struct ListHostContainersResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListWebsitesResponse.ts")]
+pub struct ListWebsitesResponse {
+    pub items: Vec<Website>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "ListVirtualMachinesResponse.ts")]
 pub struct ListVirtualMachinesResponse {
     pub items: Vec<VirtualMachine>,
@@ -782,6 +875,15 @@ mod tests {
         assert!(FileDownloadResponse::export_all(&cfg).is_ok());
         assert!(RuntimeLogEntry::export_all(&cfg).is_ok());
         assert!(ListRuntimeLogsResponse::export_all(&cfg).is_ok());
+        assert!(WebsiteStatus::export_all(&cfg).is_ok());
+        assert!(WebsiteKind::export_all(&cfg).is_ok());
+        assert!(WebsiteProtocol::export_all(&cfg).is_ok());
+        assert!(WebsiteProxyTarget::export_all(&cfg).is_ok());
+        assert!(Website::export_all(&cfg).is_ok());
+        assert!(CreateWebsiteRequest::export_all(&cfg).is_ok());
+        assert!(UpdateWebsiteRequest::export_all(&cfg).is_ok());
+        assert!(WebsiteActionRequest::export_all(&cfg).is_ok());
+        assert!(WebsiteActionResponse::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenRequest::export_all(&cfg).is_ok());
         assert!(CreateEnrollmentTokenResponse::export_all(&cfg).is_ok());
         assert!(AuthStatusResponse::export_all(&cfg).is_ok());
@@ -797,6 +899,7 @@ mod tests {
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
         assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
+        assert!(ListWebsitesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachinesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachineImagesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachineTemplatesResponse::export_all(&cfg).is_ok());

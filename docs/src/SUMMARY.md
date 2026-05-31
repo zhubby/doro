@@ -5,6 +5,7 @@
 - [Architecture](architecture.md)
 - [Modules](modules.md)
 - [Technology Stack](tech-stack.md)
+- [Websites](websites.md)
 - [Agent Protocol](agent-protocol.md)
 - [Security Model](security-model.md)
 - [Roadmap](roadmap.md)

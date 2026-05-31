@@ -44,6 +44,10 @@ pub(crate) fn all() -> &'static [Migration] {
             id: "202605300002_virtual_machines",
             sql: include_str!("../../migrations/202605300002_virtual_machines.sql"),
         },
+        Migration {
+            id: "202605310001_websites_pingora",
+            sql: include_str!("../../migrations/202605310001_websites_pingora.sql"),
+        },
     ]
 }
 

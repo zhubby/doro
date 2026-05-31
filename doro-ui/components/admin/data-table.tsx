@@ -10,6 +10,7 @@ type DataTableProps<T extends { id: string }> = {
   rows: T[];
   actions?: string[];
   renderActions?: (row: T) => ReactNode;
+  actionsWidth?: string;
   emptyText?: string;
 };
 
@@ -18,6 +19,7 @@ export function DataTable<T extends { id: string }>({
   rows,
   actions,
   renderActions,
+  actionsWidth,
   emptyText,
 }: DataTableProps<T>) {
   const t = useTranslations("common");
@@ -34,7 +36,7 @@ export function DataTable<T extends { id: string }>({
             {columns.map((column) => (
               <col key={String(column.key)} style={{ width: column.width }} />
             ))}
-            {hasActions ? <col className="w-28" /> : null}
+            {hasActions ? <col style={{ width: actionsWidth ?? "7rem" }} /> : null}
           </colgroup>
           <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
             <tr>

@@ -20,6 +20,11 @@ use doro_protocol::VirtualMachineImage;
 use doro_protocol::VirtualMachineNetwork;
 use doro_protocol::VirtualMachineStatus;
 use doro_protocol::VirtualMachineTemplate;
+use doro_protocol::Website;
+use doro_protocol::WebsiteKind;
+use doro_protocol::WebsiteProtocol;
+use doro_protocol::WebsiteProxyTarget;
+use doro_protocol::WebsiteStatus;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ColumnTrait;
 use sea_orm::ConnectOptions;
@@ -146,6 +151,35 @@ pub struct NewVirtualMachineObservation {
     pub metadata: Value,
     pub created_at: Option<DateTime<Utc>>,
     pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewWebsite {
+    pub id: Uuid,
+    pub host_id: Option<Uuid>,
+    pub name: String,
+    pub primary_domain: String,
+    pub aliases: Vec<String>,
+    pub status: WebsiteStatus,
+    pub kind: WebsiteKind,
+    pub protocol: WebsiteProtocol,
+    pub listen_port: u16,
+    pub upstream_url: String,
+    pub app_install_id: Option<Uuid>,
+    pub tls_certificate_id: Option<Uuid>,
+    pub config: Value,
+    pub notes: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WebsiteChanges {
+    pub name: String,
+    pub primary_domain: String,
+    pub aliases: Vec<String>,
+    pub listen_port: u16,
+    pub upstream_url: String,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -287,6 +321,10 @@ impl Store {
 
     pub fn virtual_machines(&self) -> VirtualMachineRepository<'_> {
         VirtualMachineRepository { store: self }
+    }
+
+    pub fn websites(&self) -> WebsiteRepository<'_> {
+        WebsiteRepository { store: self }
     }
 
     pub fn settings(&self) -> SettingsRepository<'_> {
@@ -1082,6 +1120,185 @@ impl ContainerRepository<'_> {
     }
 }
 
+pub struct WebsiteRepository<'a> {
+    store: &'a Store,
+}
+
+impl WebsiteRepository<'_> {
+    pub async fn list(&self) -> Result<Vec<Website>, DbErr> {
+        let rows = entities::websites::Entity::find()
+            .order_by(entities::websites::Column::PrimaryDomain, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(website_model_to_protocol).collect())
+    }
+
+    pub async fn running(&self) -> Result<Vec<Website>, DbErr> {
+        let rows = entities::websites::Entity::find()
+            .filter(entities::websites::Column::Status.eq("running"))
+            .order_by(entities::websites::Column::PrimaryDomain, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(website_model_to_protocol).collect())
+    }
+
+    pub async fn get(&self, website_id: Uuid) -> Result<Option<Website>, DbErr> {
+        Ok(entities::websites::Entity::find_by_id(website_id)
+            .one(self.store.connection())
+            .await?
+            .map(website_model_to_protocol))
+    }
+
+    pub async fn create(&self, website: NewWebsite) -> Result<Website, DbErr> {
+        if self
+            .domain_listen_exists(None, &website.primary_domain, website.listen_port)
+            .await?
+        {
+            return Err(DbErr::Custom(
+                "website domain already exists for listen port".to_string(),
+            ));
+        }
+
+        let model = entities::websites::ActiveModel {
+            id: Set(website.id),
+            host_id: Set(website.host_id),
+            name: Set(website.name),
+            primary_domain: Set(website.primary_domain),
+            aliases: Set(serde_json::to_value(website.aliases).unwrap_or_else(|_| json!([]))),
+            status: Set(serialize_website_status(website.status)),
+            kind: Set(serialize_website_kind(website.kind)),
+            protocol: Set(serialize_website_protocol(website.protocol)),
+            listen_port: Set(i32::from(website.listen_port)),
+            upstream_url: Set(website.upstream_url),
+            app_install_id: Set(website.app_install_id),
+            tls_certificate_id: Set(website.tls_certificate_id),
+            config: Set(website.config),
+            notes: Set(website.notes),
+            last_runtime_error: Set(None),
+            last_checked_at: Set(None),
+            created_at: Set(website.created_at.into()),
+            updated_at: Set(website.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+
+        Ok(website_model_to_protocol(model))
+    }
+
+    pub async fn update_stopped(
+        &self,
+        website_id: Uuid,
+        changes: WebsiteChanges,
+    ) -> Result<Option<Website>, DbErr> {
+        let Some(model) = entities::websites::Entity::find_by_id(website_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+        if parse_website_status(&model.status) != Some(WebsiteStatus::Stopped) {
+            return Err(DbErr::Custom(
+                "website must be stopped before configuration changes".to_string(),
+            ));
+        }
+        if self
+            .domain_listen_exists(
+                Some(website_id),
+                &changes.primary_domain,
+                changes.listen_port,
+            )
+            .await?
+        {
+            return Err(DbErr::Custom(
+                "website domain already exists for listen port".to_string(),
+            ));
+        }
+
+        let mut active: entities::websites::ActiveModel = model.into();
+        active.name = Set(changes.name);
+        active.primary_domain = Set(changes.primary_domain);
+        active.aliases = Set(serde_json::to_value(changes.aliases).unwrap_or_else(|_| json!([])));
+        active.listen_port = Set(i32::from(changes.listen_port));
+        active.upstream_url = Set(changes.upstream_url);
+        active.notes = Set(changes.notes);
+        active.last_runtime_error = Set(None);
+        active.updated_at = Set(Utc::now().into());
+        Ok(Some(website_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+
+    pub async fn set_status(
+        &self,
+        website_id: Uuid,
+        status: WebsiteStatus,
+        runtime_error: Option<String>,
+    ) -> Result<Option<Website>, DbErr> {
+        let Some(model) = entities::websites::Entity::find_by_id(website_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let now = Utc::now();
+        let mut active: entities::websites::ActiveModel = model.into();
+        active.status = Set(serialize_website_status(status));
+        active.last_runtime_error = Set(runtime_error);
+        active.last_checked_at = Set(Some(now.into()));
+        active.updated_at = Set(now.into());
+        Ok(Some(website_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+
+    pub async fn delete(&self, website_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::websites::Entity::delete_by_id(website_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn domain_listen_exists(
+        &self,
+        exclude_id: Option<Uuid>,
+        primary_domain: &str,
+        listen_port: u16,
+    ) -> Result<bool, DbErr> {
+        let rows = entities::websites::Entity::find()
+            .filter(entities::websites::Column::ListenPort.eq(i32::from(listen_port)))
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().any(|row| {
+            Some(row.id) != exclude_id && row.primary_domain.eq_ignore_ascii_case(primary_domain)
+        }))
+    }
+}
+
+fn website_model_to_protocol(website: entities::websites::Model) -> Website {
+    Website {
+        id: website.id,
+        host_id: website.host_id,
+        name: website.name,
+        primary_domain: website.primary_domain,
+        aliases: serde_json::from_value(website.aliases).unwrap_or_default(),
+        status: parse_website_status(&website.status).unwrap_or(WebsiteStatus::Warning),
+        kind: parse_website_kind(&website.kind).unwrap_or(WebsiteKind::ReverseProxy),
+        protocol: parse_website_protocol(&website.protocol).unwrap_or(WebsiteProtocol::Http),
+        listen_port: website.listen_port.max(0).min(u16::MAX as i32) as u16,
+        upstream: WebsiteProxyTarget {
+            url: website.upstream_url,
+        },
+        app_install_id: website.app_install_id,
+        tls_certificate_id: website.tls_certificate_id,
+        config: website.config,
+        notes: website.notes,
+        last_runtime_error: website.last_runtime_error,
+        last_checked_at: website.last_checked_at.map(Into::into),
+        created_at: website.created_at.into(),
+        updated_at: website.updated_at.into(),
+    }
+}
+
 pub struct VirtualMachineRepository<'a> {
     store: &'a Store,
 }
@@ -1862,6 +2079,52 @@ fn parse_approval_status(value: &str) -> Option<ApprovalStatus> {
     }
 }
 
+fn serialize_website_status(status: WebsiteStatus) -> String {
+    match status {
+        WebsiteStatus::Stopped => "stopped",
+        WebsiteStatus::Running => "running",
+        WebsiteStatus::Warning => "warning",
+    }
+    .to_string()
+}
+
+fn parse_website_status(value: &str) -> Option<WebsiteStatus> {
+    match normalize_enum_token(value).as_str() {
+        "stopped" => Some(WebsiteStatus::Stopped),
+        "running" => Some(WebsiteStatus::Running),
+        "warning" => Some(WebsiteStatus::Warning),
+        _ => None,
+    }
+}
+
+fn serialize_website_kind(kind: WebsiteKind) -> String {
+    match kind {
+        WebsiteKind::ReverseProxy => "reverse_proxy",
+    }
+    .to_string()
+}
+
+fn parse_website_kind(value: &str) -> Option<WebsiteKind> {
+    match normalize_enum_token(value).as_str() {
+        "reverse_proxy" => Some(WebsiteKind::ReverseProxy),
+        _ => None,
+    }
+}
+
+fn serialize_website_protocol(protocol: WebsiteProtocol) -> String {
+    match protocol {
+        WebsiteProtocol::Http => "http",
+    }
+    .to_string()
+}
+
+fn parse_website_protocol(value: &str) -> Option<WebsiteProtocol> {
+    match normalize_enum_token(value).as_str() {
+        "http" => Some(WebsiteProtocol::Http),
+        _ => None,
+    }
+}
+
 fn serialize_capability_name(name: CapabilityName) -> String {
     match name {
         CapabilityName::MetricsRead => "metrics_read",
@@ -2017,6 +2280,8 @@ mod tests {
         assert!(sql.contains("add_retention_policy(\n    'metric_snapshots'"));
         assert!(sql.contains("add_retention_policy(\n    'agent_events'"));
         assert!(sql.contains("INTERVAL '30 days'"));
+        assert!(sql.contains("ALTER COLUMN host_id DROP NOT NULL"));
+        assert!(sql.contains("idx_websites_primary_domain_listen_port"));
         assert!(!sql.contains("AUTOINCREMENT"));
         assert!(!sql.contains("sqlite_master"));
     }
@@ -2207,6 +2472,116 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn creates_website_and_maps_protocol_fields() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let mut inserted = website_model(id, "example.com", WebsiteStatus::Stopped);
+        inserted.aliases = json!(["www.example.com"]);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<entities::websites::Model>::new()])
+            .append_query_results([[inserted]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let website = store
+            .websites()
+            .create(NewWebsite {
+                id,
+                host_id: None,
+                name: "example.com".to_string(),
+                primary_domain: "example.com".to_string(),
+                aliases: vec!["www.example.com".to_string()],
+                status: WebsiteStatus::Stopped,
+                kind: WebsiteKind::ReverseProxy,
+                protocol: WebsiteProtocol::Http,
+                listen_port: 8080,
+                upstream_url: "http://127.0.0.1:8787".to_string(),
+                app_install_id: None,
+                tls_certificate_id: None,
+                config: json!({}),
+                notes: Some("local app".to_string()),
+                created_at: now,
+            })
+            .await?;
+
+        assert_eq!(website.id, id);
+        assert_eq!(website.status, WebsiteStatus::Stopped);
+        assert_eq!(website.kind, WebsiteKind::ReverseProxy);
+        assert_eq!(website.protocol, WebsiteProtocol::Http);
+        assert_eq!(website.aliases, vec!["www.example.com"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_website_domain_and_listen_port() {
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[website_model(
+                Uuid::new_v4(),
+                "Example.com",
+                WebsiteStatus::Stopped,
+            )]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let error = match store
+            .websites()
+            .create(NewWebsite {
+                id: Uuid::new_v4(),
+                host_id: None,
+                name: "example".to_string(),
+                primary_domain: "example.com".to_string(),
+                aliases: Vec::new(),
+                status: WebsiteStatus::Stopped,
+                kind: WebsiteKind::ReverseProxy,
+                protocol: WebsiteProtocol::Http,
+                listen_port: 8080,
+                upstream_url: "http://127.0.0.1:8787".to_string(),
+                app_install_id: None,
+                tls_certificate_id: None,
+                config: json!({}),
+                notes: None,
+                created_at: Utc::now(),
+            })
+            .await
+        {
+            Ok(_) => panic!("duplicate website should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn running_website_configuration_is_not_updated() {
+        let id = Uuid::new_v4();
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[website_model(id, "example.com", WebsiteStatus::Running)]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let error = match store
+            .websites()
+            .update_stopped(
+                id,
+                WebsiteChanges {
+                    name: "changed".to_string(),
+                    primary_domain: "changed.example".to_string(),
+                    aliases: Vec::new(),
+                    listen_port: 8080,
+                    upstream_url: "http://127.0.0.1:8788".to_string(),
+                    notes: None,
+                },
+            )
+            .await
+        {
+            Ok(_) => panic!("running website should not update"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("must be stopped"));
+    }
+
     #[test]
     fn normalize_labels_trims_and_deduplicates_values() {
         let labels = normalize_labels(vec![
@@ -2377,6 +2752,33 @@ mod tests {
             resolved_at: None,
             resolved_by: None,
             decision_note: None,
+        }
+    }
+
+    fn website_model(
+        id: Uuid,
+        primary_domain: &str,
+        status: WebsiteStatus,
+    ) -> entities::websites::Model {
+        entities::websites::Model {
+            id,
+            host_id: None,
+            name: primary_domain.to_string(),
+            primary_domain: primary_domain.to_string(),
+            aliases: json!([]),
+            status: serialize_website_status(status),
+            kind: serialize_website_kind(WebsiteKind::ReverseProxy),
+            protocol: serialize_website_protocol(WebsiteProtocol::Http),
+            listen_port: 8080,
+            upstream_url: "http://127.0.0.1:8787".to_string(),
+            app_install_id: None,
+            tls_certificate_id: None,
+            config: json!({}),
+            notes: Some("local app".to_string()),
+            last_runtime_error: None,
+            last_checked_at: None,
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
         }
     }
 }
