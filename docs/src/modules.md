@@ -12,6 +12,8 @@
 
 `doro-vm` owns the provider-neutral virtual machine boundary. It defines the virtual machine provider traits, lifecycle/image/snapshot/console abstractions, command envelopes, and the direct QEMU provider. QEMU process arguments, QMP/QGA socket paths, VM state files, image scanning, NAT/bridge validation, and console endpoint construction belong in this crate rather than in the agent or control plane.
 
+`doro-website` owns the embedded Pingora website reverse proxy runtime. It builds a hot-swappable route table from control-plane website records, matches HTTP Host headers to reverse proxy upstreams, and exposes runtime handles for the control plane to reload routes after approved website changes. It does not own persisted website state or UI contracts.
+
 `doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, approvals, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
 
 The first durable schema is organized into table families:

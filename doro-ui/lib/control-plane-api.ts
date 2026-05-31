@@ -8,6 +8,7 @@ import type {
   CreateEnrollmentTokenResponse,
   CreateVirtualMachineRequest,
   CreateVirtualMachineSnapshotRequest,
+  CreateWebsiteRequest,
   CurrentUserResponse,
   FileDirectoryResponse,
   FileDownloadResponse,
@@ -28,6 +29,7 @@ import type {
   ListVirtualMachineSnapshotsResponse,
   ListVirtualMachineTemplatesResponse,
   ListVirtualMachinesResponse,
+  ListWebsitesResponse,
   LoginRequest,
   RefreshTokenRequest,
   RegisterRequest,
@@ -38,9 +40,12 @@ import type {
   TerminalCommandResponse,
   UpdateHostRequest,
   UpdateHostResponse,
+  UpdateWebsiteRequest,
   VirtualMachineActionRequest,
   VirtualMachineActionResponse,
   VirtualMachineConsoleResponse,
+  WebsiteActionRequest,
+  WebsiteActionResponse,
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
@@ -392,6 +397,44 @@ export async function getVirtualMachineConsole(vmId: string) {
 
 export async function getControlPlaneEnvironment() {
   return getJson<ControlPlaneEnvironmentResponse>("/api/v1/control-plane/environment");
+}
+
+export async function getWebsites() {
+  return getJson<ListWebsitesResponse>("/api/v1/websites");
+}
+
+export async function createWebsite(request: CreateWebsiteRequest) {
+  return authedRequest<WebsiteActionResponse>("/api/v1/websites", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function updateWebsite(websiteId: string, request: UpdateWebsiteRequest) {
+  return authedRequest<WebsiteActionResponse>(`/api/v1/websites/${websiteId}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function websiteAction(
+  websiteId: string,
+  action: "start" | "stop" | "restart",
+  request: WebsiteActionRequest = { reason: null },
+) {
+  return authedRequest<WebsiteActionResponse>(
+    `/api/v1/websites/${websiteId}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function deleteWebsite(websiteId: string) {
+  return authedRequest<null>(`/api/v1/websites/${websiteId}`, {
+    method: "DELETE",
+  });
 }
 
 export async function getTasks() {

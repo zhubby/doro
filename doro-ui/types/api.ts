@@ -16,6 +16,7 @@ export type { CreateEnrollmentTokenResponse } from "./generated/CreateEnrollment
 export type { CreateTaskRequest } from "./generated/CreateTaskRequest";
 export type { CreateVirtualMachineRequest } from "./generated/CreateVirtualMachineRequest";
 export type { CreateVirtualMachineSnapshotRequest } from "./generated/CreateVirtualMachineSnapshotRequest";
+export type { CreateWebsiteRequest } from "./generated/CreateWebsiteRequest";
 export type { CurrentUserResponse } from "./generated/CurrentUserResponse";
 export type { EnrollmentToken } from "./generated/EnrollmentToken";
 export type { FileDirectoryResponse } from "./generated/FileDirectoryResponse";
@@ -45,6 +46,7 @@ export type { ListVirtualMachineImagesResponse } from "./generated/ListVirtualMa
 export type { ListVirtualMachineSnapshotsResponse } from "./generated/ListVirtualMachineSnapshotsResponse";
 export type { ListVirtualMachineTemplatesResponse } from "./generated/ListVirtualMachineTemplatesResponse";
 export type { ListVirtualMachinesResponse } from "./generated/ListVirtualMachinesResponse";
+export type { ListWebsitesResponse } from "./generated/ListWebsitesResponse";
 export type { MetricSnapshot } from "./generated/MetricSnapshot";
 export type { RefreshTokenRequest } from "./generated/RefreshTokenRequest";
 export type { RegisterRequest } from "./generated/RegisterRequest";
@@ -59,6 +61,7 @@ export type { TerminalCommandRequest } from "./generated/TerminalCommandRequest"
 export type { TerminalCommandResponse } from "./generated/TerminalCommandResponse";
 export type { UpdateHostRequest } from "./generated/UpdateHostRequest";
 export type { UpdateHostResponse } from "./generated/UpdateHostResponse";
+export type { UpdateWebsiteRequest } from "./generated/UpdateWebsiteRequest";
 export type { UserSummary } from "./generated/UserSummary";
 export type { VirtualMachine } from "./generated/VirtualMachine";
 export type { VirtualMachineActionRequest } from "./generated/VirtualMachineActionRequest";
@@ -72,3 +75,10 @@ export type { VirtualMachinePortForward } from "./generated/VirtualMachinePortFo
 export type { VirtualMachineSnapshot } from "./generated/VirtualMachineSnapshot";
 export type { VirtualMachineStatus } from "./generated/VirtualMachineStatus";
 export type { VirtualMachineTemplate } from "./generated/VirtualMachineTemplate";
+export type { Website } from "./generated/Website";
+export type { WebsiteActionRequest } from "./generated/WebsiteActionRequest";
+export type { WebsiteActionResponse } from "./generated/WebsiteActionResponse";
+export type { WebsiteKind } from "./generated/WebsiteKind";
+export type { WebsiteProtocol } from "./generated/WebsiteProtocol";
+export type { WebsiteProxyTarget } from "./generated/WebsiteProxyTarget";
+export type { WebsiteStatus } from "./generated/WebsiteStatus";

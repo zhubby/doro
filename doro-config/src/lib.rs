@@ -50,6 +50,7 @@ pub struct ControlPlaneConfig {
     pub server: ServerConfig,
     pub store: StoreConfig,
     pub security: SecurityConfig,
+    pub websites: WebsiteConfig,
     pub ai: AiConfig,
 }
 
@@ -128,6 +129,22 @@ impl Default for SecurityConfig {
             approval_policy: "policy_and_human_approval".to_string(),
             require_tls: false,
             jwt_secret: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct WebsiteConfig {
+    pub enabled: bool,
+    pub http_bind: String,
+}
+
+impl Default for WebsiteConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            http_bind: "127.0.0.1:8080".to_string(),
         }
     }
 }

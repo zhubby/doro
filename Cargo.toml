@@ -9,6 +9,7 @@ members = [
     "doro-control-plane",
     "doro-protocol",
     "doro-store",
+    "doro-website",
     "doro-vm",
 ]
 
@@ -22,9 +23,11 @@ doro-container = { path = "doro-container" }
 doro-control-plane = { path = "doro-control-plane" }
 doro-protocol = { path = "doro-protocol" }
 doro-store = { path = "doro-store" }
+doro-website = { path = "doro-website" }
 doro-vm = { path = "doro-vm" }
 
 anyhow = "1"
+arc-swap = "1"
 async-trait = "0.1"
 argon2 = "0.5"
 axum = { version = "0.7", features = ["json", "macros", "tokio", "ws"] }
@@ -36,6 +39,7 @@ dirs = "6"
 futures-util = "0.3"
 jsonwebtoken = "9"
 nvml-wrapper = "0.10"
+pingora = { version = "0.8", features = ["proxy"] }
 prost = "0.13"
 prost-types = "0.13"
 portable-pty = "0.8"
@@ -58,6 +62,7 @@ tower-http = { version = "0.6", features = ["cors", "trace"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ts-rs = { version = "12.0.1", features = ["chrono-impl", "uuid-impl", "serde-json-impl"] }
+url = "2"
 uuid = { version = "1", features = ["serde", "v4"] }
 
 
