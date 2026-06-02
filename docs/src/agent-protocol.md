@@ -31,6 +31,23 @@ vm_bridge_names = []
 vm_user_network_enabled = true
 vm_console_enabled = true
 vm_vnc_bind = "127.0.0.1"
+
+[ai]
+provider = "openai"
+
+[ai.openai]
+api_key_env = "OPENAI_API_KEY"
+base_url = "https://api.openai.com/v1"
+default_chat_model = "gpt-4.1-mini"
+default_response_model = "gpt-4.1-mini"
+timeout_seconds = 60
+
+[ai.agent]
+max_turns = 12
+max_tool_calls = 32
+tool_timeout_seconds = 30
+shell_timeout_seconds = 120
+approval_timeout_seconds = 86400
 ```
 
 On first run, `doro agent` requires `enrollment_token`. If `agent_id` and `host_id` are missing, the agent calls `Enroll`, writes the returned identifiers back to the config file, and uses those identifiers for subsequent heartbeats and streams.
@@ -55,7 +72,9 @@ The first stream implementation is a long-lived outbound session. The agent send
 
 The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
-Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunTerminalCommandCommand` and require an online Agent that declares `ShellExecute`. Agent-run schedules use `RunAgentTaskCommand` and require an online Agent that declares `AgentRun`; the current Agent implementation accepts the command and returns a successful `CommandResultEvent` placeholder with `agent core placeholder accepted` until the agent core is implemented.
+Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunTerminalCommandCommand` and require an online Agent that declares `ShellExecute`. Agent-run schedules use `RunAgentTaskCommand` and require an online Agent that declares `AgentRun`; the Agent runs the local Doro AI runner, executes approved local tools, emits task progress/result events, and returns a final `CommandResultEvent`.
+
+AI tool approval is carried over the same stream. When the Agent runner needs a high-risk tool such as shell execution or file mutation, it emits `agent_tool.approval_requested`. The control plane appends a dynamic task step, creates an approval request, and sends `AgentToolApprovalDecisionCommand` back to the Agent after an operator approves or denies the request.
 
 Interactive terminal sessions use the same agent stream plus a browser WebSocket bridge. The UI connects to `/api/v1/terminal/:host_id/ws`, the control plane sends `OpenTerminalSessionCommand`, browser keypresses become `TerminalInputCommand`, terminal resizes become `ResizeTerminalSessionCommand`, and agent PTY output returns as `TerminalOutputEvent`. Closing the browser socket sends `CloseTerminalSessionCommand`, and the agent confirms with `TerminalSessionClosedEvent`.
 
@@ -70,7 +89,10 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
 - `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `file.command_result`: result of a file browsing, search, download, upload, create, rename, move, copy, or delete command. File operations are direct and audited; first-version write operations do not create approval requests.
-- `command_result`: generic command result, including the current scheduled agent-run placeholder.
+- `agent_task.progress`: progress from the local AI runner, including high-risk tool step status changes.
+- `agent_task.result`: final AI task summary and transcript payload.
+- `agent_tool.approval_requested`: high-risk AI tool request converted by the control plane into a normal approval.
+- `command_result`: generic command result, including the final result for `RunAgentTaskCommand`.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
@@ -101,6 +123,8 @@ The `agents` table is the durable identity table. The initial status values are 
 6. High-risk steps stop at approval before execution.
 
 Scheduled tasks are owned by the control plane. A scheduled script task requires approval when it is created or re-enabled; once approved, each trigger is automatically dispatched to every online Agent whose host labels match the task selector and whose capabilities include the required capability. Every trigger creates task and run records for audit.
+
+Natural-language Agent tasks are also owned by the control plane. A UI request creates a `Task` with an `AgentRun` step for one target host. The control plane validates the online Agent and declared capability before dispatch. The Agent may inspect local state directly, but high-risk tools pause at approval before execution.
 
 ## Core Types
 

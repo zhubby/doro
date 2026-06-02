@@ -8,6 +8,7 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 doro-protocol = { workspace = true }
 futures-util = { workspace = true }
 reqwest = { workspace = true }
@@ -15,3 +16,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

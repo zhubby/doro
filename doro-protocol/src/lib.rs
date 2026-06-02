@@ -131,7 +131,20 @@ pub struct TaskStep {
     pub capability: CapabilityName,
     pub risk: CapabilityRisk,
     pub summary: String,
+    pub status: TaskStepStatus,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "TaskStepStatus.ts")]
+pub enum TaskStepStatus {
+    Pending,
+    WaitingApproval,
+    Running,
+    Succeeded,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -955,6 +968,7 @@ mod tests {
         assert!(Task::export_all(&cfg).is_ok());
         assert!(TaskStatus::export_all(&cfg).is_ok());
         assert!(TaskStep::export_all(&cfg).is_ok());
+        assert!(TaskStepStatus::export_all(&cfg).is_ok());
         assert!(ScheduledTaskKind::export_all(&cfg).is_ok());
         assert!(ScheduledTaskStatus::export_all(&cfg).is_ok());
         assert!(ScheduledTaskRunStatus::export_all(&cfg).is_ok());

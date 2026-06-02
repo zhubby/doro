@@ -299,13 +299,25 @@ impl ResponseRequest {
             extra: Map::new(),
         }
     }
+
+    pub fn items(model: impl Into<String>, input: Vec<Value>) -> Self {
+        Self {
+            model: model.into(),
+            input: ResponseInput::Items(input),
+            instructions: None,
+            temperature: None,
+            max_output_tokens: None,
+            stream: None,
+            extra: Map::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub enum ResponseInput {
     Text(String),
-    Items(Vec<ResponseInputItem>),
+    Items(Vec<Value>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

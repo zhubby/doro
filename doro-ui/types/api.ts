@@ -67,6 +67,7 @@ export type { SettingsResponse } from "./generated/SettingsResponse";
 export type { Task } from "./generated/Task";
 export type { TaskStatus } from "./generated/TaskStatus";
 export type { TaskStep } from "./generated/TaskStep";
+export type { TaskStepStatus } from "./generated/TaskStepStatus";
 export type { TerminalCommandRequest } from "./generated/TerminalCommandRequest";
 export type { TerminalCommandResponse } from "./generated/TerminalCommandResponse";
 export type { UpdateHostRequest } from "./generated/UpdateHostRequest";

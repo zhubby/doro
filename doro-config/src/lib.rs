@@ -58,6 +58,7 @@ pub struct ControlPlaneConfig {
 #[serde(default)]
 pub struct AgentFileConfig {
     pub agent: AgentConfig,
+    pub ai: AiConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -208,6 +209,7 @@ impl Default for AgentConfig {
 pub struct AiConfig {
     pub provider: String,
     pub openai: OpenAiConfig,
+    pub agent: AgentAiConfig,
 }
 
 impl Default for AiConfig {
@@ -215,6 +217,29 @@ impl Default for AiConfig {
         Self {
             provider: "disabled".to_string(),
             openai: OpenAiConfig::default(),
+            agent: AgentAiConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AgentAiConfig {
+    pub max_turns: u32,
+    pub max_tool_calls: u32,
+    pub tool_timeout_seconds: u64,
+    pub shell_timeout_seconds: u64,
+    pub approval_timeout_seconds: u64,
+}
+
+impl Default for AgentAiConfig {
+    fn default() -> Self {
+        Self {
+            max_turns: 12,
+            max_tool_calls: 32,
+            tool_timeout_seconds: 30,
+            shell_timeout_seconds: 120,
+            approval_timeout_seconds: 24 * 60 * 60,
         }
     }
 }
@@ -390,6 +415,7 @@ mod tests {
         assert!(body.contains("[security]"));
         assert!(body.contains("[ai]"));
         assert!(body.contains("[ai.openai]"));
+        assert!(body.contains("[ai.agent]"));
         assert!(!body.contains("[agent]"));
 
         Ok(())
@@ -420,8 +446,14 @@ mod tests {
         assert!(loaded.config.agent.enrollment_token.is_none());
         assert!(loaded.config.agent.agent_id.is_none());
         assert!(loaded.config.agent.host_id.is_none());
+        assert_eq!(loaded.config.ai.provider, "disabled");
+        assert_eq!(loaded.config.ai.agent.max_turns, 12);
+        assert_eq!(loaded.config.ai.agent.max_tool_calls, 32);
         let body = fs::read_to_string(&path)?;
         assert!(body.contains("[agent]"));
+        assert!(body.contains("[ai]"));
+        assert!(body.contains("[ai.openai]"));
+        assert!(body.contains("[ai.agent]"));
         assert!(!body.contains("[server]"));
         assert!(!body.contains("[store]"));
         assert!(!body.contains("[security]"));
@@ -515,6 +547,7 @@ mod tests {
         assert_eq!(loaded.config.ai.openai.default_chat_model, "gpt-4.1-mini");
         assert_eq!(loaded.config.ai.openai.default_response_model, "gpt-4.1");
         assert_eq!(loaded.config.ai.openai.timeout_seconds, 30);
+        assert_eq!(loaded.config.ai.agent.max_turns, 12);
 
         Ok(())
     }

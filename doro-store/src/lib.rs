@@ -20,6 +20,7 @@ use doro_protocol::ScheduledTaskStatus;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::TaskStep;
+use doro_protocol::TaskStepStatus;
 use doro_protocol::VirtualMachine;
 use doro_protocol::VirtualMachineImage;
 use doro_protocol::VirtualMachineNetwork;
@@ -796,7 +797,7 @@ impl TaskRepository<'_> {
                 risk: Set(serialize_capability_risk(step.risk)),
                 summary: Set(step.summary.clone()),
                 payload: Set(step.payload.clone()),
-                status: Set("pending".to_string()),
+                status: Set(serialize_task_step_status(step.status)),
                 created_at: Set(new_task.created_at.into()),
             }
             .insert(&transaction)
@@ -844,6 +845,7 @@ impl TaskRepository<'_> {
                     capability: parse_capability_name(&step.capability)?,
                     risk: parse_capability_risk(&step.risk)?,
                     summary: step.summary,
+                    status: parse_task_step_status(&step.status).unwrap_or(TaskStepStatus::Pending),
                     payload: step.payload,
                 })
             })
@@ -896,6 +898,63 @@ impl TaskRepository<'_> {
         active.status = Set(status.to_string());
         active.update(self.store.connection()).await?;
         Ok(())
+    }
+
+    pub async fn append_step_with_approval(
+        &self,
+        task_id: Uuid,
+        step: TaskStep,
+        reason: String,
+        requested_at: DateTime<Utc>,
+        expires_at: DateTime<Utc>,
+    ) -> Result<ApprovalRequest, DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        let task = entities::tasks::Entity::find_by_id(task_id)
+            .one(&transaction)
+            .await?;
+        if task.is_none() {
+            return Err(DbErr::RecordNotFound("task not found".to_string()));
+        }
+
+        let next_position = entities::task_steps::Entity::find()
+            .filter(entities::task_steps::Column::TaskId.eq(task_id))
+            .order_by(entities::task_steps::Column::Position, Order::Desc)
+            .one(&transaction)
+            .await?
+            .map(|model| model.position + 1)
+            .unwrap_or_default();
+
+        entities::task_steps::ActiveModel {
+            id: Set(step.id),
+            task_id: Set(task_id),
+            position: Set(next_position),
+            capability: Set(serialize_capability_name(step.capability)),
+            risk: Set(serialize_capability_risk(step.risk)),
+            summary: Set(step.summary),
+            payload: Set(step.payload),
+            status: Set(serialize_task_step_status(step.status)),
+            created_at: Set(requested_at.into()),
+        }
+        .insert(&transaction)
+        .await?;
+
+        let approval = entities::approvals::ActiveModel {
+            id: Set(Uuid::new_v4()),
+            task_id: Set(task_id),
+            step_id: Set(step.id),
+            reason: Set(reason),
+            status: Set(serialize_approval_status(ApprovalStatus::Pending)),
+            requested_at: Set(requested_at.into()),
+            expires_at: Set(expires_at.into()),
+            resolved_at: Set(None),
+            resolved_by: Set(None),
+            decision_note: Set(None),
+        }
+        .insert(&transaction)
+        .await?;
+
+        transaction.commit().await?;
+        Ok(approval_model_to_protocol(approval))
     }
 
     pub async fn create_run(&self, run: NewTaskRun) -> Result<(), DbErr> {
@@ -2437,6 +2496,30 @@ fn parse_task_status(value: &str) -> Option<TaskStatus> {
         "succeeded" => Some(TaskStatus::Succeeded),
         "failed" => Some(TaskStatus::Failed),
         "cancelled" => Some(TaskStatus::Cancelled),
+        _ => None,
+    }
+}
+
+fn serialize_task_step_status(status: TaskStepStatus) -> String {
+    match status {
+        TaskStepStatus::Pending => "pending",
+        TaskStepStatus::WaitingApproval => "waiting_approval",
+        TaskStepStatus::Running => "running",
+        TaskStepStatus::Succeeded => "succeeded",
+        TaskStepStatus::Failed => "failed",
+        TaskStepStatus::Cancelled => "cancelled",
+    }
+    .to_string()
+}
+
+fn parse_task_step_status(value: &str) -> Option<TaskStepStatus> {
+    match value {
+        "pending" => Some(TaskStepStatus::Pending),
+        "waiting_approval" => Some(TaskStepStatus::WaitingApproval),
+        "running" => Some(TaskStepStatus::Running),
+        "succeeded" => Some(TaskStepStatus::Succeeded),
+        "failed" => Some(TaskStepStatus::Failed),
+        "cancelled" => Some(TaskStepStatus::Cancelled),
         _ => None,
     }
 }

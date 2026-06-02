@@ -8,6 +8,7 @@ import type {
   CreateEnrollmentTokenResponse,
   CreateScheduledTaskRequest,
   CreateScheduledTaskResponse,
+  CreateTaskRequest,
   CreateVirtualMachineRequest,
   CreateVirtualMachineSnapshotRequest,
   CreateWebsiteRequest,
@@ -28,6 +29,7 @@ import type {
   ListRuntimeLogsResponse,
   ListScheduledTaskRunsResponse,
   ListScheduledTasksResponse,
+  ListTasksResponse,
   ListVirtualMachineImagesResponse,
   ListVirtualMachineSnapshotsResponse,
   ListVirtualMachineTemplatesResponse,
@@ -40,6 +42,7 @@ import type {
   ResolveApprovalResponse,
   ScheduledTaskActionResponse,
   SettingsResponse,
+  Task,
   TerminalCommandRequest,
   TerminalCommandResponse,
   UpdateHostRequest,
@@ -329,6 +332,17 @@ export async function getHostMetrics(hostId: string, limit = 60) {
 
 export async function getHostContainers(hostId: string) {
   return getJson<ListHostContainersResponse>(`/api/v1/hosts/${hostId}/containers`);
+}
+
+export async function getTasks() {
+  return getJson<ListTasksResponse>("/api/v1/tasks");
+}
+
+export async function createTask(request: CreateTaskRequest) {
+  return authedRequest<Task>("/api/v1/tasks", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 export async function refreshContainers() {

@@ -54,6 +54,9 @@ message AgentEvent {
     VirtualMachineSnapshotEvent virtual_machine_snapshot = 15;
     VirtualMachineCommandResultEvent virtual_machine_command_result = 16;
     FileCommandResultEvent file_command_result = 17;
+    AgentTaskProgressEvent agent_task_progress = 18;
+    AgentTaskResultEvent agent_task_result = 19;
+    AgentToolApprovalRequestEvent agent_tool_approval_request = 20;
   }
 }
 
@@ -76,6 +79,7 @@ message ControlPlaneCommand {
     SearchFilesCommand search_files = 15;
     RunFileOperationCommand run_file_operation = 16;
     RunAgentTaskCommand run_agent_task = 17;
+    AgentToolApprovalDecisionCommand agent_tool_approval_decision = 18;
   }
 }
 
@@ -129,6 +133,14 @@ message RunAgentTaskCommand {
   string scheduled_task_id = 3;
   string prompt = 4;
   string template_json = 5;
+}
+
+message AgentToolApprovalDecisionCommand {
+  string request_id = 1;
+  string task_id = 2;
+  string step_id = 3;
+  bool approved = 4;
+  string message = 5;
 }
 
 message ShutdownCommand {
@@ -266,6 +278,34 @@ message FileCommandResultEvent {
   string message = 3;
   string result_json = 4;
   bytes content = 5;
+}
+
+message AgentTaskProgressEvent {
+  string command_id = 1;
+  string task_id = 2;
+  string step_id = 3;
+  string status = 4;
+  string message = 5;
+  string details_json = 6;
+}
+
+message AgentTaskResultEvent {
+  string command_id = 1;
+  string task_id = 2;
+  CommandStatus status = 3;
+  string summary = 4;
+  string result_json = 5;
+}
+
+message AgentToolApprovalRequestEvent {
+  string request_id = 1;
+  string command_id = 2;
+  string task_id = 3;
+  string tool_call_id = 4;
+  string tool_name = 5;
+  string risk = 6;
+  string summary = 7;
+  string arguments_json = 8;
 }
 
 message TerminalOutputEvent {

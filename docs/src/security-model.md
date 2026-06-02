@@ -25,4 +25,6 @@ Security requirements:
 
 The terminal UI is an explicit administrative direct-execution path for agents that declare `ShellExecute`. Terminal commands and interactive sessions are still validated by the control plane, routed only over the established agent stream, and recorded in `agent_events` at session open/close and command completion boundaries. Deployments that require stricter change control should gate this route behind per-command or per-session approval before enabling it for operators.
 
+AI AgentRun tasks are not an authorization path. The Agent may use AI to choose tools and arguments, but shell execution and file mutation pause at a control-plane approval request before the local operation starts. Approval decisions are sent back over the enrolled Agent stream and task progress remains auditable through `task_steps`, `task_runs`, and `agent_events`.
+
 The MVP can keep policy simple, but it must preserve the data model and lifecycle needed for stricter policy later.

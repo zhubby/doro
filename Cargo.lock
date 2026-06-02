@@ -1165,7 +1165,10 @@ name = "doro-agent"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "base64",
  "chrono",
+ "doro-ai",
  "doro-config",
  "doro-container",
  "doro-protocol",
@@ -1189,12 +1192,14 @@ name = "doro-ai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "doro-protocol",
  "futures-util",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.12",
+ "tokio",
  "uuid",
 ]
 
