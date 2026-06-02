@@ -63,3 +63,51 @@
     @apply h-full overflow-hidden;
   }
 }
+
+@layer components {
+  .doro-terminal {
+    --terminal-scrollbar-track: rgba(15, 23, 42, 0.26);
+    --terminal-scrollbar-thumb: rgba(100, 116, 139, 0.7);
+    --terminal-scrollbar-thumb-hover: rgba(148, 163, 184, 0.86);
+    --terminal-scrollbar-border: #0b0f14;
+  }
+
+  .doro-terminal .xterm {
+    height: 100%;
+  }
+
+  .doro-terminal .xterm .xterm-viewport {
+    background-color: transparent;
+    scrollbar-color: var(--terminal-scrollbar-thumb) var(--terminal-scrollbar-track);
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+  }
+
+  .doro-terminal .xterm .xterm-viewport::-webkit-scrollbar {
+    width: 10px;
+  }
+
+  .doro-terminal .xterm .xterm-viewport::-webkit-scrollbar-track {
+    background: var(--terminal-scrollbar-track);
+    border-radius: 999px;
+  }
+
+  .doro-terminal .xterm .xterm-viewport::-webkit-scrollbar-thumb {
+    background: linear-gradient(
+      180deg,
+      rgba(148, 163, 184, 0.78),
+      rgba(71, 85, 105, 0.78)
+    );
+    border: 2px solid var(--terminal-scrollbar-border);
+    border-radius: 999px;
+    min-height: 48px;
+  }
+
+  .doro-terminal .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover {
+    background: var(--terminal-scrollbar-thumb-hover);
+  }
+
+  .doro-terminal .xterm .xterm-viewport::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

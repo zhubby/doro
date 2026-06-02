@@ -239,7 +239,7 @@ export function TerminalPage() {
               <TerminalIcon className="size-4" aria-hidden="true" />
               <span className="truncate">{selectedHost ? hostLabel(selectedHost) : "Terminal"}</span>
             </div>
-            <div ref={terminalNode} className="h-[520px] p-3" />
+            <div ref={terminalNode} className="doro-terminal h-[520px] p-3" />
           </div>
         </div>
       </PageSection>
