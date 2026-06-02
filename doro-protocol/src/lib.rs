@@ -80,6 +80,7 @@ pub struct AgentCapability {
 pub enum CapabilityName {
     MetricsRead,
     LogsRead,
+    AgentRun,
     ServicesManage,
     ContainersManage,
     VirtualMachinesManage,
@@ -131,6 +132,66 @@ pub struct TaskStep {
     pub risk: CapabilityRisk,
     pub summary: String,
     pub payload: Value,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "ScheduledTaskKind.ts")]
+pub enum ScheduledTaskKind {
+    Script,
+    AgentRun,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "ScheduledTaskStatus.ts")]
+pub enum ScheduledTaskStatus {
+    PendingApproval,
+    Active,
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "ScheduledTaskRunStatus.ts")]
+pub enum ScheduledTaskRunStatus {
+    Running,
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ScheduledTask.ts")]
+pub struct ScheduledTask {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: ScheduledTaskKind,
+    pub schedule: String,
+    pub status: ScheduledTaskStatus,
+    pub required_capability: CapabilityName,
+    pub label_selector: Vec<String>,
+    pub task_template: Value,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub last_run_status: Option<ScheduledTaskRunStatus>,
+    pub approval_task_id: Option<Uuid>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub approved_by: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ScheduledTaskRun.ts")]
+pub struct ScheduledTaskRun {
+    pub id: Uuid,
+    pub scheduled_task_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub status: ScheduledTaskRunStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -472,6 +533,29 @@ pub struct CreateTaskRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateScheduledTaskRequest.ts")]
+pub struct CreateScheduledTaskRequest {
+    pub name: String,
+    pub kind: ScheduledTaskKind,
+    pub schedule: String,
+    pub label_selector: Vec<String>,
+    pub script: Option<String>,
+    pub prompt: Option<String>,
+    pub timeout_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateScheduledTaskRequest.ts")]
+pub struct UpdateScheduledTaskRequest {
+    pub name: Option<String>,
+    pub schedule: Option<String>,
+    pub label_selector: Option<Vec<String>>,
+    pub script: Option<String>,
+    pub prompt: Option<String>,
+    pub timeout_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "TerminalCommandRequest.ts")]
 pub struct TerminalCommandRequest {
     pub host_id: Uuid,
@@ -743,6 +827,39 @@ pub struct ListTasksResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListScheduledTasksResponse.ts")]
+pub struct ListScheduledTasksResponse {
+    pub items: Vec<ScheduledTask>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateScheduledTaskResponse.ts")]
+pub struct CreateScheduledTaskResponse {
+    pub item: ScheduledTask,
+    pub approval_task: Option<Task>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateScheduledTaskResponse.ts")]
+pub struct UpdateScheduledTaskResponse {
+    pub item: ScheduledTask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ScheduledTaskActionResponse.ts")]
+pub struct ScheduledTaskActionResponse {
+    pub item: ScheduledTask,
+    pub task: Option<Task>,
+    pub runs: Vec<ScheduledTaskRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListScheduledTaskRunsResponse.ts")]
+pub struct ListScheduledTaskRunsResponse {
+    pub items: Vec<ScheduledTaskRun>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "ListApprovalsResponse.ts")]
 pub struct ListApprovalsResponse {
     pub items: Vec<ApprovalRequest>,
@@ -799,6 +916,7 @@ mod tests {
     #[test]
     fn high_risk_capabilities_include_shell_execution() {
         assert!(high_risk_capabilities().contains(&CapabilityName::ShellExecute));
+        assert!(!high_risk_capabilities().contains(&CapabilityName::AgentRun));
     }
 
     #[test]
@@ -837,6 +955,11 @@ mod tests {
         assert!(Task::export_all(&cfg).is_ok());
         assert!(TaskStatus::export_all(&cfg).is_ok());
         assert!(TaskStep::export_all(&cfg).is_ok());
+        assert!(ScheduledTaskKind::export_all(&cfg).is_ok());
+        assert!(ScheduledTaskStatus::export_all(&cfg).is_ok());
+        assert!(ScheduledTaskRunStatus::export_all(&cfg).is_ok());
+        assert!(ScheduledTask::export_all(&cfg).is_ok());
+        assert!(ScheduledTaskRun::export_all(&cfg).is_ok());
         assert!(ApprovalRequest::export_all(&cfg).is_ok());
         assert!(ApprovalStatus::export_all(&cfg).is_ok());
         assert!(CreateApprovalRequest::export_all(&cfg).is_ok());
@@ -861,6 +984,8 @@ mod tests {
         assert!(VirtualMachineConsoleResponse::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(CreateScheduledTaskRequest::export_all(&cfg).is_ok());
+        assert!(UpdateScheduledTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandResponse::export_all(&cfg).is_ok());
         assert!(FileEntryKind::export_all(&cfg).is_ok());
@@ -907,6 +1032,11 @@ mod tests {
         assert!(ControlPlaneEnvironment::export_all(&cfg).is_ok());
         assert!(ControlPlaneEnvironmentResponse::export_all(&cfg).is_ok());
         assert!(ListTasksResponse::export_all(&cfg).is_ok());
+        assert!(ListScheduledTasksResponse::export_all(&cfg).is_ok());
+        assert!(CreateScheduledTaskResponse::export_all(&cfg).is_ok());
+        assert!(UpdateScheduledTaskResponse::export_all(&cfg).is_ok());
+        assert!(ScheduledTaskActionResponse::export_all(&cfg).is_ok());
+        assert!(ListScheduledTaskRunsResponse::export_all(&cfg).is_ok());
         assert!(ListApprovalsResponse::export_all(&cfg).is_ok());
         assert!(AppSummary::export_all(&cfg).is_ok());
         assert!(ListAppsResponse::export_all(&cfg).is_ok());

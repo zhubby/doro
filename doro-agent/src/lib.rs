@@ -339,6 +339,11 @@ impl Agent {
                 description: "Read local service logs".to_string(),
             },
             AgentCapability {
+                name: CapabilityName::AgentRun,
+                risk: CapabilityRisk::Medium,
+                description: "Accept scheduled agent task placeholders".to_string(),
+            },
+            AgentCapability {
                 name: CapabilityName::ShellExecute,
                 risk: CapabilityRisk::High,
                 description: "Execute approved shell commands".to_string(),
@@ -1162,6 +1167,23 @@ async fn handle_command(
                 tracing::warn!("failed to enqueue file operation result event");
             }
         }
+        Some(grpc::control_plane_command::Command::RunAgentTask(agent_task)) => {
+            tracing::info!(
+                command_id = %command_id,
+                task_id = agent_task.task_id,
+                scheduled_task_id = agent_task.scheduled_task_id,
+                "accepting scheduled agent task placeholder"
+            );
+            let event = agent.command_result_event(
+                agent_id,
+                command_id,
+                grpc::CommandStatus::Succeeded,
+                "agent core placeholder accepted",
+            );
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue agent task placeholder result event");
+            }
+        }
         Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {
             tracing::info!(command_id = %command_id, "executing terminal command by control-plane request");
             let event = match terminal
@@ -1583,6 +1605,15 @@ mod tests {
         assert!(agent.capabilities().iter().any(|capability| {
             capability.name == CapabilityName::ContainersManage
                 && capability.risk == CapabilityRisk::High
+        }));
+    }
+
+    #[test]
+    fn agent_run_capability_is_declared_as_placeholder() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        assert!(agent.capabilities().iter().any(|capability| {
+            capability.name == CapabilityName::AgentRun && capability.risk == CapabilityRisk::Medium
         }));
     }
 

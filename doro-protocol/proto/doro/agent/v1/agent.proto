@@ -75,6 +75,7 @@ message ControlPlaneCommand {
     ReadFileCommand read_file = 14;
     SearchFilesCommand search_files = 15;
     RunFileOperationCommand run_file_operation = 16;
+    RunAgentTaskCommand run_agent_task = 17;
   }
 }
 
@@ -120,6 +121,14 @@ message RunFileOperationCommand {
   string name = 5;
   bytes content = 6;
   bool overwrite = 7;
+}
+
+message RunAgentTaskCommand {
+  string command_id = 1;
+  string task_id = 2;
+  string scheduled_task_id = 3;
+  string prompt = 4;
+  string template_json = 5;
 }
 
 message ShutdownCommand {

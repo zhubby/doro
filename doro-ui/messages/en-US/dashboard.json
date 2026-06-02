@@ -10,7 +10,6 @@
     "waitingAgentConnect": "Waiting for agent connection",
     "aggregatedByAgents": "Aggregated from online agents",
     "waitingCapacity": "Waiting for capacity data",
-    "noBlockingTasks": "No blocking tasks",
     "waitingApprovalCount": "{count} waiting for approval",
     "pendingApprovalCount": "{count} pending",
     "noActionRequired": "No action required",
@@ -39,7 +38,6 @@
     "memory": "Memory",
     "disk": "Disk",
     "agents": "Agents",
-    "tasks": "Tasks",
     "approvals": "Approvals",
     "apps": "Apps"
   },

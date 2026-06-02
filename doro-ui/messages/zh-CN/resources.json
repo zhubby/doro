@@ -33,29 +33,57 @@
     "refresh": "刷新",
     "columnSettings": "列设置"
   },
-  "tasks": {
-    "empty": "暂无任务",
-    "steps": "{count} 步",
-    "unassigned": "未指定"
-  },
   "cron": {
     "title": "计划任务",
-    "description": "展示备份、巡检、清理等自动化任务，沿用 1Panel 的任务列表模式。",
+    "description": "按 Agent 标签匹配在线主机，定时执行脚本或触发一轮 Agent 占位任务。",
     "create": "创建任务",
     "run": "执行",
     "enable": "启用",
-    "disable": "停用"
+    "disable": "停用",
+    "refresh": "刷新计划任务",
+    "loading": "正在加载计划任务",
+    "empty": "暂无计划任务",
+    "labels": "Agent 标签",
+    "allAgents": "所有匹配 Agent",
+    "nextRun": "下次运行",
+    "history": "运行历史",
+    "historyDescription": "查看计划任务最近的触发记录。",
+    "emptyRuns": "暂无运行记录",
+    "createDescription": "脚本任务创建后需要审批一次，审批通过后按计划自动执行。",
+    "kindScript": "定时执行脚本",
+    "kindAgent": "定时走一轮 Agent",
+    "fields": {
+      "name": "名称",
+      "kind": "类型",
+      "schedule": "Cron 表达式",
+      "labels": "匹配标签，逗号分隔",
+      "script": "脚本",
+      "prompt": "Agent 提示词",
+      "timeout": "超时时间（秒）"
+    },
+    "status": {
+      "pending_approval": "待审批",
+      "active": "运行中",
+      "paused": "已停用"
+    },
+    "runStatus": {
+      "running": "运行中",
+      "succeeded": "成功",
+      "failed": "失败",
+      "skipped": "已跳过"
+    },
+    "errors": {
+      "load": "无法加载计划任务",
+      "create": "无法创建计划任务",
+      "action": "无法执行计划任务操作",
+      "runs": "无法加载运行历史"
+    }
   },
   "websites": {
     "title": "网站",
     "description": "复刻 1Panel 网站列表的域名、SSL、运行环境和操作入口。",
     "create": "创建网站",
     "renewCertificate": "续签证书"
-  },
-  "databases": {
-    "title": "数据库",
-    "description": "复用标准列表模式展示数据库实例、备份和连接状态。",
-    "create": "创建数据库"
   },
   "containers": {
     "title": "容器",

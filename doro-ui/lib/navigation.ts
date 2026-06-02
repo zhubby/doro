@@ -2,10 +2,8 @@ import {
   AppWindow,
   Boxes,
   CheckCircle2,
-  Database,
   FolderTree,
   Home,
-  ListTodo,
   MonitorCheck,
   Network,
   ScrollText,
@@ -32,7 +30,7 @@ export const navigation: NavigationItem[] = [
   {
     id: "tasks",
     href: "/tasks",
-    icon: ListTodo,
+    icon: CheckCircle2,
   },
   {
     id: "approvals",
@@ -67,12 +65,6 @@ export const navigation: NavigationItem[] = [
     count: 1,
   },
   {
-    id: "databases",
-    href: "/databases",
-    icon: Database,
-    count: 2,
-  },
-  {
     id: "containers",
     href: "/containers",
     icon: Boxes,
@@ -86,11 +78,6 @@ export const navigation: NavigationItem[] = [
     id: "logs",
     href: "/logs",
     icon: ScrollText,
-  },
-  {
-    id: "cron",
-    href: "/cron",
-    icon: CheckCircle2,
   },
   {
     id: "settings",

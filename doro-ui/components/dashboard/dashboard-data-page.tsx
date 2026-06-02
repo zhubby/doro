@@ -9,12 +9,10 @@ import {
   getHostMetrics,
   getHosts,
   getSettings,
-  getTasks,
   refreshVirtualMachines,
 } from "@/lib/control-plane-api";
 import { OverviewPage } from "@/components/dashboard/overview/overview-page";
 import { HostsPage } from "@/components/dashboard/hosts/hosts-page";
-import { TasksPage } from "@/components/dashboard/tasks/tasks-page";
 import { ApprovalsPage } from "@/components/dashboard/approvals/approvals-page";
 import { AppsPage } from "@/components/dashboard/apps/apps-page";
 import { SettingsPage } from "@/components/dashboard/settings/settings-page";
@@ -25,13 +23,11 @@ import type {
   Host,
   MetricSnapshot,
   SettingsResponse,
-  Task,
   VirtualMachine,
 } from "@/types/api";
 
 type DashboardData = {
   hosts: Host[];
-  tasks: Task[];
   approvals: ApprovalRequest[];
   apps: AppSummary[];
   controlPlaneEnvironment: ControlPlaneEnvironment | null;
@@ -43,7 +39,6 @@ type DashboardData = {
 
 const emptyData: DashboardData = {
   hosts: [],
-  tasks: [],
   approvals: [],
   apps: [],
   controlPlaneEnvironment: null,
@@ -56,7 +51,11 @@ const emptyData: DashboardData = {
 const DASHBOARD_REFRESH_INTERVAL_MS = 10_000;
 const DASHBOARD_METRIC_HISTORY_LIMIT = 240;
 
-export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "tasks" | "approvals" | "apps" | "settings" }) {
+export function DashboardDataPage({
+  view,
+}: {
+  view: "overview" | "hosts" | "approvals" | "apps" | "settings";
+}) {
   const [data, setData] = useState<DashboardData>(emptyData);
   const controlPlaneEnvironmentLoaded = useRef(false);
 
@@ -65,9 +64,8 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
-      const [hosts, tasks, approvals, apps, settings, virtualMachines] = await Promise.all([
+      const [hosts, approvals, apps, settings, virtualMachines] = await Promise.all([
         getHosts(),
-        getTasks(),
         getApprovals(),
         getApps(),
         getSettings(),
@@ -94,7 +92,6 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       }
       const error =
         hosts.error ??
-        tasks.error ??
         approvals.error ??
         apps.error ??
         settings.error ??
@@ -122,7 +119,6 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
 
         return {
           hosts: hostItems,
-          tasks: tasks.data?.items ?? [],
           approvals: approvals.data?.items ?? [],
           apps: apps.data?.items ?? [],
           controlPlaneEnvironment:
@@ -180,9 +176,6 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
       />
     );
   }
-  if (view === "tasks") {
-    return <TasksPage tasks={data.tasks} apiError={data.error} />;
-  }
   if (view === "approvals") {
     return (
       <ApprovalsPage
@@ -221,7 +214,6 @@ export function DashboardDataPage({ view }: { view: "overview" | "hosts" | "task
   return (
     <OverviewPage
       hosts={data.hosts}
-      tasks={data.tasks}
       approvals={data.approvals}
       apps={data.apps}
       controlPlaneEnvironment={data.controlPlaneEnvironment}

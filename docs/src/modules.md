@@ -4,9 +4,9 @@
 
 `doro-protocol` contains shared wire types, lifecycle vocabulary, generated tonic/prost gRPC types, and ts-rs TypeScript bindings for UI REST contracts. Public protocol changes should start here.
 
-`doro-control-plane` exposes `/api/v1`, owns task orchestration, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
+`doro-control-plane` exposes `/api/v1`, owns task orchestration, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
 
-`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user.
+`doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user. The `AgentRun` capability is currently a scheduled-task placeholder until the agent core is implemented.
 
 `doro-container` owns the provider-neutral container runtime boundary. It defines container inventory, lifecycle, image, network, volume, snapshot, and command abstractions, and exports the direct Docker provider backed by Bollard. Docker socket handling, Bollard model conversion, and runtime-specific container/image/network/volume operations belong in this crate rather than in the agent or control plane.
 
@@ -14,7 +14,7 @@
 
 `doro-website` owns the embedded Pingora website reverse proxy runtime. It builds a hot-swappable route table from control-plane website records, matches HTTP Host headers to reverse proxy upstreams, and exposes runtime handles for the control plane to reload routes after approved website changes. It does not own persisted website state or UI contracts.
 
-`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, approvals, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
+`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, scheduled task definitions and runs, approvals, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`.
 
 The first durable schema is organized into table families:
 

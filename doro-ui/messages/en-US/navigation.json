@@ -16,15 +16,15 @@
   "items": {
     "overview": {
       "label": "Overview",
-      "description": "See sites, databases, containers, and server health in one place."
+      "description": "See sites, containers, and server health in one place."
     },
     "hosts": {
       "label": "Hosts",
       "description": "Review enrolled agents, host status, and declared capabilities."
     },
     "tasks": {
-      "label": "Tasks",
-      "description": "Track task plans, execution steps, and results."
+      "label": "Scheduled tasks",
+      "description": "Review backup, inspection, and automation jobs."
     },
     "approvals": {
       "label": "Approvals",
@@ -50,10 +50,6 @@
       "label": "Websites",
       "description": "Inspect websites, domains, certificates, and service health."
     },
-    "databases": {
-      "label": "Databases",
-      "description": "Manage database instances, backups, and connection state."
-    },
     "containers": {
       "label": "Containers",
       "description": "Manage container lifecycle, images, and resource usage."
@@ -65,10 +61,6 @@
     "logs": {
       "label": "Logs",
       "description": "Review control-plane, agent, and task logs in one place."
-    },
-    "cron": {
-      "label": "Scheduled tasks",
-      "description": "Review backup, inspection, and automation jobs."
     },
     "settings": {
       "label": "Panel settings",

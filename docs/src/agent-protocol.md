@@ -55,6 +55,8 @@ The first stream implementation is a long-lived outbound session. The agent send
 
 The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
+Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunTerminalCommandCommand` and require an online Agent that declares `ShellExecute`. Agent-run schedules use `RunAgentTaskCommand` and require an online Agent that declares `AgentRun`; the current Agent implementation accepts the command and returns a successful `CommandResultEvent` placeholder with `agent core placeholder accepted` until the agent core is implemented.
+
 Interactive terminal sessions use the same agent stream plus a browser WebSocket bridge. The UI connects to `/api/v1/terminal/:host_id/ws`, the control plane sends `OpenTerminalSessionCommand`, browser keypresses become `TerminalInputCommand`, terminal resizes become `ResizeTerminalSessionCommand`, and agent PTY output returns as `TerminalOutputEvent`. Closing the browser socket sends `CloseTerminalSessionCommand`, and the agent confirms with `TerminalSessionClosedEvent`.
 
 ## Local Observation Events
@@ -68,6 +70,7 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
 - `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `file.command_result`: result of a file browsing, search, download, upload, create, rename, move, copy, or delete command. File operations are direct and audited; first-version write operations do not create approval requests.
+- `command_result`: generic command result, including the current scheduled agent-run placeholder.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
@@ -96,6 +99,8 @@ The `agents` table is the durable identity table. The initial status values are 
 4. Control plane dispatches tasks that match declared capabilities.
 5. Agent executes allowed steps and reports events.
 6. High-risk steps stop at approval before execution.
+
+Scheduled tasks are owned by the control plane. A scheduled script task requires approval when it is created or re-enabled; once approved, each trigger is automatically dispatched to every online Agent whose host labels match the task selector and whose capabilities include the required capability. Every trigger creates task and run records for audit.
 
 ## Core Types
 

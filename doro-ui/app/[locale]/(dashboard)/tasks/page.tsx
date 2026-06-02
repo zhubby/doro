@@ -1,5 +1,5 @@
-import { DashboardDataPage } from "@/components/dashboard/dashboard-data-page";
+import { CronPage } from "@/components/dashboard/cron/cron-page";
 
 export default function TasksRoute() {
-  return <DashboardDataPage view="tasks" />;
+  return <CronPage />;
 }

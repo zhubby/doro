@@ -12,6 +12,11 @@ use doro_protocol::Host;
 use doro_protocol::HostContainer;
 use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
+use doro_protocol::ScheduledTask;
+use doro_protocol::ScheduledTaskKind;
+use doro_protocol::ScheduledTaskRun;
+use doro_protocol::ScheduledTaskRunStatus;
+use doro_protocol::ScheduledTaskStatus;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::TaskStep;
@@ -69,7 +74,65 @@ pub struct NewTask {
     pub status: TaskStatus,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
+    pub metadata: Value,
+    pub create_step_approvals: bool,
     pub steps: Vec<TaskStep>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewTaskRun {
+    pub id: Uuid,
+    pub task_id: Uuid,
+    pub step_id: Option<Uuid>,
+    pub agent_id: Uuid,
+    pub status: String,
+    pub command_id: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub result_json: Value,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewScheduledTask {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: ScheduledTaskKind,
+    pub schedule: String,
+    pub status: ScheduledTaskStatus,
+    pub required_capability: CapabilityName,
+    pub label_selector: Vec<String>,
+    pub task_template: Value,
+    pub next_run_at: Option<DateTime<Utc>>,
+    pub approval_task_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ScheduledTaskChanges {
+    pub name: Option<String>,
+    pub schedule: Option<String>,
+    pub status: Option<ScheduledTaskStatus>,
+    pub label_selector: Option<Vec<String>>,
+    pub task_template: Option<Value>,
+    pub next_run_at: Option<Option<DateTime<Utc>>>,
+    pub last_run_at: Option<Option<DateTime<Utc>>>,
+    pub last_run_status: Option<Option<ScheduledTaskRunStatus>>,
+    pub approval_task_id: Option<Option<Uuid>>,
+    pub approved_at: Option<Option<DateTime<Utc>>>,
+    pub approved_by: Option<Option<String>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewScheduledTaskRun {
+    pub id: Uuid,
+    pub scheduled_task_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub status: ScheduledTaskRunStatus,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -301,6 +364,10 @@ impl Store {
 
     pub fn tasks(&self) -> TaskRepository<'_> {
         TaskRepository { store: self }
+    }
+
+    pub fn scheduled_tasks(&self) -> ScheduledTaskRepository<'_> {
+        ScheduledTaskRepository { store: self }
     }
 
     pub fn approvals(&self) -> ApprovalRepository<'_> {
@@ -716,7 +783,7 @@ impl TaskRepository<'_> {
             started_at: Set(None),
             finished_at: Set(None),
             error_message: Set(None),
-            metadata: Set(json!({})),
+            metadata: Set(new_task.metadata.clone()),
         };
         task_model.insert(&transaction).await?;
 
@@ -735,7 +802,7 @@ impl TaskRepository<'_> {
             .insert(&transaction)
             .await?;
 
-            if step.risk >= CapabilityRisk::High {
+            if new_task.create_step_approvals && step.risk >= CapabilityRisk::High {
                 entities::approvals::ActiveModel {
                     id: Set(Uuid::new_v4()),
                     task_id: Set(new_task.id),
@@ -790,6 +857,275 @@ impl TaskRepository<'_> {
             created_at: task.created_at.into(),
             steps,
         })
+    }
+
+    pub async fn update_status(
+        &self,
+        task_id: Uuid,
+        status: TaskStatus,
+        finished_at: Option<DateTime<Utc>>,
+        error_message: Option<String>,
+    ) -> Result<(), DbErr> {
+        let Some(model) = entities::tasks::Entity::find_by_id(task_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Err(DbErr::RecordNotFound("task not found".to_string()));
+        };
+        let mut active: entities::tasks::ActiveModel = model.into();
+        active.status = Set(serialize_task_status(status));
+        if status == TaskStatus::Running {
+            active.started_at = Set(Some(Utc::now().into()));
+        }
+        if let Some(finished_at) = finished_at {
+            active.finished_at = Set(Some(finished_at.into()));
+        }
+        active.error_message = Set(error_message);
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+
+    pub async fn update_step_status(&self, step_id: Uuid, status: &str) -> Result<(), DbErr> {
+        let Some(model) = entities::task_steps::Entity::find_by_id(step_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Err(DbErr::RecordNotFound("task step not found".to_string()));
+        };
+        let mut active: entities::task_steps::ActiveModel = model.into();
+        active.status = Set(status.to_string());
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+
+    pub async fn create_run(&self, run: NewTaskRun) -> Result<(), DbErr> {
+        entities::task_runs::ActiveModel {
+            id: Set(run.id),
+            task_id: Set(run.task_id),
+            step_id: Set(run.step_id),
+            agent_id: Set(run.agent_id),
+            status: Set(run.status),
+            command_id: Set(run.command_id),
+            started_at: Set(run.started_at.map(Into::into)),
+            finished_at: Set(run.finished_at.map(Into::into)),
+            result_json: Set(run.result_json),
+            error_message: Set(run.error_message),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(())
+    }
+
+    pub async fn finish_run(
+        &self,
+        run_id: Uuid,
+        status: String,
+        command_id: Option<String>,
+        finished_at: DateTime<Utc>,
+        result_json: Value,
+        error_message: Option<String>,
+    ) -> Result<(), DbErr> {
+        let Some(model) = entities::task_runs::Entity::find_by_id(run_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Err(DbErr::RecordNotFound("task run not found".to_string()));
+        };
+        let mut active: entities::task_runs::ActiveModel = model.into();
+        active.status = Set(status);
+        active.command_id = Set(command_id);
+        active.finished_at = Set(Some(finished_at.into()));
+        active.result_json = Set(result_json);
+        active.error_message = Set(error_message);
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+}
+
+pub struct ScheduledTaskRepository<'a> {
+    store: &'a Store,
+}
+
+impl ScheduledTaskRepository<'_> {
+    pub async fn list(&self) -> Result<Vec<ScheduledTask>, DbErr> {
+        let tasks = entities::cron_jobs::Entity::find()
+            .order_by(entities::cron_jobs::Column::CreatedAt, Order::Desc)
+            .all(self.store.connection())
+            .await?;
+        Ok(tasks
+            .into_iter()
+            .filter_map(scheduled_task_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn due(&self, now: DateTime<Utc>) -> Result<Vec<ScheduledTask>, DbErr> {
+        let tasks = entities::cron_jobs::Entity::find()
+            .filter(
+                entities::cron_jobs::Column::Status
+                    .eq(serialize_scheduled_task_status(ScheduledTaskStatus::Active)),
+            )
+            .filter(entities::cron_jobs::Column::NextRunAt.lte(now))
+            .order_by(entities::cron_jobs::Column::NextRunAt, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(tasks
+            .into_iter()
+            .filter_map(scheduled_task_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn get(&self, id: Uuid) -> Result<Option<ScheduledTask>, DbErr> {
+        Ok(entities::cron_jobs::Entity::find_by_id(id)
+            .one(self.store.connection())
+            .await?
+            .and_then(scheduled_task_model_to_protocol))
+    }
+
+    pub async fn find_by_approval_task(
+        &self,
+        task_id: Uuid,
+    ) -> Result<Option<ScheduledTask>, DbErr> {
+        Ok(entities::cron_jobs::Entity::find()
+            .filter(entities::cron_jobs::Column::ApprovalTaskId.eq(task_id))
+            .one(self.store.connection())
+            .await?
+            .and_then(scheduled_task_model_to_protocol))
+    }
+
+    pub async fn create(&self, task: NewScheduledTask) -> Result<ScheduledTask, DbErr> {
+        let model = entities::cron_jobs::ActiveModel {
+            id: Set(task.id),
+            host_id: Set(None),
+            name: Set(task.name),
+            schedule: Set(task.schedule),
+            status: Set(serialize_scheduled_task_status(task.status)),
+            task_template: Set(task.task_template),
+            kind: Set(serialize_scheduled_task_kind(task.kind)),
+            required_capability: Set(serialize_capability_name(task.required_capability)),
+            label_selector: Set(json!(task.label_selector)),
+            next_run_at: Set(task.next_run_at.map(Into::into)),
+            last_run_at: Set(None),
+            last_run_status: Set(None),
+            approval_task_id: Set(task.approval_task_id),
+            approved_at: Set(None),
+            approved_by: Set(None),
+            created_at: Set(task.created_at.into()),
+            updated_at: Set(task.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        scheduled_task_model_to_protocol(model)
+            .ok_or_else(|| DbErr::Custom("stored scheduled task is invalid".to_string()))
+    }
+
+    pub async fn update(
+        &self,
+        id: Uuid,
+        changes: ScheduledTaskChanges,
+    ) -> Result<ScheduledTask, DbErr> {
+        let Some(model) = entities::cron_jobs::Entity::find_by_id(id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Err(DbErr::RecordNotFound(
+                "scheduled task not found".to_string(),
+            ));
+        };
+        let mut active: entities::cron_jobs::ActiveModel = model.into();
+        if let Some(name) = changes.name {
+            active.name = Set(name);
+        }
+        if let Some(schedule) = changes.schedule {
+            active.schedule = Set(schedule);
+        }
+        if let Some(status) = changes.status {
+            active.status = Set(serialize_scheduled_task_status(status));
+        }
+        if let Some(label_selector) = changes.label_selector {
+            active.label_selector = Set(json!(label_selector));
+        }
+        if let Some(task_template) = changes.task_template {
+            active.task_template = Set(task_template);
+        }
+        if let Some(next_run_at) = changes.next_run_at {
+            active.next_run_at = Set(next_run_at.map(Into::into));
+        }
+        if let Some(last_run_at) = changes.last_run_at {
+            active.last_run_at = Set(last_run_at.map(Into::into));
+        }
+        if let Some(last_run_status) = changes.last_run_status {
+            active.last_run_status = Set(last_run_status.map(serialize_scheduled_task_run_status));
+        }
+        if let Some(approval_task_id) = changes.approval_task_id {
+            active.approval_task_id = Set(approval_task_id);
+        }
+        if let Some(approved_at) = changes.approved_at {
+            active.approved_at = Set(approved_at.map(Into::into));
+        }
+        if let Some(approved_by) = changes.approved_by {
+            active.approved_by = Set(approved_by);
+        }
+        active.updated_at = Set(changes.updated_at.unwrap_or_else(Utc::now).into());
+        let model = active.update(self.store.connection()).await?;
+        scheduled_task_model_to_protocol(model)
+            .ok_or_else(|| DbErr::Custom("stored scheduled task is invalid".to_string()))
+    }
+
+    pub async fn delete(&self, id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::cron_jobs::Entity::delete_by_id(id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    pub async fn create_run(&self, run: NewScheduledTaskRun) -> Result<ScheduledTaskRun, DbErr> {
+        let model = entities::cron_job_runs::ActiveModel {
+            id: Set(run.id),
+            cron_job_id: Set(run.scheduled_task_id),
+            task_id: Set(run.task_id),
+            status: Set(serialize_scheduled_task_run_status(run.status)),
+            started_at: Set(run.started_at.into()),
+            finished_at: Set(run.finished_at.map(Into::into)),
+            message: Set(run.message),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(scheduled_task_run_model_to_protocol(model))
+    }
+
+    pub async fn finish_run(
+        &self,
+        run_id: Uuid,
+        status: ScheduledTaskRunStatus,
+        finished_at: DateTime<Utc>,
+        message: Option<String>,
+    ) -> Result<ScheduledTaskRun, DbErr> {
+        let Some(model) = entities::cron_job_runs::Entity::find_by_id(run_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Err(DbErr::RecordNotFound(
+                "scheduled task run not found".to_string(),
+            ));
+        };
+        let mut active: entities::cron_job_runs::ActiveModel = model.into();
+        active.status = Set(serialize_scheduled_task_run_status(status));
+        active.finished_at = Set(Some(finished_at.into()));
+        active.message = Set(message);
+        let model = active.update(self.store.connection()).await?;
+        Ok(scheduled_task_run_model_to_protocol(model))
+    }
+
+    pub async fn list_runs(&self, scheduled_task_id: Uuid) -> Result<Vec<ScheduledTaskRun>, DbErr> {
+        let runs = entities::cron_job_runs::Entity::find()
+            .filter(entities::cron_job_runs::Column::CronJobId.eq(scheduled_task_id))
+            .order_by(entities::cron_job_runs::Column::StartedAt, Order::Desc)
+            .all(self.store.connection())
+            .await?;
+        Ok(runs
+            .into_iter()
+            .map(scheduled_task_run_model_to_protocol)
+            .collect())
     }
 }
 
@@ -1049,6 +1385,43 @@ impl MetricRepository<'_> {
             load_average: snapshot.load_average,
             extra: snapshot.extra,
         }
+    }
+}
+
+fn scheduled_task_model_to_protocol(task: entities::cron_jobs::Model) -> Option<ScheduledTask> {
+    Some(ScheduledTask {
+        id: task.id,
+        name: task.name,
+        kind: parse_scheduled_task_kind(&task.kind)?,
+        schedule: task.schedule,
+        status: parse_scheduled_task_status(&task.status)?,
+        required_capability: parse_capability_name(&task.required_capability)?,
+        label_selector: json_array_strings(task.label_selector),
+        task_template: task.task_template,
+        next_run_at: task.next_run_at.map(Into::into),
+        last_run_at: task.last_run_at.map(Into::into),
+        last_run_status: task
+            .last_run_status
+            .as_deref()
+            .and_then(parse_scheduled_task_run_status),
+        approval_task_id: task.approval_task_id,
+        approved_at: task.approved_at.map(Into::into),
+        approved_by: task.approved_by,
+        created_at: task.created_at.into(),
+        updated_at: task.updated_at.into(),
+    })
+}
+
+fn scheduled_task_run_model_to_protocol(run: entities::cron_job_runs::Model) -> ScheduledTaskRun {
+    ScheduledTaskRun {
+        id: run.id,
+        scheduled_task_id: run.cron_job_id,
+        task_id: run.task_id,
+        status: parse_scheduled_task_run_status(&run.status)
+            .unwrap_or(ScheduledTaskRunStatus::Failed),
+        started_at: run.started_at.into(),
+        finished_at: run.finished_at.map(Into::into),
+        message: run.message,
     }
 }
 
@@ -2068,6 +2441,60 @@ fn parse_task_status(value: &str) -> Option<TaskStatus> {
     }
 }
 
+fn serialize_scheduled_task_kind(kind: ScheduledTaskKind) -> String {
+    match kind {
+        ScheduledTaskKind::Script => "script",
+        ScheduledTaskKind::AgentRun => "agent_run",
+    }
+    .to_string()
+}
+
+fn parse_scheduled_task_kind(value: &str) -> Option<ScheduledTaskKind> {
+    match value {
+        "script" => Some(ScheduledTaskKind::Script),
+        "agent_run" => Some(ScheduledTaskKind::AgentRun),
+        _ => None,
+    }
+}
+
+fn serialize_scheduled_task_status(status: ScheduledTaskStatus) -> String {
+    match status {
+        ScheduledTaskStatus::PendingApproval => "pending_approval",
+        ScheduledTaskStatus::Active => "active",
+        ScheduledTaskStatus::Paused => "paused",
+    }
+    .to_string()
+}
+
+fn parse_scheduled_task_status(value: &str) -> Option<ScheduledTaskStatus> {
+    match value {
+        "pending_approval" => Some(ScheduledTaskStatus::PendingApproval),
+        "active" => Some(ScheduledTaskStatus::Active),
+        "paused" => Some(ScheduledTaskStatus::Paused),
+        _ => None,
+    }
+}
+
+fn serialize_scheduled_task_run_status(status: ScheduledTaskRunStatus) -> String {
+    match status {
+        ScheduledTaskRunStatus::Running => "running",
+        ScheduledTaskRunStatus::Succeeded => "succeeded",
+        ScheduledTaskRunStatus::Failed => "failed",
+        ScheduledTaskRunStatus::Skipped => "skipped",
+    }
+    .to_string()
+}
+
+fn parse_scheduled_task_run_status(value: &str) -> Option<ScheduledTaskRunStatus> {
+    match value {
+        "running" => Some(ScheduledTaskRunStatus::Running),
+        "succeeded" => Some(ScheduledTaskRunStatus::Succeeded),
+        "failed" => Some(ScheduledTaskRunStatus::Failed),
+        "skipped" => Some(ScheduledTaskRunStatus::Skipped),
+        _ => None,
+    }
+}
+
 fn serialize_approval_status(status: ApprovalStatus) -> String {
     match status {
         ApprovalStatus::Pending => "pending",
@@ -2138,6 +2565,7 @@ fn serialize_capability_name(name: CapabilityName) -> String {
     match name {
         CapabilityName::MetricsRead => "metrics_read",
         CapabilityName::LogsRead => "logs_read",
+        CapabilityName::AgentRun => "agent_run",
         CapabilityName::ServicesManage => "services_manage",
         CapabilityName::ContainersManage => "containers_manage",
         CapabilityName::VirtualMachinesManage => "virtual_machines_manage",
@@ -2154,6 +2582,7 @@ fn parse_capability_name(value: &str) -> Option<CapabilityName> {
     match normalize_enum_token(value).as_str() {
         "metrics_read" => Some(CapabilityName::MetricsRead),
         "logs_read" => Some(CapabilityName::LogsRead),
+        "agent_run" => Some(CapabilityName::AgentRun),
         "services_manage" => Some(CapabilityName::ServicesManage),
         "containers_manage" => Some(CapabilityName::ContainersManage),
         "virtual_machines_manage" => Some(CapabilityName::VirtualMachinesManage),

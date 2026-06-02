@@ -10,7 +10,6 @@
     "waitingAgentConnect": "等待 Agent 连接",
     "aggregatedByAgents": "按在线 Agent 汇总",
     "waitingCapacity": "等待容量数据",
-    "noBlockingTasks": "无阻塞任务",
     "waitingApprovalCount": "{count} 个等待审批",
     "pendingApprovalCount": "{count} 个待处理",
     "noActionRequired": "当前无需处理",
@@ -39,7 +38,6 @@
     "memory": "内存",
     "disk": "磁盘",
     "agents": "智能体",
-    "tasks": "任务",
     "approvals": "审批",
     "apps": "应用"
   },

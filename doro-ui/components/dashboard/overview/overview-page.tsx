@@ -19,12 +19,11 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notes } from "@/lib/mock-data";
-import type { AppSummary, ApprovalRequest, ControlPlaneEnvironment, Host, MetricSnapshot, Task } from "@/types/api";
+import type { AppSummary, ApprovalRequest, ControlPlaneEnvironment, Host, MetricSnapshot } from "@/types/api";
 import type { Metric } from "@/types/dashboard";
 
 type OverviewPageProps = {
   hosts?: Host[];
-  tasks?: Task[];
   approvals?: ApprovalRequest[];
   apps?: AppSummary[];
   controlPlaneEnvironment?: ControlPlaneEnvironment | null;
@@ -328,7 +327,6 @@ function aggregateResourceStats(
 
 export function OverviewPage({
   hosts = [],
-  tasks = [],
   approvals = [],
   apps = [],
   controlPlaneEnvironment = null,
@@ -357,11 +355,6 @@ export function OverviewPage({
       label: "智能体",
       value: String(hosts.length),
       helper: `${onlineHosts} 个在线`,
-    },
-    {
-      label: "任务",
-      value: String(tasks.length),
-      helper: waitingApprovals > 0 ? `${waitingApprovals} 个等待审批` : "无阻塞任务",
     },
     {
       label: "审批",

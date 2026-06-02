@@ -11,11 +11,9 @@ export type NavigationItem = {
     | "terminal"
     | "files"
     | "websites"
-    | "databases"
     | "containers"
     | "system"
     | "logs"
-    | "cron"
     | "settings";
   href: string;
   icon: ElementType;
@@ -95,17 +93,6 @@ export type ContainerResource = {
   cpu: string;
   memory: string;
   ports: string;
-  updatedAt: string;
-};
-
-export type DatabaseResource = {
-  id: string;
-  name: string;
-  engine: string;
-  status: ResourceStatus;
-  version: string;
-  size: string;
-  backup: string;
   updatedAt: string;
 };
 

@@ -4,7 +4,6 @@ import type {
   Application,
   ContainerResource,
   CronJob,
-  DatabaseResource,
   AiAgent,
   Metric,
   OverviewStat,
@@ -201,29 +200,6 @@ export const virtualMachines: VirtualMachineResource[] = [
     address: "未分配",
     uptime: "已停止",
     updatedAt: "昨天",
-  },
-];
-
-export const databases: DatabaseResource[] = [
-  {
-    id: "mysql-main",
-    name: "mysql-main",
-    engine: "MySQL",
-    status: "running",
-    version: "8.0.37",
-    size: "1.8 GB",
-    backup: "今天 03:00",
-    updatedAt: "2 分钟前",
-  },
-  {
-    id: "redis-cache",
-    name: "redis-cache",
-    engine: "Redis",
-    status: "warning",
-    version: "7.2.5",
-    size: "318 MB",
-    backup: "未开启",
-    updatedAt: "1 小时前",
   },
 ];
 

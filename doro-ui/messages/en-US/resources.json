@@ -33,29 +33,57 @@
     "refresh": "Refresh",
     "columnSettings": "Column settings"
   },
-  "tasks": {
-    "empty": "No tasks",
-    "steps": "{count} steps",
-    "unassigned": "Unassigned"
-  },
   "cron": {
     "title": "Scheduled tasks",
-    "description": "Shows backup, inspection, cleanup, and other automation jobs in a standard task list.",
+    "description": "Match online agents by tags, then run scripts or trigger an agent placeholder on schedule.",
     "create": "Create task",
     "run": "Run",
     "enable": "Enable",
-    "disable": "Disable"
+    "disable": "Disable",
+    "refresh": "Refresh scheduled tasks",
+    "loading": "Loading scheduled tasks",
+    "empty": "No scheduled tasks",
+    "labels": "Agent tags",
+    "allAgents": "All matching agents",
+    "nextRun": "Next run",
+    "history": "Run history",
+    "historyDescription": "Review recent trigger records for this scheduled task.",
+    "emptyRuns": "No run records",
+    "createDescription": "Script tasks require one approval before automatic scheduled execution.",
+    "kindScript": "Run script on schedule",
+    "kindAgent": "Run agent pass on schedule",
+    "fields": {
+      "name": "Name",
+      "kind": "Type",
+      "schedule": "Cron expression",
+      "labels": "Match tags, comma-separated",
+      "script": "Script",
+      "prompt": "Agent prompt",
+      "timeout": "Timeout seconds"
+    },
+    "status": {
+      "pending_approval": "Pending approval",
+      "active": "Active",
+      "paused": "Paused"
+    },
+    "runStatus": {
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "skipped": "Skipped"
+    },
+    "errors": {
+      "load": "Unable to load scheduled tasks",
+      "create": "Unable to create scheduled task",
+      "action": "Unable to run scheduled task action",
+      "runs": "Unable to load run history"
+    }
   },
   "websites": {
     "title": "Websites",
     "description": "Shows domains, SSL, runtime, and operations for website entries.",
     "create": "Create website",
     "renewCertificate": "Renew certificate"
-  },
-  "databases": {
-    "title": "Databases",
-    "description": "Shows database instances, backups, and connection status in the standard list layout.",
-    "create": "Create database"
   },
   "containers": {
     "title": "Containers",

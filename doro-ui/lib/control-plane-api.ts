@@ -6,6 +6,8 @@ import type {
   CreateApprovalResponse,
   CreateEnrollmentTokenRequest,
   CreateEnrollmentTokenResponse,
+  CreateScheduledTaskRequest,
+  CreateScheduledTaskResponse,
   CreateVirtualMachineRequest,
   CreateVirtualMachineSnapshotRequest,
   CreateWebsiteRequest,
@@ -24,7 +26,8 @@ import type {
   ListHostsResponse,
   ListMetricSnapshotsResponse,
   ListRuntimeLogsResponse,
-  ListTasksResponse,
+  ListScheduledTaskRunsResponse,
+  ListScheduledTasksResponse,
   ListVirtualMachineImagesResponse,
   ListVirtualMachineSnapshotsResponse,
   ListVirtualMachineTemplatesResponse,
@@ -35,11 +38,14 @@ import type {
   RegisterRequest,
   ResolveApprovalRequest,
   ResolveApprovalResponse,
+  ScheduledTaskActionResponse,
   SettingsResponse,
   TerminalCommandRequest,
   TerminalCommandResponse,
   UpdateHostRequest,
   UpdateHostResponse,
+  UpdateScheduledTaskRequest,
+  UpdateScheduledTaskResponse,
   UpdateWebsiteRequest,
   VirtualMachineActionRequest,
   VirtualMachineActionResponse,
@@ -437,8 +443,52 @@ export async function deleteWebsite(websiteId: string) {
   });
 }
 
-export async function getTasks() {
-  return getJson<ListTasksResponse>("/api/v1/tasks");
+export async function getScheduledTasks() {
+  return getJson<ListScheduledTasksResponse>("/api/v1/scheduled-tasks");
+}
+
+export async function createScheduledTask(request: CreateScheduledTaskRequest) {
+  return authedRequest<CreateScheduledTaskResponse>("/api/v1/scheduled-tasks", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function updateScheduledTask(
+  scheduledTaskId: string,
+  request: UpdateScheduledTaskRequest,
+) {
+  return authedRequest<UpdateScheduledTaskResponse>(
+    `/api/v1/scheduled-tasks/${scheduledTaskId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function deleteScheduledTask(scheduledTaskId: string) {
+  return authedRequest<null>(`/api/v1/scheduled-tasks/${scheduledTaskId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function scheduledTaskAction(
+  scheduledTaskId: string,
+  action: "enable" | "disable" | "run",
+) {
+  return authedRequest<ScheduledTaskActionResponse>(
+    `/api/v1/scheduled-tasks/${scheduledTaskId}/${action}`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function getScheduledTaskRuns(scheduledTaskId: string) {
+  return getJson<ListScheduledTaskRunsResponse>(
+    `/api/v1/scheduled-tasks/${scheduledTaskId}/runs`,
+  );
 }
 
 export async function getApprovals() {
