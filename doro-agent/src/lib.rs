@@ -176,9 +176,9 @@ impl AgentConfig {
             metrics_enabled: true,
             metrics_interval: Duration::from_secs(10),
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            container_metrics_enabled: true,
             docker_socket_path: None,
-            docker_manage_enabled: false,
+            docker_manage_enabled: true,
             vm_manage_enabled: false,
             qemu_binary_dir: None,
             vm_state_dir: None,
@@ -1577,9 +1577,23 @@ mod tests {
     }
 
     #[test]
-    fn docker_manage_capability_is_declared_only_when_enabled() {
+    fn docker_manage_capability_is_declared_when_enabled() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        assert!(agent.capabilities().iter().any(|capability| {
+            capability.name == CapabilityName::ContainersManage
+                && capability.risk == CapabilityRisk::High
+        }));
+    }
+
+    #[test]
+    fn docker_manage_capability_is_omitted_when_disabled() {
         let base_config = test_agent_config(Uuid::new_v4());
-        let agent = Agent::new(base_config.clone());
+
+        let agent = Agent::new(AgentConfig {
+            docker_manage_enabled: false,
+            ..base_config
+        });
 
         assert!(
             !agent
@@ -1587,16 +1601,6 @@ mod tests {
                 .iter()
                 .any(|capability| capability.name == CapabilityName::ContainersManage)
         );
-
-        let agent = Agent::new(AgentConfig {
-            docker_manage_enabled: true,
-            ..base_config
-        });
-
-        assert!(agent.capabilities().iter().any(|capability| {
-            capability.name == CapabilityName::ContainersManage
-                && capability.risk == CapabilityRisk::High
-        }));
     }
 
     #[test]

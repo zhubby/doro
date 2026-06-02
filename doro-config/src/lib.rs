@@ -187,9 +187,9 @@ impl Default for AgentConfig {
             metrics_enabled: true,
             metrics_interval_seconds: 10,
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            container_metrics_enabled: true,
             docker_socket_path: None,
-            docker_manage_enabled: false,
+            docker_manage_enabled: true,
             vm_manage_enabled: false,
             qemu_binary_dir: None,
             vm_state_dir: None,
@@ -413,9 +413,9 @@ mod tests {
         assert!(loaded.config.agent.metrics_enabled);
         assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
         assert!(loaded.config.agent.process_names.is_empty());
-        assert!(!loaded.config.agent.container_metrics_enabled);
+        assert!(loaded.config.agent.container_metrics_enabled);
         assert!(loaded.config.agent.docker_socket_path.is_none());
-        assert!(!loaded.config.agent.docker_manage_enabled);
+        assert!(loaded.config.agent.docker_manage_enabled);
         assert!(!loaded.config.agent.gpu_metrics_enabled);
         assert!(loaded.config.agent.enrollment_token.is_none());
         assert!(loaded.config.agent.agent_id.is_none());

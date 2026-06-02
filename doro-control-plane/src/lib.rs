@@ -815,7 +815,6 @@ impl AgentStreamRegistry {
 
 #[derive(Debug)]
 enum ContainerRefreshError {
-    NoOnlineHosts,
     NoStream,
     Timeout,
     AgentFailed(String),
@@ -1851,19 +1850,24 @@ async fn refresh_containers(
         .filter(|host| host.status == HostStatus::Online)
         .collect::<Vec<_>>();
     if online_hosts.is_empty() {
-        return Err(container_refresh_app_error(
-            ContainerRefreshError::NoOnlineHosts,
-        ));
+        return Ok(Json(ListHostContainersResponse {
+            items: state.store.containers().list().await?,
+        }));
     }
 
     let mut snapshots = Vec::with_capacity(online_hosts.len());
     for host in &online_hosts {
-        let snapshot = state
-            .agent_streams
-            .collect_containers(host.id)
-            .await
-            .map_err(container_refresh_app_error)?;
-        snapshots.push((host.id, snapshot));
+        match state.agent_streams.collect_containers(host.id).await {
+            Ok(snapshot) => snapshots.push((host.id, snapshot)),
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    host_id = %host.id,
+                    hostname = %host.hostname,
+                    "failed to refresh containers from agent"
+                );
+            }
+        }
     }
 
     for (host_id, snapshot) in snapshots {
@@ -1878,11 +1882,9 @@ async fn refresh_containers(
         .await?;
     }
 
-    let mut items = Vec::new();
-    for host in online_hosts {
-        items.extend(state.store.containers().list_by_host(host.id).await?);
-    }
-    Ok(Json(ListHostContainersResponse { items }))
+    Ok(Json(ListHostContainersResponse {
+        items: state.store.containers().list().await?,
+    }))
 }
 
 async fn refresh_virtual_machines(
@@ -3841,9 +3843,6 @@ impl AppError {
 
 fn container_refresh_app_error(error: ContainerRefreshError) -> AppError {
     match error {
-        ContainerRefreshError::NoOnlineHosts => {
-            AppError::status(StatusCode::SERVICE_UNAVAILABLE, "no online agents")
-        }
         ContainerRefreshError::NoStream => AppError::status(
             StatusCode::SERVICE_UNAVAILABLE,
             "agent stream is not connected",

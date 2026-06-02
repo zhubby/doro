@@ -1095,28 +1095,37 @@ impl ContainerRepository<'_> {
         Ok(())
     }
 
+    pub async fn list(&self) -> Result<Vec<HostContainer>, DbErr> {
+        let rows = entities::containers::Entity::find()
+            .order_by(entities::containers::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(container_model_to_protocol).collect())
+    }
+
     pub async fn list_by_host(&self, host_id: Uuid) -> Result<Vec<HostContainer>, DbErr> {
         let rows = entities::containers::Entity::find()
             .filter(entities::containers::Column::HostId.eq(host_id))
             .order_by(entities::containers::Column::Name, Order::Asc)
             .all(self.store.connection())
             .await?;
-        Ok(rows
-            .into_iter()
-            .map(|container| HostContainer {
-                id: container.id,
-                host_id: container.host_id,
-                runtime: container.runtime,
-                container_ref: container.container_ref,
-                name: container.name,
-                image: container.image,
-                status: container.status,
-                ports: container.ports,
-                labels: container.labels,
-                created_at: container.created_at.map(Into::into),
-                observed_at: container.observed_at.into(),
-            })
-            .collect())
+        Ok(rows.into_iter().map(container_model_to_protocol).collect())
+    }
+}
+
+fn container_model_to_protocol(container: entities::containers::Model) -> HostContainer {
+    HostContainer {
+        id: container.id,
+        host_id: container.host_id,
+        runtime: container.runtime,
+        container_ref: container.container_ref,
+        name: container.name,
+        image: container.image,
+        status: container.status,
+        ports: container.ports,
+        labels: container.labels,
+        created_at: container.created_at.map(Into::into),
+        observed_at: container.observed_at.into(),
     }
 }
 

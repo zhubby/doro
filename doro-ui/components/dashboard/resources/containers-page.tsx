@@ -65,6 +65,8 @@ type ContainersPageProps = {
   hosts?: Host[];
   containers?: HostContainer[];
   apiError?: string | null;
+  isRefreshing?: boolean;
+  onRefresh?: () => void;
 };
 
 const statusLabels: Record<ResourceStatus | "all", string> = {
@@ -127,6 +129,8 @@ export function ContainersPage({
   hosts = [],
   containers = [],
   apiError,
+  isRefreshing = false,
+  onRefresh,
 }: ContainersPageProps) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<ResourceStatus | "all">("all");
@@ -161,7 +165,7 @@ export function ContainersPage({
     });
   }, [agentName, query, rows, status]);
   const refresh = () => {
-    window.location.reload();
+    onRefresh?.();
   };
 
   return (
@@ -188,8 +192,17 @@ export function ContainersPage({
               className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
             />
           </label>
-          <Button variant="outline" size="icon" aria-label="刷新" onClick={refresh}>
-            <RefreshCw className="size-4" aria-hidden="true" />
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="刷新"
+            onClick={refresh}
+            disabled={isRefreshing}
+          >
+            <RefreshCw
+              className={`size-4 ${isRefreshing ? "animate-spin" : ""}`}
+              aria-hidden="true"
+            />
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -239,6 +252,10 @@ export function ContainersPage({
         apiError ? (
           <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
             控制平面暂不可用：{apiError}
+          </div>
+        ) : isRefreshing ? (
+          <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+            正在刷新容器状态...
           </div>
         ) : null
       }
