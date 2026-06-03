@@ -334,7 +334,7 @@ export function ApprovalsPage({
                     title="通过"
                     variant="ghost"
                     size="icon"
-                    className="size-8 text-muted-foreground hover:bg-primary/10 hover:text-primary"
+                    className="text-muted-foreground hover:bg-primary/10 hover:text-primary"
                     disabled={actionPending !== null}
                     onClick={() => void handleApprove(approval)}
                   >
@@ -345,7 +345,7 @@ export function ApprovalsPage({
                     title="拒绝"
                     variant="ghost"
                     size="icon"
-                    className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     disabled={actionPending !== null}
                     onClick={() => void handleDeny(approval)}
                   >
@@ -358,7 +358,7 @@ export function ApprovalsPage({
                 title="删除"
                 variant="ghost"
                 size="icon"
-                className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 disabled={actionPending !== null}
                 onClick={() => void handleDelete(approval)}
               >

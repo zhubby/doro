@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Switch } from "@/components/ui/switch";
 import {
   createAiModelProvider,
   deleteAiModelProvider,
@@ -50,7 +51,6 @@ type ProviderFormState = {
 };
 
 type ProviderRow = AiModelProvider & {
-  keyLabel: string;
   updatedLabel: string;
 };
 
@@ -94,17 +94,10 @@ export function ModelsPage() {
   const [apiError, setApiError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const enabledProviders = useMemo(
-    () => providers.filter((provider) => provider.enabled && provider.has_api_key),
-    [providers],
-  );
   const providerRows = useMemo(
     () =>
       providers.map((provider) => ({
         ...provider,
-        keyLabel: provider.has_api_key
-          ? `已配置 ${provider.api_key_hint ?? ""}`.trim()
-          : "未配置",
         updatedLabel: formatRelativeTime(provider.updated_at),
       })),
     [providers],
@@ -195,7 +188,7 @@ export function ModelsPage() {
     {
       key: "name",
       label: "名称 / Base URL",
-      width: "30%",
+      width: "36%",
       render: (row) => (
         <div className="min-w-0">
           <p className="truncate font-medium" title={row.name}>
@@ -210,7 +203,7 @@ export function ModelsPage() {
     {
       key: "default_model",
       label: "默认模型",
-      width: "18%",
+      width: "24%",
       render: (row) => <TruncatedText value={row.default_model} />,
     },
     {
@@ -218,12 +211,6 @@ export function ModelsPage() {
       label: "状态",
       width: "7rem",
       render: (row) => providerStatusBadge(row),
-    },
-    {
-      key: "keyLabel",
-      label: "密钥",
-      width: "10rem",
-      render: (row) => <TruncatedText value={row.keyLabel} />,
     },
     {
       key: "timeout_seconds",
@@ -240,20 +227,7 @@ export function ModelsPage() {
   ];
 
   return (
-    <PageContainer
-      aside={
-        <PageSection title="模型状态">
-          <div className="space-y-3">
-            <StatusLine label="模型供应商" value={providers.length} />
-            <StatusLine label="可用供应商" value={enabledProviders.length} />
-            <StatusLine
-              label="缺少密钥"
-              value={providers.filter((provider) => !provider.has_api_key).length}
-            />
-          </div>
-        </PageSection>
-      }
-    >
+    <PageContainer>
       {apiError ? (
         <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
           控制平面暂不可用：{apiError}
@@ -358,15 +332,6 @@ export function ModelsPage() {
   );
 }
 
-function StatusLine({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <span className="text-sm">{label}</span>
-      <Badge variant="secondary">{value}</Badge>
-    </div>
-  );
-}
-
 function ProviderDialog({
   open,
   form,
@@ -454,17 +419,16 @@ function ProviderDialog({
             </div>
           </Field>
 
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
+          <div className="flex items-center justify-between gap-4 rounded-md border bg-muted/25 px-3 py-2.5">
+            <label htmlFor="provider-enabled" className="text-sm font-medium">
+              启用此供应商
+            </label>
+            <Switch
+              id="provider-enabled"
               checked={form.enabled}
-              onChange={(event) =>
-                onFormChange({ ...form, enabled: event.target.checked })
-              }
-              className="size-4 rounded border"
+              onCheckedChange={(enabled) => onFormChange({ ...form, enabled })}
             />
-            <span className="font-medium">启用此供应商</span>
-          </label>
+          </div>
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>

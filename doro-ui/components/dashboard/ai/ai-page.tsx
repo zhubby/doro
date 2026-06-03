@@ -488,7 +488,7 @@ export function AiPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="border-t bg-background p-4">
-          <div className="mx-auto flex max-w-5xl gap-3">
+          <div className="mx-auto flex max-w-5xl items-end gap-3">
             <textarea
               value={input}
               onChange={(event) => setInput(event.target.value)}
@@ -497,7 +497,6 @@ export function AiPage() {
             />
             <Button
               type="submit"
-              className="h-14 px-5"
               disabled={
                 !input.trim() ||
                 !selectedHostId ||

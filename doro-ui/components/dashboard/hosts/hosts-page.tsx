@@ -564,7 +564,7 @@ export function HostsPage({
                 title="编辑"
                 variant="ghost"
                 size="icon"
-                className="size-8 text-muted-foreground"
+                className="text-muted-foreground"
                 onClick={() => openEditDialog(host)}
               >
                 <Pencil className="size-4" />
@@ -574,7 +574,7 @@ export function HostsPage({
                 title="删除"
                 variant="ghost"
                 size="icon"
-                className="size-8 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                 onClick={() => {
                   setDeleteTarget(host);
                   setDeleteError(null);
@@ -649,7 +649,7 @@ export function HostsPage({
                       size="icon"
                       title="删除标签"
                       disabled={editPending}
-                      className="size-9 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                       onClick={() => removeDraftLabel(index)}
                     >
                       <X className="size-4" />
