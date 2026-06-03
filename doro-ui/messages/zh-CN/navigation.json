@@ -64,7 +64,7 @@
     },
     "settings": {
       "label": "面板设置",
-      "description": "配置主题、安全入口、会话和 API 访问。"
+      "description": "查看控制平面审批策略、Agent 通道和数据库配置。"
     }
   }
 }

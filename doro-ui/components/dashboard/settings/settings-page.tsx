@@ -1,16 +1,20 @@
 import { PageSection } from "@/components/admin/page-section";
 import { SettingList } from "@/components/admin/setting-list";
 import { PageContainer } from "@/components/layout/page-container";
-import { panelSettings } from "@/lib/mock-data";
 import type { SettingsResponse } from "@/types/api";
 import { useTranslations } from "next-intl";
 
 type SettingsPageProps = {
   settings?: SettingsResponse | null;
   apiError?: string | null;
+  isLoading?: boolean;
 };
 
-export function SettingsPage({ settings, apiError }: SettingsPageProps) {
+export function SettingsPage({
+  settings,
+  apiError,
+  isLoading = false,
+}: SettingsPageProps) {
   const t = useTranslations("settings");
   const tCommon = useTranslations("common");
   const controlPlaneSettings = settings
@@ -37,7 +41,11 @@ export function SettingsPage({ settings, apiError }: SettingsPageProps) {
           action: tCommon("actions.view"),
         },
       ]
-    : panelSettings;
+    : [];
+  const emptyText =
+    isLoading ? t("loading")
+    : apiError ? t("unavailable")
+    : t("empty");
 
   return (
     <PageContainer>
@@ -47,7 +55,13 @@ export function SettingsPage({ settings, apiError }: SettingsPageProps) {
         </div>
       ) : null}
       <PageSection>
-        <SettingList settings={controlPlaneSettings} />
+        {controlPlaneSettings.length > 0 ? (
+          <SettingList settings={controlPlaneSettings} />
+        ) : (
+          <div className="rounded-lg border p-4 text-sm text-muted-foreground">
+            {emptyText}
+          </div>
+        )}
       </PageSection>
     </PageContainer>
   );

@@ -7,7 +7,6 @@ import type {
   AiAgent,
   Metric,
   OverviewStat,
-  SettingOption,
   SystemInfo,
   SystemMetric,
   SystemStat,
@@ -200,53 +199,6 @@ export const virtualMachines: VirtualMachineResource[] = [
     address: "未分配",
     uptime: "已停止",
     updatedAt: "昨天",
-  },
-];
-
-export const panelSettings: SettingOption[] = [
-  {
-    id: "theme",
-    label: "主题",
-    value: "跟随系统",
-    helper: "切换浅色、深色或系统自动模式。",
-    action: "设置",
-    choices: ["浅色", "深色", "跟随系统"],
-  },
-  {
-    id: "entrance",
-    label: "安全入口",
-    value: "已启用",
-    helper: "隐藏默认登录路径，降低暴露风险。",
-    action: "查看",
-  },
-  {
-    id: "panel-name",
-    label: "面板名称",
-    value: "Doro Panel",
-    helper: "显示在浏览器标题和侧边栏顶部。",
-    action: "编辑",
-  },
-  {
-    id: "language",
-    label: "语言",
-    value: "简体中文",
-    helper: "当前界面语言。",
-    action: "切换",
-    choices: ["简体中文", "English"],
-  },
-  {
-    id: "session",
-    label: "会话超时",
-    value: "86400 秒",
-    helper: "超过该时间未操作后需要重新登录。",
-    action: "设置",
-  },
-  {
-    id: "api",
-    label: "API 接口",
-    value: "已关闭",
-    helper: "开启后允许外部系统通过令牌访问面板 API。",
-    action: "启用",
   },
 ];
 

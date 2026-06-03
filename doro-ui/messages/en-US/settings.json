@@ -5,6 +5,9 @@
   "agentTransportHelper": "Communication protocol between agents and the control plane.",
   "database": "Database",
   "databaseHelper": "Persistence backend currently used by the control plane.",
+  "loading": "Loading control plane settings",
+  "empty": "No control plane settings available",
+  "unavailable": "Control plane settings are unavailable",
   "language": "Language",
   "languageHelper": "Current interface language.",
   "languageUpdated": "Language updated."

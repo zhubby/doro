@@ -57,6 +57,7 @@ export function DashboardDataPage({
   view: "overview" | "hosts" | "approvals" | "apps" | "settings";
 }) {
   const [data, setData] = useState<DashboardData>(emptyData);
+  const [hasLoaded, setHasLoaded] = useState(false);
   const controlPlaneEnvironmentLoaded = useRef(false);
 
   useEffect(() => {
@@ -131,6 +132,7 @@ export function DashboardDataPage({
           error: null,
         };
       });
+      setHasLoaded(true);
     }
 
     async function refresh() {
@@ -210,7 +212,13 @@ export function DashboardDataPage({
     return <AppsPage machines={data.virtualMachines} hosts={data.hosts} apiError={data.error} />;
   }
   if (view === "settings") {
-    return <SettingsPage settings={data.settings} apiError={data.error} />;
+    return (
+      <SettingsPage
+        settings={data.settings}
+        apiError={data.error}
+        isLoading={!hasLoaded}
+      />
+    );
   }
 
   return (

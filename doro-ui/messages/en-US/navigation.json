@@ -64,7 +64,7 @@
     },
     "settings": {
       "label": "Panel settings",
-      "description": "Configure theme, security entrypoints, sessions, and API access."
+      "description": "Review control-plane approval policy, agent transport, and database settings."
     }
   }
 }

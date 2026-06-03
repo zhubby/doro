@@ -5,6 +5,9 @@
   "agentTransportHelper": "Agent 与控制平面之间的通信协议。",
   "database": "数据库",
   "databaseHelper": "控制平面当前使用的持久化后端。",
+  "loading": "正在加载控制平面设置",
+  "empty": "暂无控制平面设置",
+  "unavailable": "控制平面设置暂不可用",
   "language": "语言",
   "languageHelper": "当前界面语言。",
   "languageUpdated": "语言已更新。"
