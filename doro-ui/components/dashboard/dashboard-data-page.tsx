@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
-  getApps,
   getApprovals,
   getControlPlaneEnvironment,
   getHostMetrics,
   getHosts,
   getSettings,
+  refreshContainers,
   refreshVirtualMachines,
 } from "@/lib/control-plane-api";
 import { OverviewPage } from "@/components/dashboard/overview/overview-page";
@@ -17,10 +17,10 @@ import { ApprovalsPage } from "@/components/dashboard/approvals/approvals-page";
 import { AppsPage } from "@/components/dashboard/apps/apps-page";
 import { SettingsPage } from "@/components/dashboard/settings/settings-page";
 import type {
-  AppSummary,
   ApprovalRequest,
   ControlPlaneEnvironment,
   Host,
+  HostContainer,
   MetricSnapshot,
   SettingsResponse,
   VirtualMachine,
@@ -29,22 +29,22 @@ import type {
 type DashboardData = {
   hosts: Host[];
   approvals: ApprovalRequest[];
-  apps: AppSummary[];
   controlPlaneEnvironment: ControlPlaneEnvironment | null;
   metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
   virtualMachines: VirtualMachine[];
+  containers: HostContainer[];
   error: string | null;
 };
 
 const emptyData: DashboardData = {
   hosts: [],
   approvals: [],
-  apps: [],
   controlPlaneEnvironment: null,
   metricHistoryByHost: {},
   settings: null,
   virtualMachines: [],
+  containers: [],
   error: null,
 };
 
@@ -64,13 +64,15 @@ export function DashboardDataPage({
     let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
     async function load() {
-      const [hosts, approvals, apps, settings, virtualMachines] = await Promise.all([
+      const [hosts, approvals, settings, virtualMachines, containers] = await Promise.all([
         getHosts(),
         getApprovals(),
-        getApps(),
         getSettings(),
-        view === "apps"
+        view === "overview" || view === "apps"
           ? refreshVirtualMachines()
+          : Promise.resolve({ data: null, error: null }),
+        view === "overview"
+          ? refreshContainers()
           : Promise.resolve({ data: null, error: null }),
       ]);
       if (cancelled) {
@@ -93,9 +95,9 @@ export function DashboardDataPage({
       const error =
         hosts.error ??
         approvals.error ??
-        apps.error ??
         settings.error ??
         virtualMachines.error ??
+        containers.error ??
         metricResults.find((result) => result.error)?.error ??
         controlPlaneEnvironment.error ??
         null;
@@ -120,12 +122,12 @@ export function DashboardDataPage({
         return {
           hosts: hostItems,
           approvals: approvals.data?.items ?? [],
-          apps: apps.data?.items ?? [],
           controlPlaneEnvironment:
             controlPlaneEnvironment.data?.item ?? current.controlPlaneEnvironment,
           metricHistoryByHost,
           settings: settings.data,
           virtualMachines: virtualMachines.data?.items ?? current.virtualMachines,
+          containers: containers.data?.items ?? current.containers,
           error: null,
         };
       });
@@ -215,7 +217,8 @@ export function DashboardDataPage({
     <OverviewPage
       hosts={data.hosts}
       approvals={data.approvals}
-      apps={data.apps}
+      virtualMachines={data.virtualMachines}
+      containers={data.containers}
       controlPlaneEnvironment={data.controlPlaneEnvironment}
       metricHistoryByHost={data.metricHistoryByHost}
       apiError={data.error}

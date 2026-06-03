@@ -19,13 +19,21 @@ import {
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { notes } from "@/lib/mock-data";
-import type { AppSummary, ApprovalRequest, ControlPlaneEnvironment, Host, MetricSnapshot } from "@/types/api";
+import type {
+  ApprovalRequest,
+  ControlPlaneEnvironment,
+  Host,
+  HostContainer,
+  MetricSnapshot,
+  VirtualMachine,
+} from "@/types/api";
 import type { Metric } from "@/types/dashboard";
 
 type OverviewPageProps = {
   hosts?: Host[];
   approvals?: ApprovalRequest[];
-  apps?: AppSummary[];
+  virtualMachines?: VirtualMachine[];
+  containers?: HostContainer[];
   controlPlaneEnvironment?: ControlPlaneEnvironment | null;
   metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
@@ -328,7 +336,8 @@ function aggregateResourceStats(
 export function OverviewPage({
   hosts = [],
   approvals = [],
-  apps = [],
+  virtualMachines = [],
+  containers = [],
   controlPlaneEnvironment = null,
   metricHistoryByHost = {},
   apiError,
@@ -337,6 +346,12 @@ export function OverviewPage({
     (approval) => approval.status === "pending",
   ).length;
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
+  const runningVirtualMachines = virtualMachines.filter(
+    (machine) => machine.status === "running",
+  ).length;
+  const runningContainers = containers.filter(
+    (container) => container.status === "running",
+  ).length;
   const systemStats = aggregateResourceStats(hosts, metricHistoryByHost);
   const trafficMetrics = aggregateTrafficMetrics(metricHistoryByHost);
   const diskMetrics = aggregateDiskIoMetrics(metricHistoryByHost);
@@ -362,9 +377,17 @@ export function OverviewPage({
       helper: waitingApprovals > 0 ? `${waitingApprovals} 个待处理` : "当前无需处理",
     },
     {
-      label: "应用",
-      value: String(apps.length),
-      helper: apps.length > 0 ? "已接入应用目录" : "等待应用接入",
+      label: "虚拟机总数",
+      value: String(virtualMachines.length),
+      helper:
+        virtualMachines.length > 0
+          ? `${runningVirtualMachines} 台运行中`
+          : "等待虚拟机接入",
+    },
+    {
+      label: "容器总数",
+      value: String(containers.length),
+      helper: containers.length > 0 ? `${runningContainers} 个运行中` : "等待容器接入",
     },
   ];
 

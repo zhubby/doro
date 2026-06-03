@@ -1,0 +1,348 @@
+use crate::collectors::system_profile;
+use crate::config::AgentConfig;
+use chrono::Utc;
+use doro_ai::{
+    AgentError, AgentRunner, AgentRunnerConfig, DisabledAgentProvider, OpenAiAgentProvider,
+};
+use doro_container::{
+    ContainerProvider, ContainerRuntimeSnapshot, DockerProvider, DockerProviderConfig,
+};
+use doro_protocol::{
+    AgentCapability, AgentEvent, CapabilityName, CapabilityRisk, Host, HostStatus, MetricSnapshot,
+    grpc, protobuf_timestamp_now,
+};
+use doro_vm::network::NetworkPolicy;
+use doro_vm::{QemuProvider, QemuProviderConfig, VirtualMachineProvider};
+use doro_website::{WebsiteRuntime, WebsiteRuntimeConfig, WebsiteRuntimeHandle};
+use std::path::PathBuf;
+use std::sync::Arc;
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub(crate) struct ContainerRuntime {
+    provider: Result<Arc<dyn ContainerProvider>, String>,
+}
+
+impl std::fmt::Debug for ContainerRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("ContainerRuntime")
+    }
+}
+
+impl ContainerRuntime {
+    fn from_config(config: &AgentConfig) -> Option<Self> {
+        if !config.container_metrics_enabled && !config.docker_manage_enabled {
+            return None;
+        }
+        let provider = DockerProvider::connect(&DockerProviderConfig::new(
+            config.docker_socket_path.clone(),
+        ))
+        .map(|provider| Arc::new(provider) as Arc<dyn ContainerProvider>)
+        .map_err(|error| error.to_string());
+        Some(Self { provider })
+    }
+
+    pub(crate) async fn snapshot(
+        &self,
+    ) -> Result<ContainerRuntimeSnapshot, doro_container::ContainerProviderError> {
+        match &self.provider {
+            Ok(provider) => provider.snapshot().await,
+            Err(error) => Err(doro_container::ContainerProviderError::InvalidRequest(
+                format!("failed to initialize container provider: {error}"),
+            )),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct VmRuntime {
+    pub(crate) provider: Arc<dyn VirtualMachineProvider>,
+}
+
+impl std::fmt::Debug for VmRuntime {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("VmRuntime")
+    }
+}
+
+impl VmRuntime {
+    fn from_config(config: &AgentConfig) -> Option<Self> {
+        if !config.vm_manage_enabled {
+            return None;
+        }
+        let provider = QemuProvider::new(QemuProviderConfig {
+            binary_dir: config.qemu_binary_dir.as_ref().map(PathBuf::from),
+            state_dir: config
+                .vm_state_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".doro/vms")),
+            image_dir: config
+                .vm_image_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".doro/vm-images")),
+            network_policy: NetworkPolicy {
+                user_nat_enabled: config.vm_user_network_enabled,
+                allowed_bridges: config.vm_bridge_names.clone(),
+            },
+            vnc_bind_host: config.vm_vnc_bind.clone(),
+            vnc_display_base: 10,
+        });
+        Some(Self {
+            provider: Arc::new(provider),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Agent {
+    pub(crate) config: AgentConfig,
+    pub(crate) container_runtime: Option<ContainerRuntime>,
+    pub(crate) vm_runtime: Option<VmRuntime>,
+    pub(crate) website_runtime: Option<WebsiteRuntimeHandle>,
+}
+
+impl Agent {
+    pub fn new(config: AgentConfig) -> Self {
+        let container_runtime = ContainerRuntime::from_config(&config);
+        let vm_runtime = VmRuntime::from_config(&config);
+        let website_runtime = config.websites.enabled.then(WebsiteRuntimeHandle::default);
+        Self {
+            config,
+            container_runtime,
+            vm_runtime,
+            website_runtime,
+        }
+    }
+
+    pub fn start_website_runtime(&self) -> anyhow::Result<Option<std::thread::JoinHandle<()>>> {
+        let Some(handle) = self.website_runtime.clone() else {
+            return Ok(None);
+        };
+        let runtime = WebsiteRuntime::with_handle(
+            WebsiteRuntimeConfig {
+                enabled: self.config.websites.enabled,
+                http_bind: self.config.websites.http_bind.clone(),
+            },
+            handle,
+        );
+        runtime.start().map_err(anyhow::Error::from)
+    }
+
+    pub fn host(&self) -> Host {
+        Host {
+            id: self.config.host_id,
+            hostname: self.config.hostname.clone(),
+            display_name: self.config.hostname.clone(),
+            labels: vec!["agent".to_string()],
+            status: HostStatus::Online,
+            last_seen_at: Some(Utc::now()),
+            capabilities: self.capabilities(),
+            system_profile: serde_json::json!({}),
+        }
+    }
+
+    pub fn capabilities(&self) -> Vec<AgentCapability> {
+        let mut capabilities = vec![
+            AgentCapability {
+                name: CapabilityName::MetricsRead,
+                risk: CapabilityRisk::Low,
+                description: "Collect local host metrics".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::LogsRead,
+                risk: CapabilityRisk::Low,
+                description: "Read local service logs".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::AgentRun,
+                risk: CapabilityRisk::Medium,
+                description: "Run AI-guided local operations with Doro approval gates".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::ShellExecute,
+                risk: CapabilityRisk::High,
+                description: "Execute approved shell commands".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::FilesRead,
+                risk: CapabilityRisk::Low,
+                description: "Browse and read the host filesystem as the agent OS user".to_string(),
+            },
+            AgentCapability {
+                name: CapabilityName::FilesWrite,
+                risk: CapabilityRisk::High,
+                description: "Manage the host filesystem as the agent OS user".to_string(),
+            },
+        ];
+        if self.config.docker_manage_enabled {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::ContainersManage,
+                risk: CapabilityRisk::High,
+                description:
+                    "Manage Docker images, containers, networks, and volumes after approval"
+                        .to_string(),
+            });
+        }
+        if self.vm_runtime.is_some() {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::VirtualMachinesManage,
+                risk: CapabilityRisk::High,
+                description: "Manage QEMU virtual machines after approval".to_string(),
+            });
+        }
+        if self.website_runtime.is_some() {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::NetworkExpose,
+                risk: CapabilityRisk::High,
+                description: "Apply approved website reverse proxy routes with Pingora".to_string(),
+            });
+        }
+        capabilities
+    }
+
+    pub fn grpc_capabilities(&self) -> Vec<grpc::AgentCapability> {
+        self.capabilities()
+            .into_iter()
+            .map(|capability| grpc::AgentCapability {
+                name: format!("{:?}", capability.name),
+                risk: format!("{:?}", capability.risk),
+                description: capability.description,
+            })
+            .collect()
+    }
+
+    pub fn grpc_heartbeat(&self, agent_id: Uuid) -> grpc::HeartbeatRequest {
+        grpc::HeartbeatRequest {
+            agent_id: agent_id.to_string(),
+            host_id: self.config.host_id.to_string(),
+            observed_at: Some(protobuf_timestamp_now()),
+            capabilities: self.grpc_capabilities(),
+        }
+    }
+
+    pub fn grpc_enroll(&self, enrollment_token: String) -> grpc::EnrollRequest {
+        grpc::EnrollRequest {
+            enrollment_token,
+            hostname: self.config.hostname.clone(),
+            capabilities: self.grpc_capabilities(),
+            system_profile_json: system_profile().to_string(),
+        }
+    }
+
+    pub fn heartbeat(&self) -> AgentEvent {
+        AgentEvent::Heartbeat {
+            host_id: self.config.host_id,
+            at: Utc::now(),
+        }
+    }
+
+    pub fn metrics(&self) -> MetricSnapshot {
+        MetricSnapshot {
+            host_id: self.config.host_id,
+            captured_at: Utc::now(),
+            cpu_percent: 0.0,
+            memory_percent: 0.0,
+            disk_percent: 0.0,
+            load_average: 0.0,
+            extra: serde_json::json!({}),
+        }
+    }
+
+    pub(crate) fn ai_runner(&self) -> Result<AgentRunner, AgentError> {
+        let provider: Arc<dyn doro_ai::AgentModelProvider> = match self.config.ai.provider.as_str()
+        {
+            "openai" => {
+                let openai_config = doro_ai::openai::OpenAiConfig {
+                    api_key_env: self.config.ai.openai.api_key_env.clone(),
+                    base_url: self.config.ai.openai.base_url.clone(),
+                    timeout_seconds: self.config.ai.openai.timeout_seconds,
+                };
+                let client = doro_ai::openai::OpenAiClient::new(openai_config)
+                    .map_err(|error| AgentError::Model(error.to_string()))?;
+                Arc::new(OpenAiAgentProvider::new(
+                    client,
+                    self.config.ai.openai.default_response_model.clone(),
+                ))
+            }
+            "disabled" => Arc::new(DisabledAgentProvider),
+            provider => {
+                return Err(AgentError::Model(format!(
+                    "unsupported AI provider for agent: {provider}"
+                )));
+            }
+        };
+
+        Ok(AgentRunner::new(
+            provider,
+            self.ai_tool_definitions(),
+            AgentRunnerConfig {
+                max_turns: self.config.ai.agent.max_turns.max(1),
+                max_tool_calls: self.config.ai.agent.max_tool_calls.max(1),
+            },
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::test_agent_config;
+
+    #[test]
+    fn docker_manage_capability_is_declared_when_enabled() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        assert!(agent.capabilities().iter().any(|capability| {
+            capability.name == CapabilityName::ContainersManage
+                && capability.risk == CapabilityRisk::High
+        }));
+    }
+
+    #[test]
+    fn agent_run_capability_is_declared_for_ai_operations() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        assert!(agent.capabilities().iter().any(|capability| {
+            capability.name == CapabilityName::AgentRun && capability.risk == CapabilityRisk::Medium
+        }));
+    }
+
+    #[test]
+    fn network_expose_capability_is_omitted_when_website_runtime_disabled() {
+        let base_config = test_agent_config(Uuid::new_v4());
+
+        let agent = Agent::new(AgentConfig {
+            websites: doro_config::WebsiteConfig {
+                enabled: false,
+                ..doro_config::WebsiteConfig::default()
+            },
+            ..base_config
+        });
+
+        assert!(
+            !agent
+                .capabilities()
+                .iter()
+                .any(|capability| capability.name == CapabilityName::NetworkExpose)
+        );
+    }
+
+    #[test]
+    fn docker_manage_capability_is_omitted_when_disabled() {
+        let base_config = test_agent_config(Uuid::new_v4());
+
+        let agent = Agent::new(AgentConfig {
+            docker_manage_enabled: false,
+            ..base_config
+        });
+
+        assert!(
+            !agent
+                .capabilities()
+                .iter()
+                .any(|capability| capability.name == CapabilityName::ContainersManage)
+        );
+    }
+}
