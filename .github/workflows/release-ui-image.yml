@@ -4,13 +4,24 @@ on:
   release:
     types:
       - published
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Image tag to publish. Defaults to the selected ref name.
+        required: false
+        type: string
+      publish_latest:
+        description: Also publish the latest tag.
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
   packages: write
 
 concurrency:
-  group: release-ui-image-${{ github.event.release.tag_name }}
+  group: release-ui-image-${{ github.event.release.tag_name || inputs.image_tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
@@ -21,6 +32,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Set release metadata
+        id: release
+        shell: bash
+        run: |
+          image_tag="${{ github.event.release.tag_name || inputs.image_tag || github.ref_name }}"
+          publish_latest="${{ github.event_name == 'release' && !github.event.release.prerelease || github.event_name == 'workflow_dispatch' && inputs.publish_latest }}"
+          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "publish_latest=${publish_latest}" >> "$GITHUB_OUTPUT"
 
       - name: Set image name
         id: image
@@ -45,8 +65,8 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=raw,value=${{ github.event.release.tag_name }}
-            type=raw,value=latest,enable=${{ !github.event.release.prerelease }}
+            type=raw,value=${{ steps.release.outputs.image_tag }}
+            type=raw,value=latest,enable=${{ steps.release.outputs.publish_latest == 'true' }}
             type=sha,format=short
 
       - name: Build and push
