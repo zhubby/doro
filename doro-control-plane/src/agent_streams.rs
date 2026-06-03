@@ -920,6 +920,7 @@ mod tests {
                             scheduled_task_id: Uuid::new_v4().to_string(),
                             prompt: "inspect host".to_string(),
                             template_json: "{}".to_string(),
+                            ai_provider: None,
                         },
                     )
                     .await

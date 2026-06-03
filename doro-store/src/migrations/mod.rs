@@ -56,6 +56,10 @@ pub(crate) fn all() -> &'static [Migration] {
             id: "202606030001_agent_side_websites",
             sql: include_str!("../../migrations/202606030001_agent_side_websites.sql"),
         },
+        Migration {
+            id: "202606030002_ai_model_providers",
+            sql: include_str!("../../migrations/202606030002_ai_model_providers.sql"),
+        },
     ]
 }
 

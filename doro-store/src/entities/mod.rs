@@ -1,6 +1,7 @@
 pub mod agent_capabilities;
 pub mod agent_events;
 pub mod agents;
+pub mod ai_model_providers;
 pub mod app_installs;
 pub mod approvals;
 pub mod apps;

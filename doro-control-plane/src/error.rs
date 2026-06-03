@@ -79,6 +79,23 @@ pub(crate) fn website_store_app_error(error: sea_orm::DbErr) -> AppError {
     }
 }
 
+pub(crate) fn ai_model_provider_store_app_error(error: sea_orm::DbErr) -> AppError {
+    match &error {
+        sea_orm::DbErr::RecordNotFound(message) => {
+            AppError::status(StatusCode::NOT_FOUND, message.clone())
+        }
+        sea_orm::DbErr::Custom(message) if message.contains("already exists") => {
+            AppError::status(StatusCode::CONFLICT, message.clone())
+        }
+        sea_orm::DbErr::Custom(message)
+            if message.contains("is required") || message.contains("must be greater than zero") =>
+        {
+            AppError::status(StatusCode::BAD_REQUEST, message.clone())
+        }
+        _ => error.into(),
+    }
+}
+
 pub(crate) fn normalize_optional_text(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())

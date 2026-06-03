@@ -135,6 +135,16 @@ message RunAgentTaskCommand {
   string scheduled_task_id = 3;
   string prompt = 4;
   string template_json = 5;
+  AgentAiProviderConfig ai_provider = 6;
+}
+
+message AgentAiProviderConfig {
+  string provider_type = 1;
+  string name = 2;
+  string base_url = 3;
+  string model = 4;
+  string api_key = 5;
+  uint32 timeout_seconds = 6;
 }
 
 message AgentToolApprovalDecisionCommand {

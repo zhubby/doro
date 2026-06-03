@@ -567,6 +567,56 @@ pub struct CreateTaskRequest {
     pub title: String,
     pub host_id: Option<Uuid>,
     pub prompt: Option<String>,
+    pub ai_provider_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiModelProvider.ts")]
+pub struct AiModelProvider {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub default_model: String,
+    pub timeout_seconds: u32,
+    pub enabled: bool,
+    pub has_api_key: bool,
+    pub api_key_hint: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateAiModelProviderRequest.ts")]
+pub struct CreateAiModelProviderRequest {
+    pub name: String,
+    pub base_url: String,
+    pub default_model: String,
+    pub timeout_seconds: u32,
+    pub api_key: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateAiModelProviderRequest.ts")]
+pub struct UpdateAiModelProviderRequest {
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub default_model: Option<String>,
+    pub timeout_seconds: Option<u32>,
+    pub api_key: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiModelProviderResponse.ts")]
+pub struct AiModelProviderResponse {
+    pub item: AiModelProvider,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListAiModelProvidersResponse.ts")]
+pub struct ListAiModelProvidersResponse {
+    pub items: Vec<AiModelProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -1022,6 +1072,11 @@ mod tests {
         assert!(VirtualMachineConsoleResponse::export_all(&cfg).is_ok());
         assert!(AgentEvent::export_all(&cfg).is_ok());
         assert!(CreateTaskRequest::export_all(&cfg).is_ok());
+        assert!(AiModelProvider::export_all(&cfg).is_ok());
+        assert!(CreateAiModelProviderRequest::export_all(&cfg).is_ok());
+        assert!(UpdateAiModelProviderRequest::export_all(&cfg).is_ok());
+        assert!(AiModelProviderResponse::export_all(&cfg).is_ok());
+        assert!(ListAiModelProvidersResponse::export_all(&cfg).is_ok());
         assert!(CreateScheduledTaskRequest::export_all(&cfg).is_ok());
         assert!(UpdateScheduledTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());

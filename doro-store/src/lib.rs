@@ -3,6 +3,7 @@ use chrono::Utc;
 use doro_config::StoreBackend;
 use doro_config::StoreConfig;
 use doro_protocol::AgentCapability;
+use doro_protocol::AiModelProvider;
 use doro_protocol::AppSummary;
 use doro_protocol::ApprovalRequest;
 use doro_protocol::ApprovalStatus;
@@ -134,6 +135,39 @@ pub struct NewScheduledTaskRun {
     pub started_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAiModelProvider {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub default_model: String,
+    pub timeout_seconds: u32,
+    pub api_key_secret: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AiModelProviderChanges {
+    pub name: Option<String>,
+    pub base_url: Option<String>,
+    pub default_model: Option<String>,
+    pub timeout_seconds: Option<u32>,
+    pub api_key_secret: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredAiModelProviderSecret {
+    pub id: Uuid,
+    pub name: String,
+    pub base_url: String,
+    pub default_model: String,
+    pub timeout_seconds: u32,
+    pub api_key_secret: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -374,6 +408,10 @@ impl Store {
 
     pub fn approvals(&self) -> ApprovalRepository<'_> {
         ApprovalRepository { store: self }
+    }
+
+    pub fn ai_model_providers(&self) -> AiModelProviderRepository<'_> {
+        AiModelProviderRepository { store: self }
     }
 
     pub fn events(&self) -> EventRepository<'_> {
@@ -1357,6 +1395,182 @@ fn approval_model_to_protocol(approval: entities::approvals::Model) -> ApprovalR
         resolved_at: approval.resolved_at.map(Into::into),
         resolved_by: approval.resolved_by,
         decision_note: approval.decision_note,
+    }
+}
+
+pub struct AiModelProviderRepository<'a> {
+    store: &'a Store,
+}
+
+impl AiModelProviderRepository<'_> {
+    pub async fn list(&self) -> Result<Vec<AiModelProvider>, DbErr> {
+        let rows = entities::ai_model_providers::Entity::find()
+            .order_by(entities::ai_model_providers::Column::Name, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(ai_provider_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn get(&self, provider_id: Uuid) -> Result<Option<AiModelProvider>, DbErr> {
+        Ok(
+            entities::ai_model_providers::Entity::find_by_id(provider_id)
+                .one(self.store.connection())
+                .await?
+                .map(ai_provider_model_to_protocol),
+        )
+    }
+
+    pub async fn get_secret(
+        &self,
+        provider_id: Uuid,
+    ) -> Result<Option<StoredAiModelProviderSecret>, DbErr> {
+        Ok(
+            entities::ai_model_providers::Entity::find_by_id(provider_id)
+                .one(self.store.connection())
+                .await?
+                .map(ai_provider_model_to_secret),
+        )
+    }
+
+    pub async fn create(&self, provider: NewAiModelProvider) -> Result<AiModelProvider, DbErr> {
+        let name = required_trimmed(provider.name, "ai provider name is required")?;
+        let base_url =
+            normalize_required_url(provider.base_url, "ai provider base_url is required")?;
+        let default_model = required_trimmed(
+            provider.default_model,
+            "ai provider default_model is required",
+        )?;
+        let api_key_secret =
+            required_trimmed(provider.api_key_secret, "ai provider api_key is required")?;
+        let timeout_seconds = validate_timeout_seconds(provider.timeout_seconds)?;
+        if self.name_exists(None, &name).await? {
+            return Err(DbErr::Custom("ai provider name already exists".to_string()));
+        }
+
+        let model = entities::ai_model_providers::ActiveModel {
+            id: Set(provider.id),
+            name: Set(name),
+            base_url: Set(base_url),
+            default_model: Set(default_model),
+            timeout_seconds: Set(timeout_seconds),
+            api_key_secret: Set(api_key_secret),
+            enabled: Set(provider.enabled),
+            created_at: Set(provider.created_at.into()),
+            updated_at: Set(provider.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+
+        Ok(ai_provider_model_to_protocol(model))
+    }
+
+    pub async fn update(
+        &self,
+        provider_id: Uuid,
+        changes: AiModelProviderChanges,
+    ) -> Result<Option<AiModelProvider>, DbErr> {
+        let Some(model) = entities::ai_model_providers::Entity::find_by_id(provider_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let name = match changes.name {
+            Some(name) => required_trimmed(name, "ai provider name is required")?,
+            None => model.name.clone(),
+        };
+        let base_url = match changes.base_url {
+            Some(base_url) => normalize_required_url(base_url, "ai provider base_url is required")?,
+            None => model.base_url.clone(),
+        };
+        let default_model = match changes.default_model {
+            Some(default_model) => {
+                required_trimmed(default_model, "ai provider default_model is required")?
+            }
+            None => model.default_model.clone(),
+        };
+        let timeout_seconds = match changes.timeout_seconds {
+            Some(timeout_seconds) => validate_timeout_seconds(timeout_seconds)?,
+            None => model.timeout_seconds,
+        };
+        let api_key_secret = match changes.api_key_secret {
+            Some(api_key_secret) => {
+                required_trimmed(api_key_secret, "ai provider api_key is required")?
+            }
+            None => model.api_key_secret.clone(),
+        };
+        if self.name_exists(Some(provider_id), &name).await? {
+            return Err(DbErr::Custom("ai provider name already exists".to_string()));
+        }
+
+        let mut active: entities::ai_model_providers::ActiveModel = model.into();
+        active.name = Set(name);
+        active.base_url = Set(base_url);
+        active.default_model = Set(default_model);
+        active.timeout_seconds = Set(timeout_seconds);
+        active.api_key_secret = Set(api_key_secret);
+        if let Some(enabled) = changes.enabled {
+            active.enabled = Set(enabled);
+        }
+        active.updated_at = Set(Utc::now().into());
+
+        Ok(Some(ai_provider_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+
+    pub async fn delete(&self, provider_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::ai_model_providers::Entity::delete_by_id(provider_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    async fn name_exists(&self, exclude_id: Option<Uuid>, name: &str) -> Result<bool, DbErr> {
+        let rows = entities::ai_model_providers::Entity::find()
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .any(|row| Some(row.id) != exclude_id && row.name.eq_ignore_ascii_case(name)))
+    }
+}
+
+fn ai_provider_model_to_protocol(provider: entities::ai_model_providers::Model) -> AiModelProvider {
+    let has_api_key = !provider.api_key_secret.trim().is_empty();
+    AiModelProvider {
+        id: provider.id,
+        name: provider.name,
+        base_url: provider.base_url,
+        default_model: provider.default_model,
+        timeout_seconds: provider.timeout_seconds.max(0) as u32,
+        enabled: provider.enabled,
+        has_api_key,
+        api_key_hint: if has_api_key {
+            Some(api_key_hint(&provider.api_key_secret))
+        } else {
+            None
+        },
+        created_at: provider.created_at.into(),
+        updated_at: provider.updated_at.into(),
+    }
+}
+
+fn ai_provider_model_to_secret(
+    provider: entities::ai_model_providers::Model,
+) -> StoredAiModelProviderSecret {
+    StoredAiModelProviderSecret {
+        id: provider.id,
+        name: provider.name,
+        base_url: provider.base_url,
+        default_model: provider.default_model,
+        timeout_seconds: provider.timeout_seconds.max(0) as u32,
+        api_key_secret: provider.api_key_secret,
+        enabled: provider.enabled,
     }
 }
 
@@ -2464,6 +2678,45 @@ fn normalize_labels(labels: Vec<String>) -> Vec<String> {
     normalized
 }
 
+fn required_trimmed(value: String, message: &str) -> Result<String, DbErr> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(DbErr::Custom(message.to_string()));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn normalize_required_url(value: String, message: &str) -> Result<String, DbErr> {
+    let url = required_trimmed(value, message)?;
+    Ok(url.trim_end_matches('/').to_string())
+}
+
+fn validate_timeout_seconds(value: u32) -> Result<i32, DbErr> {
+    if value == 0 {
+        return Err(DbErr::Custom(
+            "ai provider timeout_seconds must be greater than zero".to_string(),
+        ));
+    }
+    Ok(value.min(i32::MAX as u32) as i32)
+}
+
+fn api_key_hint(secret: &str) -> String {
+    let secret = secret.trim();
+    let suffix = secret
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    if suffix.chars().count() < 4 {
+        "****".to_string()
+    } else {
+        format!("...{suffix}")
+    }
+}
+
 fn serialize_host_status(status: HostStatus) -> String {
     match status {
         HostStatus::Pending => "pending",
@@ -3033,6 +3286,166 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn creates_ai_model_provider_without_exposing_secret() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let inserted = ai_model_provider_model(id, "OpenAI", "sk-secret-value", true);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<entities::ai_model_providers::Model>::new()])
+            .append_query_results([[inserted]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let provider = store
+            .ai_model_providers()
+            .create(NewAiModelProvider {
+                id,
+                name: " OpenAI ".to_string(),
+                base_url: "https://api.openai.com/v1/".to_string(),
+                default_model: "gpt-4.1-mini".to_string(),
+                timeout_seconds: 60,
+                api_key_secret: "sk-secret-value".to_string(),
+                enabled: true,
+                created_at: now,
+            })
+            .await?;
+
+        assert_eq!(provider.id, id);
+        assert_eq!(provider.name, "OpenAI");
+        assert_eq!(provider.base_url, "https://api.openai.com/v1");
+        assert!(provider.has_api_key);
+        assert_eq!(provider.api_key_hint.as_deref(), Some("...alue"));
+        assert_ne!(provider.api_key_hint.as_deref(), Some("sk-secret-value"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rejects_duplicate_ai_model_provider_names_case_insensitively() {
+        let existing = ai_model_provider_model(Uuid::new_v4(), "OpenAI", "sk-existing", true);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let error = match store
+            .ai_model_providers()
+            .create(NewAiModelProvider {
+                id: Uuid::new_v4(),
+                name: "openai".to_string(),
+                base_url: "https://api.openai.com/v1".to_string(),
+                default_model: "gpt-4.1-mini".to_string(),
+                timeout_seconds: 60,
+                api_key_secret: "sk-new".to_string(),
+                enabled: true,
+                created_at: Utc::now(),
+            })
+            .await
+        {
+            Ok(_) => panic!("duplicate provider should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn updates_ai_model_provider_without_replacing_missing_secret() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let existing = ai_model_provider_model(id, "OpenAI", "sk-existing-secret", true);
+        let mut updated = existing.clone();
+        updated.name = "OpenAI Compatible".to_string();
+        updated.default_model = "gpt-4.1".to_string();
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .append_query_results([Vec::<entities::ai_model_providers::Model>::new()])
+            .append_query_results([[updated]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let provider = store
+            .ai_model_providers()
+            .update(
+                id,
+                AiModelProviderChanges {
+                    name: Some("OpenAI Compatible".to_string()),
+                    default_model: Some("gpt-4.1".to_string()),
+                    ..AiModelProviderChanges::default()
+                },
+            )
+            .await?
+            .expect("provider should update");
+
+        assert_eq!(provider.name, "OpenAI Compatible");
+        assert_eq!(provider.default_model, "gpt-4.1");
+        assert_eq!(provider.api_key_hint.as_deref(), Some("...cret"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updates_ai_model_provider_secret_when_supplied() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let existing = ai_model_provider_model(id, "OpenAI", "sk-existing-secret", true);
+        let mut updated = existing.clone();
+        updated.api_key_secret = "sk-replacement-secret".to_string();
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .append_query_results([Vec::<entities::ai_model_providers::Model>::new()])
+            .append_query_results([[updated]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let provider = store
+            .ai_model_providers()
+            .update(
+                id,
+                AiModelProviderChanges {
+                    api_key_secret: Some("sk-replacement-secret".to_string()),
+                    ..AiModelProviderChanges::default()
+                },
+            )
+            .await?
+            .expect("provider should update");
+
+        assert_eq!(provider.api_key_hint.as_deref(), Some("...cret"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deletes_ai_model_provider_and_reports_whether_row_existed() -> anyhow::Result<()> {
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: 1,
+            }])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let deleted = store.ai_model_providers().delete(Uuid::new_v4()).await?;
+
+        assert!(deleted);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn loads_ai_model_provider_secret_for_internal_dispatch() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[ai_model_provider_model(id, "OpenAI", "sk-secret", true)]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let secret = store
+            .ai_model_providers()
+            .get_secret(id)
+            .await?
+            .expect("provider should exist");
+
+        assert_eq!(secret.api_key_secret, "sk-secret");
+        assert!(secret.enabled);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn creates_website_and_maps_protocol_fields() -> anyhow::Result<()> {
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
@@ -3375,6 +3788,25 @@ mod tests {
             resolved_at: None,
             resolved_by: None,
             decision_note: None,
+        }
+    }
+
+    fn ai_model_provider_model(
+        id: Uuid,
+        name: &str,
+        api_key_secret: &str,
+        enabled: bool,
+    ) -> entities::ai_model_providers::Model {
+        entities::ai_model_providers::Model {
+            id,
+            name: name.to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            default_model: "gpt-4.1-mini".to_string(),
+            timeout_seconds: 60,
+            api_key_secret: api_key_secret.to_string(),
+            enabled,
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
         }
     }
 

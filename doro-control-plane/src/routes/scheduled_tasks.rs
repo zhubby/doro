@@ -890,6 +890,7 @@ pub(crate) async fn execute_scheduled_agent_task(
                 scheduled_task_id: scheduled_task.id.to_string(),
                 prompt,
                 template_json: scheduled_task.task_template.to_string(),
+                ai_provider: None,
             },
         )
         .await

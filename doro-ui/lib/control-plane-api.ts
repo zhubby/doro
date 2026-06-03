@@ -1,7 +1,9 @@
 import type {
+  AiModelProviderResponse,
   AuthStatusResponse,
   AuthTokenResponse,
   ControlPlaneEnvironmentResponse,
+  CreateAiModelProviderRequest,
   CreateApprovalRequest,
   CreateApprovalResponse,
   CreateEnrollmentTokenRequest,
@@ -21,6 +23,7 @@ import type {
   FileUploadRequest,
   FileUploadResponse,
   LatestMetricResponse,
+  ListAiModelProvidersResponse,
   ListAppsResponse,
   ListApprovalsResponse,
   ListHostContainersResponse,
@@ -45,6 +48,7 @@ import type {
   Task,
   TerminalCommandRequest,
   TerminalCommandResponse,
+  UpdateAiModelProviderRequest,
   UpdateHostRequest,
   UpdateHostResponse,
   UpdateScheduledTaskRequest,
@@ -342,6 +346,42 @@ export async function createTask(request: CreateTaskRequest) {
   return authedRequest<Task>("/api/v1/tasks", {
     method: "POST",
     body: JSON.stringify(request),
+  });
+}
+
+export async function getAiModelProviders() {
+  return getJson<ListAiModelProvidersResponse>("/api/v1/ai/model-providers");
+}
+
+export async function getAiModelProvider(providerId: string) {
+  return getJson<AiModelProviderResponse>(`/api/v1/ai/model-providers/${providerId}`);
+}
+
+export async function createAiModelProvider(
+  request: CreateAiModelProviderRequest,
+) {
+  return authedRequest<AiModelProviderResponse>("/api/v1/ai/model-providers", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function updateAiModelProvider(
+  providerId: string,
+  request: UpdateAiModelProviderRequest,
+) {
+  return authedRequest<AiModelProviderResponse>(
+    `/api/v1/ai/model-providers/${providerId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function deleteAiModelProvider(providerId: string) {
+  return authedRequest<null>(`/api/v1/ai/model-providers/${providerId}`, {
+    method: "DELETE",
   });
 }
 

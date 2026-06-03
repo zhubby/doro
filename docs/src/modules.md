@@ -4,7 +4,7 @@
 
 `doro-protocol` contains shared wire types, lifecycle vocabulary, generated tonic/prost gRPC types, and ts-rs TypeScript bindings for UI REST contracts. Public protocol changes should start here.
 
-`doro-control-plane` exposes `/api/v1`, owns task orchestration, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
+`doro-control-plane` exposes `/api/v1`, owns task orchestration, AI model provider management, command-scoped AI provider dispatch, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
 
 `doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user. The `AgentRun` capability runs the local AI runner for natural-language host operations while pausing high-risk tools for control-plane approval. When website routing is enabled, the Agent owns the local Pingora runtime and declares `NetworkExpose`.
 
@@ -22,7 +22,7 @@ The first durable schema is organized into table families:
 - Observability: `metric_snapshots`, `agent_events`, and `operation_logs`.
 - Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`. Approvals are
   durable control-plane records with explicit expiration and decision metadata.
-- Configuration and resource directory: `settings`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
+- Configuration and resource directory: `settings`, `ai_model_providers`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
 
 The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as metric snapshots, current container rows, current virtual machine rows, and audit events.
 

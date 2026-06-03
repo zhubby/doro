@@ -6,6 +6,7 @@ use crate::logs;
 use crate::prelude::*;
 use crate::state::AppState;
 
+pub(crate) mod ai;
 pub(crate) mod approvals;
 pub(crate) mod files;
 pub(crate) mod hosts;
@@ -16,6 +17,7 @@ pub(crate) mod terminal;
 pub(crate) mod virtual_machines;
 pub(crate) mod websites;
 
+use ai::*;
 use approvals::*;
 use files::*;
 use hosts::*;
@@ -147,6 +149,16 @@ pub fn app_with_auth_streams_and_websites(
             axum::routing::post(restart_website),
         )
         .route("/api/v1/tasks", get(list_tasks).post(create_task))
+        .route(
+            "/api/v1/ai/model-providers",
+            get(list_ai_model_providers).post(create_ai_model_provider),
+        )
+        .route(
+            "/api/v1/ai/model-providers/:provider_id",
+            get(get_ai_model_provider)
+                .patch(update_ai_model_provider)
+                .delete(delete_ai_model_provider),
+        )
         .route(
             "/api/v1/scheduled-tasks",
             get(list_scheduled_tasks).post(create_scheduled_task),

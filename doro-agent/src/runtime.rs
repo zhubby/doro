@@ -250,7 +250,14 @@ impl Agent {
         }
     }
 
-    pub(crate) fn ai_runner(&self) -> Result<AgentRunner, AgentError> {
+    pub(crate) fn ai_runner_for_command(
+        &self,
+        provider_config: Option<&grpc::AgentAiProviderConfig>,
+    ) -> Result<AgentRunner, AgentError> {
+        if let Some(provider_config) = provider_config {
+            return self.ai_runner_from_command_provider(provider_config);
+        }
+
         let provider: Arc<dyn doro_ai::AgentModelProvider> = match self.config.ai.provider.as_str()
         {
             "openai" => {
@@ -273,6 +280,55 @@ impl Agent {
                 )));
             }
         };
+
+        Ok(AgentRunner::new(
+            provider,
+            self.ai_tool_definitions(),
+            AgentRunnerConfig {
+                max_turns: self.config.ai.agent.max_turns.max(1),
+                max_tool_calls: self.config.ai.agent.max_tool_calls.max(1),
+            },
+        ))
+    }
+
+    fn ai_runner_from_command_provider(
+        &self,
+        provider_config: &grpc::AgentAiProviderConfig,
+    ) -> Result<AgentRunner, AgentError> {
+        if provider_config.provider_type != "openai_responses" {
+            return Err(AgentError::Model(format!(
+                "unsupported AI provider for agent task: {}",
+                provider_config.provider_type
+            )));
+        }
+        let model = provider_config.model.trim();
+        if model.is_empty() {
+            return Err(AgentError::Model(
+                "AI provider model is required for agent task".to_string(),
+            ));
+        }
+        let api_key = provider_config.api_key.trim();
+        if api_key.is_empty() {
+            return Err(AgentError::Model(
+                "AI provider API key is required for agent task".to_string(),
+            ));
+        }
+        let base_url = provider_config.base_url.trim();
+        if base_url.is_empty() {
+            return Err(AgentError::Model(
+                "AI provider base URL is required for agent task".to_string(),
+            ));
+        }
+
+        let openai_config = doro_ai::openai::OpenAiConfig {
+            api_key_env: String::new(),
+            base_url: base_url.to_string(),
+            timeout_seconds: u64::from(provider_config.timeout_seconds.max(1)),
+        };
+        let client = doro_ai::openai::OpenAiClient::with_api_key(openai_config, api_key)
+            .map_err(|error| AgentError::Model(error.to_string()))?;
+        let provider: Arc<dyn doro_ai::AgentModelProvider> =
+            Arc::new(OpenAiAgentProvider::new(client, model.to_string()));
 
         Ok(AgentRunner::new(
             provider,
@@ -307,6 +363,31 @@ mod tests {
         assert!(agent.capabilities().iter().any(|capability| {
             capability.name == CapabilityName::AgentRun && capability.risk == CapabilityRisk::Medium
         }));
+    }
+
+    #[test]
+    fn command_ai_provider_takes_precedence_over_local_disabled_config() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        let runner = agent.ai_runner_for_command(Some(&grpc::AgentAiProviderConfig {
+            provider_type: "openai_responses".to_string(),
+            name: "OpenAI".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            model: "gpt-4.1-mini".to_string(),
+            api_key: "sk-test".to_string(),
+            timeout_seconds: 60,
+        }));
+
+        assert!(runner.is_ok());
+    }
+
+    #[test]
+    fn local_ai_config_is_used_when_command_provider_is_missing() {
+        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+
+        let runner = agent.ai_runner_for_command(None);
+
+        assert!(runner.is_ok());
     }
 
     #[test]

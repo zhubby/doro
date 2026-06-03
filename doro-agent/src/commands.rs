@@ -384,7 +384,7 @@ async fn run_agent_task_command(
         tracing::warn!("failed to enqueue agent task start event");
     }
 
-    let outcome = match agent.ai_runner() {
+    let outcome = match agent.ai_runner_for_command(agent_task.ai_provider.as_ref()) {
         Ok(runner) => {
             let executor = LocalAgentToolExecutor {
                 agent: agent.clone(),

@@ -23,7 +23,11 @@ pub(crate) async fn create_task(
         let host_id = request
             .host_id
             .ok_or_else(|| AppError::status(StatusCode::BAD_REQUEST, "host_id is required"))?;
+        let provider_id = request.ai_provider_id.ok_or_else(|| {
+            AppError::status(StatusCode::BAD_REQUEST, "ai_provider_id is required")
+        })?;
         ensure_agent_run_ready(&state, host_id).await?;
+        let ai_provider = load_agent_run_provider(&state, provider_id).await?;
         let step_id = Uuid::new_v4();
         let task = state
             .store
@@ -38,6 +42,7 @@ pub(crate) async fn create_task(
                 created_at: Utc::now(),
                 metadata: serde_json::json!({
                     "resource": "agent_ai_task",
+                    "ai_provider": ai_provider_metadata(&ai_provider),
                 }),
                 create_step_approvals: false,
                 steps: vec![TaskStep {
@@ -48,6 +53,7 @@ pub(crate) async fn create_task(
                     status: TaskStepStatus::Pending,
                     payload: serde_json::json!({
                         "prompt": prompt.clone(),
+                        "ai_provider": ai_provider_metadata(&ai_provider),
                     }),
                 }],
             })
@@ -64,6 +70,7 @@ pub(crate) async fn create_task(
                 host_id,
                 dispatch_prompt,
                 None,
+                Some(ai_provider),
             )
             .await
             {
@@ -150,6 +157,7 @@ pub(crate) async fn dispatch_agent_run_task(
     host_id: Uuid,
     prompt: String,
     scheduled_task_id: Option<Uuid>,
+    ai_provider: Option<StoredAiModelProviderSecret>,
 ) -> Result<(), AppError> {
     let agent_id = ensure_agent_run_ready(state, host_id).await?;
     let now = Utc::now();
@@ -196,6 +204,7 @@ pub(crate) async fn dispatch_agent_run_task(
                     "source": "manual_task",
                 })
                 .to_string(),
+                ai_provider: ai_provider.map(grpc_ai_provider_config),
             },
         )
         .await
@@ -246,4 +255,92 @@ pub(crate) async fn dispatch_agent_run_task(
         )
         .await?;
     Ok(())
+}
+
+async fn load_agent_run_provider(
+    state: &AppState,
+    provider_id: Uuid,
+) -> Result<StoredAiModelProviderSecret, AppError> {
+    let provider = state
+        .store
+        .ai_model_providers()
+        .get_secret(provider_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "ai provider not found"))?;
+    if !provider.enabled {
+        return Err(AppError::status(
+            StatusCode::CONFLICT,
+            "ai provider is disabled",
+        ));
+    }
+    if provider.api_key_secret.trim().is_empty() {
+        return Err(AppError::status(
+            StatusCode::CONFLICT,
+            "ai provider api_key is not configured",
+        ));
+    }
+    Ok(provider)
+}
+
+fn ai_provider_metadata(provider: &StoredAiModelProviderSecret) -> Value {
+    serde_json::json!({
+        "id": provider.id,
+        "name": provider.name,
+        "provider_type": "openai_responses",
+        "base_url": provider.base_url,
+        "model": provider.default_model,
+        "timeout_seconds": provider.timeout_seconds,
+    })
+}
+
+fn grpc_ai_provider_config(provider: StoredAiModelProviderSecret) -> grpc::AgentAiProviderConfig {
+    grpc::AgentAiProviderConfig {
+        provider_type: "openai_responses".to_string(),
+        name: provider.name,
+        base_url: provider.base_url,
+        model: provider.default_model,
+        api_key: provider.api_key_secret,
+        timeout_seconds: provider.timeout_seconds,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ai_provider_metadata_does_not_include_secret() {
+        let provider = test_provider_secret();
+
+        let metadata = ai_provider_metadata(&provider);
+
+        assert_eq!(metadata["id"], provider.id.to_string());
+        assert_eq!(metadata["name"], "OpenAI");
+        assert_eq!(metadata["model"], "gpt-4.1-mini");
+        assert!(metadata.get("api_key").is_none());
+        assert!(metadata.get("api_key_secret").is_none());
+    }
+
+    #[test]
+    fn grpc_ai_provider_config_includes_secret_for_single_task_dispatch() {
+        let provider = test_provider_secret();
+
+        let config = grpc_ai_provider_config(provider);
+
+        assert_eq!(config.provider_type, "openai_responses");
+        assert_eq!(config.model, "gpt-4.1-mini");
+        assert_eq!(config.api_key, "sk-secret");
+    }
+
+    fn test_provider_secret() -> StoredAiModelProviderSecret {
+        StoredAiModelProviderSecret {
+            id: Uuid::new_v4(),
+            name: "OpenAI".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            default_model: "gpt-4.1-mini".to_string(),
+            timeout_seconds: 60,
+            api_key_secret: "sk-secret".to_string(),
+            enabled: true,
+        }
+    }
 }
