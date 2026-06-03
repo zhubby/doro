@@ -9,6 +9,7 @@ import { useTranslations } from "next-intl";
 import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { getHosts, terminalSessionWebSocketUrl } from "@/lib/control-plane-api";
 import type { Host } from "@/types/api";
 
@@ -185,22 +186,23 @@ export function TerminalPage() {
               <Server className="size-4" aria-hidden="true" />
               Agent
             </div>
-            <select
+            <Select
               value={selectedHostId}
-              onChange={(event) => {
+              onValueChange={(value) => {
                 handleDisconnect();
-                setSelectedHostId(event.target.value);
+                setSelectedHostId(value);
               }}
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
               disabled={loading || connected}
-            >
-              {hosts.length === 0 ? <option value="">{t("noAgents")}</option> : null}
-              {hosts.map((host) => (
-                <option key={host.id} value={host.id}>
-                  {hostLabel(host)}
-                </option>
-              ))}
-            </select>
+              options={[
+                ...(hosts.length === 0
+                  ? [{ value: "", label: t("noAgents") }]
+                  : []),
+                ...hosts.map((host) => ({
+                  value: host.id,
+                  label: hostLabel(host),
+                })),
+              ]}
+            />
             <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">
                 {selectedHost ? hostLabel(selectedHost) : t("unselected")}

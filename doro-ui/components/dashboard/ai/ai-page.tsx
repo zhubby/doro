@@ -9,6 +9,7 @@ import { Toolbar } from "@/components/admin/toolbar";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import { createTask, getHosts, getTasks } from "@/lib/control-plane-api";
 import { formatRelativeTime } from "@/lib/datetime";
 import type { Host, Task } from "@/types/api";
@@ -185,18 +186,17 @@ export function AiPage() {
             </label>
             <label className="grid gap-1.5 text-sm">
               <span className="font-medium">目标 Host</span>
-              <select
-                className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              <Select
                 value={selectedHostId}
-                onChange={(event) => setSelectedHostId(event.target.value)}
-              >
-                <option value="">未选择</option>
-                {onlineAgentHosts.map((host) => (
-                  <option key={host.id} value={host.id}>
-                    {hostLabel(host)}
-                  </option>
-                ))}
-              </select>
+                onValueChange={setSelectedHostId}
+                options={[
+                  { value: "", label: "未选择" },
+                  ...onlineAgentHosts.map((host) => ({
+                    value: host.id,
+                    label: hostLabel(host),
+                  })),
+                ]}
+              />
             </label>
           </div>
           <label className="mt-3 grid gap-1.5 text-sm">

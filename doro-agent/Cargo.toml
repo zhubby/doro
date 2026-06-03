@@ -17,6 +17,7 @@ doro-container = { workspace = true }
 doro-protocol = { workspace = true }
 doro-website = { workspace = true }
 doro-vm = { workspace = true }
+dirs = { workspace = true }
 nvml-wrapper = { workspace = true, optional = true }
 portable-pty = { workspace = true }
 serde = { workspace = true }

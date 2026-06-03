@@ -593,19 +593,29 @@ export async function runTerminalCommand(request: TerminalCommandRequest) {
   });
 }
 
-export async function listFiles(hostId: string, path: string) {
-  const query = new URLSearchParams({ path });
+export async function listFiles(hostId: string, path?: string) {
+  const query = new URLSearchParams();
+  if (path?.trim()) {
+    query.set("path", path);
+  }
+  const suffix = query.toString();
   return getJson<FileDirectoryResponse>(
-    `/api/v1/files/${hostId}/list?${query}`,
+    `/api/v1/files/${hostId}/list${suffix ? `?${suffix}` : ""}`,
   );
 }
 
-export async function searchFiles(hostId: string, path: string, queryText: string) {
+export async function searchFiles(
+  hostId: string,
+  path: string | undefined,
+  queryText: string,
+) {
   const query = new URLSearchParams({
-    path,
     query: queryText,
     limit: "500",
   });
+  if (path?.trim()) {
+    query.set("path", path);
+  }
   return getJson<FileSearchResponse>(
     `/api/v1/files/${hostId}/search?${query}`,
   );

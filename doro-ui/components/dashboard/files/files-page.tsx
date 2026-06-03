@@ -7,7 +7,6 @@ import {
   File,
   Folder,
   FolderPlus,
-  HardDrive,
   Home,
   MoveRight,
   RefreshCw,
@@ -21,6 +20,7 @@ import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Select } from "@/components/ui/select";
 import {
   downloadFile,
   getHosts,
@@ -31,8 +31,6 @@ import {
 } from "@/lib/control-plane-api";
 import { cn } from "@/lib/utils";
 import type { FileEntry, Host } from "@/types/api";
-
-const ROOTS = ["/", "/Users", "/home", "/var", "/tmp"];
 
 function hasFileCapability(host: Host, capability: "files_read" | "files_write") {
   return host.capabilities.some((item) => item.name === capability);
@@ -78,18 +76,6 @@ function formatModified(value: string | null) {
   }).format(new Date(value));
 }
 
-function parentPath(path: string) {
-  if (!path || path === "/") {
-    return "/";
-  }
-  const trimmed = path.replace(/\/+$/, "");
-  const index = trimmed.lastIndexOf("/");
-  if (index <= 0) {
-    return "/";
-  }
-  return trimmed.slice(0, index);
-}
-
 function joinPath(base: string, name: string) {
   if (base === "/") {
     return `/${name}`;
@@ -126,8 +112,10 @@ export function FilesPage() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [selectedHostId, setSelectedHostId] = useState("");
-  const [path, setPath] = useState("/");
-  const [typedPath, setTypedPath] = useState("/");
+  const [path, setPath] = useState("");
+  const [typedPath, setTypedPath] = useState("");
+  const [homePath, setHomePath] = useState("");
+  const [parentPath, setParentPath] = useState<string | null>(null);
   const [items, setItems] = useState<FileEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -160,9 +148,10 @@ export function FilesPage() {
     }
   }
 
-  async function loadDirectory(nextPath = path) {
+  async function loadDirectory(nextPath?: string) {
     if (!selectedHostId) {
       setItems([]);
+      setParentPath(null);
       setLoading(false);
       return;
     }
@@ -171,6 +160,10 @@ export function FilesPage() {
     if (result.data) {
       setPath(result.data.path);
       setTypedPath(result.data.path);
+      setParentPath(result.data.parent_path);
+      if (result.data.parent_path === null) {
+        setHomePath(result.data.path);
+      }
       setItems(result.data.items);
       setSelectedPath(null);
       setSearchMode(false);
@@ -187,17 +180,25 @@ export function FilesPage() {
 
   useEffect(() => {
     if (selectedHostId) {
-      loadDirectory("/");
+      setPath("");
+      setTypedPath("");
+      setHomePath("");
+      setParentPath(null);
+      loadDirectory();
     }
   }, [selectedHostId]);
 
   async function handleSearch() {
     if (!selectedHostId || !searchQuery.trim()) {
-      await loadDirectory(path);
+      await loadDirectory(path || undefined);
       return;
     }
     setBusy(true);
-    const result = await searchFiles(selectedHostId, path, searchQuery.trim());
+    const result = await searchFiles(
+      selectedHostId,
+      path || undefined,
+      searchQuery.trim(),
+    );
     if (result.data) {
       setItems(result.data.items);
       setSelectedPath(null);
@@ -234,7 +235,7 @@ export function FilesPage() {
 
   async function handleUpload(files: FileList | null) {
     const file = files?.[0];
-    if (!selectedHostId || !file) {
+    if (!selectedHostId || !file || !path) {
       return;
     }
     setBusy(true);
@@ -276,7 +277,7 @@ export function FilesPage() {
       overwrite: options.overwrite ?? false,
     });
     if (result.data) {
-      await loadDirectory(path);
+      await loadDirectory(path || undefined);
     } else {
       setError(result.error ?? "操作失败");
     }
@@ -284,6 +285,9 @@ export function FilesPage() {
   }
 
   async function handleCreateDirectory() {
+    if (!path) {
+      return;
+    }
     const name = window.prompt("文件夹名称");
     if (!name?.trim()) {
       return;
@@ -349,37 +353,37 @@ export function FilesPage() {
               <Server className="size-4" aria-hidden="true" />
               Agent
             </div>
-            <select
+            <Select
               value={selectedHostId}
-              onChange={(event) => setSelectedHostId(event.target.value)}
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-            >
-              {hosts.length === 0 ? <option value="">暂无文件 Agent</option> : null}
-              {hosts.map((host) => (
-                <option key={host.id} value={host.id}>
-                  {hostLabel(host)}
-                </option>
-              ))}
-            </select>
+              onValueChange={setSelectedHostId}
+              options={[
+                ...(hosts.length === 0
+                  ? [{ value: "", label: "暂无文件 Agent" }]
+                  : []),
+                ...hosts.map((host) => ({
+                  value: host.id,
+                  label: hostLabel(host),
+                })),
+              ]}
+            />
 
             <div className="mt-5 space-y-2">
               <p className="text-xs font-medium text-muted-foreground">位置</p>
-              {ROOTS.map((root) => (
-                <Button
-                  key={root}
-                  type="button"
-                  variant={path === root ? "secondary" : "ghost"}
-                  className="w-full justify-start"
-                  onClick={() => loadDirectory(root)}
-                >
-                  {root === "/" ? (
-                    <HardDrive className="size-4" aria-hidden="true" />
-                  ) : (
-                    <Folder className="size-4" aria-hidden="true" />
-                  )}
-                  {root}
-                </Button>
-              ))}
+              <Button
+                type="button"
+                variant={!parentPath && path ? "secondary" : "ghost"}
+                className="w-full justify-start"
+                onClick={() => loadDirectory()}
+                disabled={!selectedHostId || loading}
+              >
+                <Home className="size-4" aria-hidden="true" />
+                家目录
+              </Button>
+              {homePath ? (
+                <p className="break-all px-3 font-mono text-xs text-muted-foreground">
+                  {homePath}
+                </p>
+              ) : null}
             </div>
           </aside>
 
@@ -389,8 +393,12 @@ export function FilesPage() {
                 type="button"
                 variant="outline"
                 size="icon"
-                onClick={() => loadDirectory(parentPath(path))}
-                disabled={path === "/" || loading}
+                onClick={() => {
+                  if (parentPath) {
+                    loadDirectory(parentPath);
+                  }
+                }}
+                disabled={!parentPath || loading}
                 aria-label="返回上级"
               >
                 <Home className="size-4" aria-hidden="true" />
@@ -399,7 +407,7 @@ export function FilesPage() {
                 className="min-w-48 flex-1"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  loadDirectory(typedPath || "/");
+                  loadDirectory(typedPath.trim() || undefined);
                 }}
               >
                 <input
@@ -429,7 +437,7 @@ export function FilesPage() {
                 type="button"
                 variant="outline"
                 size="icon"
-                onClick={() => loadDirectory(path)}
+                onClick={() => loadDirectory(path || undefined)}
                 disabled={loading}
                 aria-label="刷新"
               >
@@ -445,7 +453,7 @@ export function FilesPage() {
                 type="button"
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={!canWrite || busy}
+                disabled={!canWrite || busy || !path}
               >
                 <Upload className="size-4" aria-hidden="true" />
                 上传
@@ -453,7 +461,7 @@ export function FilesPage() {
               <Button
                 type="button"
                 onClick={handleCreateDirectory}
-                disabled={!canWrite || busy}
+                disabled={!canWrite || busy || !path}
               >
                 <FolderPlus className="size-4" aria-hidden="true" />
                 新建

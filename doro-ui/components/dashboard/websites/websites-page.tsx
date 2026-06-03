@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import {
   createWebsite,
   deleteWebsite,
@@ -451,22 +452,21 @@ function WebsiteDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="目标 Agent">
-              <select
+              <Select
                 required
                 value={form.hostId}
                 disabled={noNetworkExposeHosts}
-                onChange={(event) => onFormChange({ ...form, hostId: event.target.value })}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {noNetworkExposeHosts ? (
-                  <option value="">暂无可用网络暴露 Agent</option>
-                ) : null}
-                {hosts.map((host) => (
-                  <option key={host.id} value={host.id}>
-                    {hostLabel(host)}
-                  </option>
-                ))}
-              </select>
+                onValueChange={(value) => onFormChange({ ...form, hostId: value })}
+                className="h-9"
+                options={
+                  noNetworkExposeHosts
+                    ? [{ value: "", label: "暂无可用网络暴露 Agent" }]
+                    : hosts.map((host) => ({
+                        value: host.id,
+                        label: hostLabel(host),
+                      }))
+                }
+              />
             </Field>
             <Field label="名称">
               <input

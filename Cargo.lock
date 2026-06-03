@@ -1168,6 +1168,7 @@ dependencies = [
  "async-trait",
  "base64",
  "chrono",
+ "dirs",
  "doro-ai",
  "doro-config",
  "doro-container",

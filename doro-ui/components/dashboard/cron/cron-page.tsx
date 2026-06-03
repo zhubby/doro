@@ -18,6 +18,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 import {
   createScheduledTask,
   deleteScheduledTask,
@@ -355,16 +356,16 @@ export function CronPage() {
             <div className="grid grid-cols-2 gap-3">
               <label className="grid gap-2 text-sm font-medium">
                 {t("fields.kind")}
-                <select
-                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                <Select
                   value={form.kind}
-                  onChange={(event) =>
-                    setForm({ ...form, kind: event.target.value as ScheduledTaskKind })
+                  onValueChange={(value) =>
+                    setForm({ ...form, kind: value as ScheduledTaskKind })
                   }
-                >
-                  <option value="script">{t("kindScript")}</option>
-                  <option value="agent_run">{t("kindAgent")}</option>
-                </select>
+                  options={[
+                    { value: "script", label: t("kindScript") },
+                    { value: "agent_run", label: t("kindAgent") },
+                  ]}
+                />
               </label>
               <label className="grid gap-2 text-sm font-medium">
                 {t("fields.schedule")}

@@ -22,14 +22,19 @@ pub(crate) async fn list_files(
     AxumPath(host_id): AxumPath<Uuid>,
     Query(query): Query<FilePathQuery>,
 ) -> Result<Json<FileDirectoryResponse>, AppError> {
-    let path = query.path.unwrap_or_else(|| "/".to_string());
+    let path = query.path.unwrap_or_default();
+    let audit_path = if path.trim().is_empty() {
+        "<agent-home>"
+    } else {
+        path.as_str()
+    };
     ensure_file_capability(&state, host_id, CapabilityName::FilesRead).await?;
     record_file_event(
         &state,
         host_id,
         "file.list_requested",
         serde_json::json!({
-            "path": path,
+            "path": audit_path,
             "requested_by": current_user.username,
         }),
     )
@@ -48,7 +53,12 @@ pub(crate) async fn search_files(
     AxumPath(host_id): AxumPath<Uuid>,
     Query(query): Query<FileSearchQuery>,
 ) -> Result<Json<FileSearchResponse>, AppError> {
-    let path = query.path.unwrap_or_else(|| "/".to_string());
+    let path = query.path.unwrap_or_default();
+    let audit_path = if path.trim().is_empty() {
+        "<agent-home>"
+    } else {
+        path.as_str()
+    };
     let search_query = query.query.trim().to_string();
     if search_query.is_empty() {
         return Err(AppError::status(
@@ -63,7 +73,7 @@ pub(crate) async fn search_files(
         host_id,
         "file.search_requested",
         serde_json::json!({
-            "path": path,
+            "path": audit_path,
             "query": search_query,
             "limit": limit,
             "requested_by": current_user.username,
