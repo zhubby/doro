@@ -1,13 +1,13 @@
 "use client";
 
 import {
-  Boxes,
   ChevronUp,
   Languages,
   LogOut,
   Settings,
   UserRound,
 } from "lucide-react";
+import Image from "next/image";
 import { useLocale, useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
@@ -53,8 +53,16 @@ export function Sidebar({
     <aside className="min-h-0 border-b bg-card lg:border-b-0 lg:border-r">
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-20 shrink-0 items-center gap-3 border-b px-6">
-          <div className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Boxes className="size-4" aria-hidden="true" />
+          <div className="flex size-11 items-center justify-center rounded-lg bg-accent shadow-sm ring-1 ring-primary/15">
+            <Image
+              src="/brand/doro-logo.png"
+              alt=""
+              width={40}
+              height={40}
+              className="size-10 object-contain"
+              priority
+              aria-hidden="true"
+            />
           </div>
           <div>
             <p className="text-sm font-semibold">{tCommon("brand.panel")}</p>

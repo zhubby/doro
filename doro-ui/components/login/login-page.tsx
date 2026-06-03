@@ -1,8 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
-import { LogIn, UserPlus } from "lucide-react";
 import { useTranslations } from "next-intl";
+import Image from "next/image";
 
 import { authStatus, login, register } from "@/lib/control-plane-api";
 import { Button } from "@/components/ui/button";
@@ -66,12 +66,16 @@ export function LoginPage() {
     <main className="flex min-h-screen items-center justify-center bg-background px-4 py-10 text-foreground">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <div className="mb-2 flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            {registrationOpen ? (
-              <UserPlus className="size-5" aria-hidden="true" />
-            ) : (
-              <LogIn className="size-5" aria-hidden="true" />
-            )}
+          <div className="mb-2 flex size-14 items-center justify-center rounded-lg bg-accent shadow-sm ring-1 ring-primary/15">
+            <Image
+              src="/brand/doro-logo.png"
+              alt=""
+              width={52}
+              height={52}
+              className="size-[52px] object-contain"
+              priority
+              aria-hidden="true"
+            />
           </div>
           <CardTitle>
             {registrationOpen ? t("registerTitle") : t("loginTitle")}
