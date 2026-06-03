@@ -4,6 +4,7 @@ use crate::config::AgentConfig;
 use crate::constants::{INITIAL_RECONNECT_DELAY, MAX_RECONNECT_DELAY};
 use crate::logs::runtime_log_subscription;
 use crate::runtime::Agent;
+use crate::startup::print_agent_startup_summary;
 use crate::terminal::TerminalManager;
 use crate::tools::AgentCommandState;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
@@ -15,8 +16,11 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 pub async fn run(loaded_config: doro_config::LoadedAgentConfig) -> anyhow::Result<()> {
+    let config_path = loaded_config.path;
+    let config_created = loaded_config.created;
     let mut persisted_config = loaded_config.config;
     let mut agent = Agent::new(AgentConfig::from_file_config(&persisted_config));
+    print_agent_startup_summary(&config_path, config_created, &persisted_config, &agent);
     let _website_runtime_thread = agent.start_website_runtime()?;
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -30,7 +34,7 @@ pub async fn run(loaded_config: doro_config::LoadedAgentConfig) -> anyhow::Resul
     loop {
         let session_result = tokio::select! {
             result = run_session(
-                &loaded_config.path,
+                &config_path,
                 &mut persisted_config,
                 &mut agent,
                 shutdown_rx.clone(),

@@ -112,7 +112,7 @@ async fn main() -> anyhow::Result<()> {
             init_logging(cli.log_level, Some(RuntimeLogDestination::ControlPlane))?;
             let loaded_config =
                 doro_config::load_or_create_control_plane_config(cli.config.as_deref())?;
-            doro_control_plane::run(loaded_config.config).await?;
+            doro_control_plane::run_loaded(loaded_config).await?;
         }
         Command::Status => {
             let control_plane_config =

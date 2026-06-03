@@ -7,6 +7,7 @@ mod filesystem;
 mod logs;
 mod runtime;
 mod session;
+mod startup;
 mod terminal;
 #[cfg(test)]
 mod test_support;

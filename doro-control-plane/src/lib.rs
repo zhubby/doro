@@ -9,6 +9,7 @@ mod logs;
 mod prelude;
 mod routes;
 mod server;
+mod startup;
 mod state;
 
 pub use agent_grpc::GrpcAgentService;
@@ -19,7 +20,7 @@ pub use logs::{LogHub, publish_control_plane_runtime_log};
 pub use routes::{
     app, app_with_auth, app_with_auth_and_streams, app_with_auth_streams_and_websites,
 };
-pub use server::run;
+pub use server::{run, run_loaded};
 pub use state::AppState;
 
 use chrono::Utc;

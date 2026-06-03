@@ -5,10 +5,32 @@ use crate::logs::LogHub;
 use crate::prelude::*;
 use crate::routes::app_with_auth_streams_and_websites;
 use crate::routes::scheduled_tasks::run_scheduled_task_scheduler;
+use crate::startup::print_control_plane_startup_summary;
+use std::path::Path;
 
 pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> {
+    run_inner(None, false, config).await
+}
+
+pub async fn run_loaded(
+    loaded_config: doro_config::LoadedControlPlaneConfig,
+) -> anyhow::Result<()> {
+    run_inner(
+        Some(loaded_config.path.as_path()),
+        loaded_config.created,
+        loaded_config.config,
+    )
+    .await
+}
+
+async fn run_inner(
+    config_path: Option<&Path>,
+    config_created: bool,
+    config: doro_config::ControlPlaneConfig,
+) -> anyhow::Result<()> {
     let console_addr: SocketAddr = config.server.console_bind.parse()?;
     let agent_addr: SocketAddr = config.server.agent_bind.parse()?;
+    print_control_plane_startup_summary(config_path, config_created, &config);
     let store = Store::connect_with_config(&config.store).await?;
     store.migrate().await?;
     let auth = AuthService::load_or_create(&store, config.security.jwt_secret.as_deref()).await?;
