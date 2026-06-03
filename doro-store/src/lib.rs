@@ -2216,6 +2216,61 @@ impl UserRepository<'_> {
         Ok(user.map(stored_user))
     }
 
+    pub async fn update_display_name(
+        &self,
+        id: Uuid,
+        display_name: String,
+        at: DateTime<Utc>,
+    ) -> Result<Option<StoredUser>, DbErr> {
+        let Some(model) = entities::users::Entity::find_by_id(id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let mut active: entities::users::ActiveModel = model.into();
+        active.display_name = Set(display_name);
+        active.updated_at = Set(at.into());
+        let model = active.update(self.store.connection()).await?;
+        Ok(Some(stored_user(model)))
+    }
+
+    pub async fn update_password_hash_and_revoke_refresh_tokens(
+        &self,
+        id: Uuid,
+        password_hash: String,
+        at: DateTime<Utc>,
+    ) -> Result<Option<StoredUser>, DbErr> {
+        let transaction = self.store.connection().begin().await?;
+        let Some(model) = entities::users::Entity::find_by_id(id)
+            .one(&transaction)
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let mut active: entities::users::ActiveModel = model.into();
+        active.password_hash = Set(password_hash);
+        active.updated_at = Set(at.into());
+        let model = active.update(&transaction).await?;
+        entities::refresh_tokens::Entity::update_many()
+            .col_expr(
+                entities::refresh_tokens::Column::Status,
+                sea_orm::sea_query::Expr::value("revoked"),
+            )
+            .col_expr(
+                entities::refresh_tokens::Column::RevokedAt,
+                sea_orm::sea_query::Expr::value(at),
+            )
+            .filter(entities::refresh_tokens::Column::UserId.eq(id))
+            .filter(entities::refresh_tokens::Column::Status.eq("active"))
+            .exec(&transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(Some(stored_user(model)))
+    }
+
     pub async fn mark_login(&self, id: Uuid, at: DateTime<Utc>) -> Result<(), DbErr> {
         entities::users::Entity::update_many()
             .col_expr(
@@ -3411,6 +3466,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn updates_user_display_name() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let existing = user_model(id, "admin", "Admin", "hash", "active");
+        let updated = user_model(id, "admin", "Home Operator", "hash", "active");
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .append_query_results([[updated]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let user = store
+            .users()
+            .update_display_name(id, "Home Operator".to_string(), Utc::now())
+            .await?
+            .expect("user should update");
+
+        assert_eq!(user.display_name, "Home Operator");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn updates_user_password_and_revokes_refresh_tokens() -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let existing = user_model(id, "admin", "Admin", "old-hash", "active");
+        let updated = user_model(id, "admin", "Admin", "new-hash", "active");
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .append_query_results([[updated]])
+            .append_exec_results([mock_exec_result()])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let user = store
+            .users()
+            .update_password_hash_and_revoke_refresh_tokens(id, "new-hash".to_string(), Utc::now())
+            .await?
+            .expect("user should update");
+
+        assert_eq!(user.password_hash, "new-hash");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn deletes_ai_model_provider_and_reports_whether_row_existed() -> anyhow::Result<()> {
         let connection = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult {
@@ -3702,6 +3800,26 @@ mod tests {
         MockExecResult {
             last_insert_id: 0,
             rows_affected: 0,
+        }
+    }
+
+    fn user_model(
+        id: Uuid,
+        username: &str,
+        display_name: &str,
+        password_hash: &str,
+        status: &str,
+    ) -> entities::users::Model {
+        entities::users::Model {
+            id,
+            username: username.to_string(),
+            display_name: display_name.to_string(),
+            password_hash: password_hash.to_string(),
+            role: "admin".to_string(),
+            status: status.to_string(),
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
+            last_login_at: None,
         }
     }
 

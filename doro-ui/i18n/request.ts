@@ -11,6 +11,7 @@ const namespaces = [
   "dashboard",
   "resources",
   "settings",
+  "account",
 ] as const;
 
 async function loadMessages(locale: string) {

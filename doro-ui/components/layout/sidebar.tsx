@@ -2,14 +2,15 @@
 
 import {
   ChevronUp,
-  Languages,
   LogOut,
   Settings,
   UserRound,
 } from "lucide-react";
 import Image from "next/image";
-import { useLocale, useTranslations } from "next-intl";
+import { useState } from "react";
+import { useTranslations } from "next-intl";
 
+import { AccountSettingsDialog } from "@/components/layout/account-settings-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,27 +23,36 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Link, usePathname, useRouter } from "@/i18n/navigation";
-import { locales, type AppLocale } from "@/i18n/routing";
+import { Link, useRouter } from "@/i18n/navigation";
 import { logout } from "@/lib/control-plane-api";
 import { navigation } from "@/lib/navigation";
 import { cn } from "@/lib/utils";
 import type { UserSummary } from "@/types/api";
 
+type AccountDialogTab = "profile" | "password" | "preferences";
+
 export function Sidebar({
   pathname,
   user,
+  onUserChange,
 }: {
   pathname: string;
   user: UserSummary;
+  onUserChange: (user: UserSummary) => void;
 }) {
   const router = useRouter();
-  const currentPathname = usePathname();
-  const locale = useLocale() as AppLocale;
   const tCommon = useTranslations("common");
   const tNav = useTranslations("navigation");
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false);
+  const [accountDialogTab, setAccountDialogTab] =
+    useState<AccountDialogTab>("profile");
   const displayName = user.display_name || user.username;
   const initials = displayName.trim().slice(0, 1).toUpperCase();
+
+  function openAccountDialog(tab: AccountDialogTab) {
+    setAccountDialogTab(tab);
+    setAccountDialogOpen(true);
+  }
 
   async function handleLogout() {
     await logout();
@@ -142,32 +152,17 @@ export function Sidebar({
                 </span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openAccountDialog("profile")}>
                 <UserRound className="size-4" aria-hidden="true" />
                 {tNav("userMenu.profile")}
               </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/settings">
-                  <Settings className="size-4" aria-hidden="true" />
-                  {tNav("userMenu.settings")}
-                </Link>
+              <DropdownMenuItem onSelect={() => openAccountDialog("preferences")}>
+                <Settings className="size-4" aria-hidden="true" />
+                {tNav("userMenu.settings")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              {locales.map((targetLocale) => (
-                <DropdownMenuItem
-                  key={targetLocale}
-                  disabled={targetLocale === locale}
-                  onSelect={() => {
-                    router.replace(currentPathname, { locale: targetLocale });
-                  }}
-                >
-                  <Languages className="size-4" aria-hidden="true" />
-                  {tCommon(`language.${targetLocale}`)}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
               <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
+                className="text-red-600 focus:bg-red-50 focus:text-red-700 dark:text-red-300 dark:focus:bg-red-950/40 dark:focus:text-red-200"
                 onSelect={handleLogout}
               >
                 <LogOut className="size-4" aria-hidden="true" />
@@ -175,6 +170,13 @@ export function Sidebar({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <AccountSettingsDialog
+            open={accountDialogOpen}
+            onOpenChange={setAccountDialogOpen}
+            initialTab={accountDialogTab}
+            user={user}
+            onUserChange={onUserChange}
+          />
         </div>
       </div>
     </aside>

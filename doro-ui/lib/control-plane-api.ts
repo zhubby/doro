@@ -2,6 +2,7 @@ import type {
   AiModelProviderResponse,
   AuthStatusResponse,
   AuthTokenResponse,
+  ChangeCurrentUserPasswordRequest,
   ControlPlaneEnvironmentResponse,
   CreateAiModelProviderRequest,
   CreateApprovalRequest,
@@ -49,6 +50,8 @@ import type {
   TerminalCommandRequest,
   TerminalCommandResponse,
   UpdateAiModelProviderRequest,
+  UpdateCurrentUserRequest,
+  UpdateCurrentUserResponse,
   UpdateHostRequest,
   UpdateHostResponse,
   UpdateScheduledTaskRequest,
@@ -293,6 +296,22 @@ export async function logout() {
 
 export async function currentUser() {
   return getJson<CurrentUserResponse>("/api/v1/auth/me");
+}
+
+export async function updateCurrentUser(request: UpdateCurrentUserRequest) {
+  return authedRequest<UpdateCurrentUserResponse>("/api/v1/auth/me", {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function changeCurrentUserPassword(
+  request: ChangeCurrentUserPasswordRequest,
+) {
+  return authedRequest<null>("/api/v1/auth/me/password", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
 }
 
 export async function getHosts() {

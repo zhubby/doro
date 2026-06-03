@@ -1,0 +1,29 @@
+{
+  "title": "Account settings",
+  "description": "Manage your profile, sign-in password, and interface preferences.",
+  "tabs": {
+    "profile": "Profile",
+    "password": "Password",
+    "preferences": "Preferences"
+  },
+  "fields": {
+    "username": "Username",
+    "role": "Role",
+    "displayName": "Display name",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password"
+  },
+  "profileSaved": "Profile saved.",
+  "passwordHelper": "New passwords must be at least 10 characters. You will need to sign in again after updating it.",
+  "changePassword": "Update password",
+  "language": {
+    "title": "Interface language",
+    "description": "Language changes apply to the current console immediately."
+  },
+  "errors": {
+    "profileFailed": "Failed to save profile.",
+    "passwordFailed": "Failed to update password.",
+    "passwordMismatch": "The new passwords do not match."
+  }
+}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { DashboardHeader } from "@/components/layout/dashboard-header";
 import { PageTransition } from "@/components/layout/page-transition";
 import { Sidebar } from "@/components/layout/sidebar";
@@ -15,6 +17,7 @@ export function AppShell({
   children: React.ReactNode;
   user: UserSummary;
 }) {
+  const [currentUser, setCurrentUser] = useState(user);
   const pathname = usePathname();
   const { isDark, toggleTheme } = useTheme();
   const activeItem = getNavigationItem(pathname);
@@ -22,7 +25,11 @@ export function AppShell({
   return (
     <div className="h-dvh overflow-hidden bg-background text-foreground">
       <div className="grid h-full min-h-0 lg:grid-cols-[17rem_1fr]">
-        <Sidebar pathname={pathname} user={user} />
+        <Sidebar
+          pathname={pathname}
+          user={currentUser}
+          onUserChange={setCurrentUser}
+        />
         <main className="flex min-h-0 min-w-0 flex-col overflow-hidden">
           <DashboardHeader
             activeItem={activeItem}

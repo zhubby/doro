@@ -823,6 +823,25 @@ pub struct CurrentUserResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateCurrentUserRequest.ts")]
+pub struct UpdateCurrentUserRequest {
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateCurrentUserResponse.ts")]
+pub struct UpdateCurrentUserResponse {
+    pub user: UserSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ChangeCurrentUserPasswordRequest.ts")]
+pub struct ChangeCurrentUserPasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "ListHostsResponse.ts")]
 pub struct ListHostsResponse {
     pub items: Vec<Host>,
@@ -1112,6 +1131,9 @@ mod tests {
         assert!(UserSummary::export_all(&cfg).is_ok());
         assert!(AuthTokenResponse::export_all(&cfg).is_ok());
         assert!(CurrentUserResponse::export_all(&cfg).is_ok());
+        assert!(UpdateCurrentUserRequest::export_all(&cfg).is_ok());
+        assert!(UpdateCurrentUserResponse::export_all(&cfg).is_ok());
+        assert!(ChangeCurrentUserPasswordRequest::export_all(&cfg).is_ok());
         assert!(ListHostsResponse::export_all(&cfg).is_ok());
         assert!(UpdateHostRequest::export_all(&cfg).is_ok());
         assert!(UpdateHostResponse::export_all(&cfg).is_ok());

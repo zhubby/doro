@@ -1,0 +1,29 @@
+{
+  "title": "账户设置",
+  "description": "管理个人资料、登录密码和界面偏好。",
+  "tabs": {
+    "profile": "个人资料",
+    "password": "修改密码",
+    "preferences": "偏好设置"
+  },
+  "fields": {
+    "username": "用户名",
+    "role": "角色",
+    "displayName": "显示名",
+    "currentPassword": "当前密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码"
+  },
+  "profileSaved": "个人资料已保存。",
+  "passwordHelper": "新密码至少需要 10 个字符。修改成功后需要重新登录。",
+  "changePassword": "更新密码",
+  "language": {
+    "title": "界面语言",
+    "description": "语言设置会立即应用到当前控制台。"
+  },
+  "errors": {
+    "profileFailed": "保存个人资料失败。",
+    "passwordFailed": "修改密码失败。",
+    "passwordMismatch": "两次输入的新密码不一致。"
+  }
+}

@@ -1,6 +1,7 @@
 use crate::agent_streams::AgentStreamRegistry;
 use crate::auth::{
-    AuthService, auth_middleware, auth_status, login, logout, me, refresh, register,
+    AuthService, auth_middleware, auth_status, change_password, login, logout, me, refresh,
+    register, update_me,
 };
 use crate::logs;
 use crate::prelude::*;
@@ -219,7 +220,11 @@ pub fn app_with_auth_streams_and_websites(
         .route("/api/v1/logs/control-plane", get(list_control_plane_logs))
         .route("/api/v1/logs/agents/:host_id", get(list_agent_logs))
         .route("/api/v1/events", get(events))
-        .route("/api/v1/auth/me", get(me))
+        .route("/api/v1/auth/me", get(me).patch(update_me))
+        .route(
+            "/api/v1/auth/me/password",
+            axum::routing::post(change_password),
+        )
         .route("/api/v1/auth/logout", axum::routing::post(logout))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

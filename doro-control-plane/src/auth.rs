@@ -165,16 +165,73 @@ pub(crate) async fn refresh(
 }
 
 pub(crate) async fn me(
+    State(state): State<AppState>,
     Extension(current_user): Extension<CurrentUser>,
-) -> Json<CurrentUserResponse> {
-    Json(CurrentUserResponse {
-        user: UserSummary {
-            id: current_user.id,
-            username: current_user.username.clone(),
-            display_name: current_user.username,
-            role: current_user.role,
-        },
-    })
+) -> Result<Json<CurrentUserResponse>, AppError> {
+    let user = active_current_user(&state, current_user.id).await?;
+    Ok(Json(CurrentUserResponse {
+        user: user_summary(&user),
+    }))
+}
+
+pub(crate) async fn update_me(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<UpdateCurrentUserRequest>,
+) -> Result<Json<UpdateCurrentUserResponse>, AppError> {
+    let user = active_current_user(&state, current_user.id).await?;
+    let display_name = display_name_or_username(&request.display_name, &user.username);
+    let Some(user) = state
+        .store
+        .users()
+        .update_display_name(user.id, display_name, Utc::now())
+        .await?
+    else {
+        return Err(AppError::status(StatusCode::UNAUTHORIZED, "user not found"));
+    };
+    if user.status != "active" {
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "user is disabled",
+        ));
+    }
+
+    Ok(Json(UpdateCurrentUserResponse {
+        user: user_summary(&user),
+    }))
+}
+
+pub(crate) async fn change_password(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<ChangeCurrentUserPasswordRequest>,
+) -> Result<StatusCode, AppError> {
+    validate_password(&request.new_password)?;
+    let user = active_current_user(&state, current_user.id).await?;
+    if !verify_password(&request.current_password, &user.password_hash)? {
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "invalid current password",
+        ));
+    }
+
+    let now = Utc::now();
+    let password_hash = hash_password(&request.new_password)?;
+    let Some(user) = state
+        .store
+        .users()
+        .update_password_hash_and_revoke_refresh_tokens(user.id, password_hash, now)
+        .await?
+    else {
+        return Err(AppError::status(StatusCode::UNAUTHORIZED, "user not found"));
+    };
+    if user.status != "active" {
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "user is disabled",
+        ));
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 pub(crate) async fn logout(
@@ -334,6 +391,22 @@ pub(crate) fn user_summary(user: &StoredUser) -> UserSummary {
     }
 }
 
+pub(crate) async fn active_current_user(
+    state: &AppState,
+    user_id: Uuid,
+) -> Result<StoredUser, AppError> {
+    let Some(user) = state.store.users().find_by_id(user_id).await? else {
+        return Err(AppError::status(StatusCode::UNAUTHORIZED, "user not found"));
+    };
+    if user.status != "active" {
+        return Err(AppError::status(
+            StatusCode::UNAUTHORIZED,
+            "user is disabled",
+        ));
+    }
+    Ok(user)
+}
+
 pub(crate) fn validate_username(username: &str) -> Result<(), AppError> {
     let username = username.trim();
     if username.len() < 3 || username.len() > 64 {
@@ -431,6 +504,14 @@ pub(crate) fn default_capabilities() -> Vec<AgentCapability> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_streams::AgentStreamRegistry;
+    use crate::logs::LogHub;
+    use crate::state::AppState;
+    use axum::Extension;
+    use axum::response::IntoResponse;
+    use sea_orm::DatabaseBackend;
+    use sea_orm::MockDatabase;
+    use sea_orm::MockExecResult;
 
     #[test]
     fn default_capabilities_include_high_risk_shell() {
@@ -460,6 +541,149 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn me_returns_persisted_display_name() -> anyhow::Result<()> {
+        let user = stored_user_for_test("admin", "Control Owner", "hash", "active");
+        let state = app_state_for_auth_test(
+            MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([[user_model_for_test(&user)]])
+                .into_connection(),
+        );
+
+        let response = me(
+            State(state),
+            Extension(CurrentUser {
+                id: user.id,
+                username: user.username.clone(),
+                role: user.role.clone(),
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{:?}", error.into_response()))?;
+
+        assert_eq!(response.0.user.display_name, "Control Owner");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_me_persists_display_name() -> anyhow::Result<()> {
+        let user = stored_user_for_test("admin", "Admin", "hash", "active");
+        let mut updated_user = user.clone();
+        updated_user.display_name = "Home Operator".to_string();
+        let state = app_state_for_auth_test(
+            MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([[user_model_for_test(&user)]])
+                .append_query_results([[user_model_for_test(&user)]])
+                .append_query_results([[user_model_for_test(&updated_user)]])
+                .into_connection(),
+        );
+
+        let response = update_me(
+            State(state),
+            Extension(CurrentUser {
+                id: user.id,
+                username: user.username.clone(),
+                role: user.role.clone(),
+            }),
+            Json(UpdateCurrentUserRequest {
+                display_name: " Home Operator ".to_string(),
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{:?}", error.into_response()))?;
+
+        assert_eq!(response.0.user.display_name, "Home Operator");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_wrong_current_password() -> anyhow::Result<()> {
+        let password_hash = hash_password("correct-password")?;
+        let user = stored_user_for_test("admin", "Admin", &password_hash, "active");
+        let state = app_state_for_auth_test(
+            MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([[user_model_for_test(&user)]])
+                .into_connection(),
+        );
+
+        let error = change_password(
+            State(state),
+            Extension(CurrentUser {
+                id: user.id,
+                username: user.username.clone(),
+                role: user.role.clone(),
+            }),
+            Json(ChangeCurrentUserPasswordRequest {
+                current_password: "wrong-password".to_string(),
+                new_password: "replacement-password".to_string(),
+            }),
+        )
+        .await
+        .expect_err("wrong current password should fail");
+
+        assert_eq!(error_status(error), StatusCode::UNAUTHORIZED);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn change_password_rejects_short_new_password() -> anyhow::Result<()> {
+        let user = stored_user_for_test("admin", "Admin", "hash", "active");
+        let state =
+            app_state_for_auth_test(MockDatabase::new(DatabaseBackend::Postgres).into_connection());
+
+        let error = change_password(
+            State(state),
+            Extension(CurrentUser {
+                id: user.id,
+                username: user.username.clone(),
+                role: user.role.clone(),
+            }),
+            Json(ChangeCurrentUserPasswordRequest {
+                current_password: "correct-password".to_string(),
+                new_password: "short".to_string(),
+            }),
+        )
+        .await
+        .expect_err("short new password should fail");
+
+        assert_eq!(error_status(error), StatusCode::BAD_REQUEST);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn change_password_updates_hash_and_revokes_refresh_tokens() -> anyhow::Result<()> {
+        let password_hash = hash_password("correct-password")?;
+        let user = stored_user_for_test("admin", "Admin", &password_hash, "active");
+        let mut updated_user = user.clone();
+        updated_user.password_hash = hash_password("replacement-password")?;
+        let state = app_state_for_auth_test(
+            MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([[user_model_for_test(&user)]])
+                .append_query_results([[user_model_for_test(&user)]])
+                .append_query_results([[user_model_for_test(&updated_user)]])
+                .append_exec_results([mock_exec_result()])
+                .into_connection(),
+        );
+
+        let status = change_password(
+            State(state),
+            Extension(CurrentUser {
+                id: user.id,
+                username: user.username.clone(),
+                role: user.role.clone(),
+            }),
+            Json(ChangeCurrentUserPasswordRequest {
+                current_password: "correct-password".to_string(),
+                new_password: "replacement-password".to_string(),
+            }),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{:?}", error.into_response()))?;
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        Ok(())
+    }
+
     #[test]
     fn jwt_access_token_round_trips_current_user() -> anyhow::Result<()> {
         let auth = AuthService {
@@ -484,5 +708,64 @@ mod tests {
         assert!(expires_at > Utc::now());
 
         Ok(())
+    }
+
+    fn app_state_for_auth_test(connection: sea_orm::DatabaseConnection) -> AppState {
+        AppState {
+            store: Store::from_connection(connection, DatabaseBackend::Postgres),
+            auth: AuthService::development(),
+            agent_streams: AgentStreamRegistry::default(),
+            logs: LogHub::default(),
+            control_plane_environment: ControlPlaneEnvironment {
+                hostname: "test-host".to_string(),
+                os_version: "unknown".to_string(),
+                kernel_version: "unknown".to_string(),
+                architecture: "unknown".to_string(),
+                host_address: "127.0.0.1".to_string(),
+                booted_at: None,
+                uptime_seconds: 0,
+            },
+        }
+    }
+
+    fn stored_user_for_test(
+        username: &str,
+        display_name: &str,
+        password_hash: &str,
+        status: &str,
+    ) -> StoredUser {
+        StoredUser {
+            id: Uuid::new_v4(),
+            username: username.to_string(),
+            display_name: display_name.to_string(),
+            password_hash: password_hash.to_string(),
+            role: "admin".to_string(),
+            status: status.to_string(),
+        }
+    }
+
+    fn user_model_for_test(user: &StoredUser) -> doro_store::entities::users::Model {
+        doro_store::entities::users::Model {
+            id: user.id,
+            username: user.username.clone(),
+            display_name: user.display_name.clone(),
+            password_hash: user.password_hash.clone(),
+            role: user.role.clone(),
+            status: user.status.clone(),
+            created_at: Utc::now().into(),
+            updated_at: Utc::now().into(),
+            last_login_at: None,
+        }
+    }
+
+    fn mock_exec_result() -> MockExecResult {
+        MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }
+    }
+
+    fn error_status(error: AppError) -> StatusCode {
+        error.into_response().status()
     }
 }
