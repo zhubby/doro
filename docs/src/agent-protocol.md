@@ -22,6 +22,8 @@ process_names = []
 container_metrics_enabled = true
 docker_socket_path = "/var/run/docker.sock"
 docker_manage_enabled = true
+docker_compose_enabled = true
+docker_compose_root = "/home/doro/.doro/compose"
 gpu_metrics_enabled = false
 vm_manage_enabled = false
 qemu_binary_dir = "/usr/local/bin"
@@ -74,7 +76,7 @@ The initial service surface is:
 
 The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, runtime log lines, and local observation events. The control plane responds with an `ack` command and persists inbound operational events. During control-plane maintenance or process shutdown, the control plane sends a `shutdown` command so the agent can close the current stream promptly and wait before reconnecting; this is not a request to stop the agent process or mark a task failed. If the connection fails or the stream closes, including after a shutdown command, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds.
 
-The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. Website route application uses `ApplyWebsiteRoutesCommand`; the control plane sends the target Host's complete running route table to an online Agent that declares `NetworkExpose`, and the Agent replies with `WebsiteRoutesAppliedEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
+The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Docker management uses `RunDockerCommandCommand` with a JSON `doro-container` command envelope and replies with `DockerCommandResultEvent`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. Website route application uses `ApplyWebsiteRoutesCommand`; the control plane sends the target Host's complete running route table to an online Agent that declares `NetworkExpose`, and the Agent replies with `WebsiteRoutesAppliedEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
 Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunTerminalCommandCommand` and require an online Agent that declares `ShellExecute`. Agent-run schedules use `RunAgentTaskCommand` and require an online Agent that declares `AgentRun`; the Agent runs the local Doro AI runner, executes approved local tools, emits task progress/result events, and returns a final `CommandResultEvent`. Scheduled AgentRun tasks use the Agent's local AI configuration.
 
@@ -94,6 +96,7 @@ The base system collector is supported on macOS and Linux. Container collection 
 
 - `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
 - `container.snapshot`: read-only container runtime observations from the configured `doro-container` provider. The current Docker provider reports Docker runtime data without changing the existing protocol shape. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
+- `docker.command_result`: result of a Docker container, image, network, volume, or Compose command dispatched over `RunDockerCommandCommand`. The control plane records success and failure details for audit.
 - `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
 - `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `file.command_result`: result of a file browsing, search, download, upload, create, rename, move, copy, or delete command. File operations are direct and audited; first-version write operations do not create approval requests.
@@ -108,7 +111,9 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
-Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
+Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. Docker management requires an online Agent stream and a declared high-risk `ContainersManage` capability. Control-plane write operations create normal waiting-approval tasks; only approval resolution dispatches the `RunDockerCommandCommand`.
+
+Compose management is included in Docker management but remains Agent-owned. When `docker_compose_enabled` is true, the Agent stores managed projects under `docker_compose_root` or `~/.doro/compose` by default. Project names must be conservative slugs, and the Agent rejects traversal, symlink escape, and paths outside the canonical root. Each project contains `compose.yaml` and optional `.env`. Compose actions run `docker compose -f compose.yaml --project-name <project>` through `std::process::Command` because Compose is a Docker CLI plugin rather than an Engine API. A missing CLI or non-zero exit code returns a failed Docker command result. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
 
 ## Persistence
 
@@ -119,6 +124,7 @@ Agent protocol traffic is persisted by `doro-store`:
 - Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
 - `metrics.snapshot` payloads are normalized into `metric_snapshots`.
 - `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
+- Docker image, network, volume, and Compose inventory is queried live through the Agent stream. The control plane persists task, approval, run, and event audit data for Docker actions, but does not create separate inventory tables for those resources.
 - `virtual_machine.snapshot` payloads update current `virtual_machines` rows by host, provider, and VM reference.
 - `website.routes_applied` payloads are stored as audit events. Website desired state remains in `websites`; route application does not create a separate runtime state table.
 - AI chat history is stored in `ai_conversations`, `ai_chat_messages`, and `ai_chat_events`. Messages keep visible content and the task/provider/model IDs used by each turn. Events keep tool calls, tool results, approval waits, completion, and errors. Provider API keys remain command-scoped secrets and must not be persisted in chat rows or event payloads.

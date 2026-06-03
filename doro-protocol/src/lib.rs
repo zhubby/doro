@@ -287,6 +287,159 @@ pub struct HostContainer {
     pub observed_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerContainerSummary.ts")]
+pub struct DockerContainerSummary {
+    pub host_id: Uuid,
+    pub runtime: String,
+    pub id: Option<String>,
+    pub names: Vec<String>,
+    pub image: Option<String>,
+    pub image_id: Option<String>,
+    pub command: Option<String>,
+    pub created: Option<i64>,
+    pub ports: Value,
+    pub labels: Value,
+    pub state: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerImageSummary.ts")]
+pub struct DockerImageSummary {
+    pub host_id: Uuid,
+    pub id: Option<String>,
+    pub repo_tags: Vec<String>,
+    pub repo_digests: Vec<String>,
+    pub created: Option<i64>,
+    pub size: Option<i64>,
+    pub labels: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerNetworkSummary.ts")]
+pub struct DockerNetworkSummary {
+    pub host_id: Uuid,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub driver: Option<String>,
+    pub scope: Option<String>,
+    pub internal: Option<bool>,
+    pub attachable: Option<bool>,
+    pub ingress: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerVolumeSummary.ts")]
+pub struct DockerVolumeSummary {
+    pub host_id: Uuid,
+    pub name: String,
+    pub driver: Option<String>,
+    pub mountpoint: Option<String>,
+    pub labels: Value,
+    pub usage_size: Option<i64>,
+    pub usage_ref_count: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerComposeProject.ts")]
+pub struct DockerComposeProject {
+    pub host_id: Uuid,
+    pub name: String,
+    pub status: String,
+    pub path: String,
+    pub services: Vec<String>,
+    pub compose_yaml: Option<String>,
+    pub env_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerActionRequest.ts")]
+pub struct DockerActionRequest {
+    pub host_id: Option<Uuid>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerContainerCreateRequest.ts")]
+pub struct DockerContainerCreateRequest {
+    pub host_id: Uuid,
+    pub name: String,
+    pub image: String,
+    pub command: Vec<String>,
+    pub env: Vec<String>,
+    pub labels: Value,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerImagePullRequest.ts")]
+pub struct DockerImagePullRequest {
+    pub host_id: Uuid,
+    pub reference: String,
+    pub tag: Option<String>,
+    pub platform: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerImageRemoveRequest.ts")]
+pub struct DockerImageRemoveRequest {
+    pub host_id: Uuid,
+    pub reference: String,
+    pub force: bool,
+    pub noprune: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerNetworkCreateRequest.ts")]
+pub struct DockerNetworkCreateRequest {
+    pub host_id: Uuid,
+    pub name: String,
+    pub driver: String,
+    pub internal: bool,
+    pub attachable: bool,
+    pub labels: Value,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerNetworkContainerRequest.ts")]
+pub struct DockerNetworkContainerRequest {
+    pub host_id: Uuid,
+    pub container: String,
+    pub force: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerVolumeCreateRequest.ts")]
+pub struct DockerVolumeCreateRequest {
+    pub host_id: Uuid,
+    pub name: String,
+    pub driver: String,
+    pub driver_opts: Value,
+    pub labels: Value,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerComposeProjectRequest.ts")]
+pub struct DockerComposeProjectRequest {
+    pub host_id: Uuid,
+    pub name: String,
+    pub compose_yaml: String,
+    pub env_file: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "DockerActionResponse.ts")]
+pub struct DockerActionResponse {
+    pub task: Task,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export_to = "WebsiteStatus.ts")]
@@ -999,6 +1152,42 @@ pub struct ListHostContainersResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListDockerContainersResponse.ts")]
+pub struct ListDockerContainersResponse {
+    pub items: Vec<DockerContainerSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListDockerImagesResponse.ts")]
+pub struct ListDockerImagesResponse {
+    pub items: Vec<DockerImageSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListDockerNetworksResponse.ts")]
+pub struct ListDockerNetworksResponse {
+    pub items: Vec<DockerNetworkSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListDockerVolumesResponse.ts")]
+pub struct ListDockerVolumesResponse {
+    pub items: Vec<DockerVolumeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListDockerComposeProjectsResponse.ts")]
+pub struct ListDockerComposeProjectsResponse {
+    pub items: Vec<DockerComposeProject>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerComposeProjectResponse.ts")]
+pub struct DockerComposeProjectResponse {
+    pub item: DockerComposeProject,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "ListWebsitesResponse.ts")]
 pub struct ListWebsitesResponse {
     pub items: Vec<Website>,
@@ -1195,6 +1384,20 @@ mod tests {
         assert!(ResolveApprovalResponse::export_all(&cfg).is_ok());
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
         assert!(HostContainer::export_all(&cfg).is_ok());
+        assert!(DockerContainerSummary::export_all(&cfg).is_ok());
+        assert!(DockerImageSummary::export_all(&cfg).is_ok());
+        assert!(DockerNetworkSummary::export_all(&cfg).is_ok());
+        assert!(DockerVolumeSummary::export_all(&cfg).is_ok());
+        assert!(DockerComposeProject::export_all(&cfg).is_ok());
+        assert!(DockerActionRequest::export_all(&cfg).is_ok());
+        assert!(DockerContainerCreateRequest::export_all(&cfg).is_ok());
+        assert!(DockerImagePullRequest::export_all(&cfg).is_ok());
+        assert!(DockerImageRemoveRequest::export_all(&cfg).is_ok());
+        assert!(DockerNetworkCreateRequest::export_all(&cfg).is_ok());
+        assert!(DockerNetworkContainerRequest::export_all(&cfg).is_ok());
+        assert!(DockerVolumeCreateRequest::export_all(&cfg).is_ok());
+        assert!(DockerComposeProjectRequest::export_all(&cfg).is_ok());
+        assert!(DockerActionResponse::export_all(&cfg).is_ok());
         assert!(VirtualMachineStatus::export_all(&cfg).is_ok());
         assert!(VirtualMachineNetworkMode::export_all(&cfg).is_ok());
         assert!(VirtualMachinePortForward::export_all(&cfg).is_ok());
@@ -1272,6 +1475,12 @@ mod tests {
         assert!(LatestMetricResponse::export_all(&cfg).is_ok());
         assert!(ListMetricSnapshotsResponse::export_all(&cfg).is_ok());
         assert!(ListHostContainersResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerContainersResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerImagesResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerNetworksResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerVolumesResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerComposeProjectsResponse::export_all(&cfg).is_ok());
+        assert!(DockerComposeProjectResponse::export_all(&cfg).is_ok());
         assert!(ListWebsitesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachinesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachineImagesResponse::export_all(&cfg).is_ok());

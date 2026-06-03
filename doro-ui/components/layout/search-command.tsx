@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/command";
 import { useRouter } from "@/i18n/navigation";
 import { navigation } from "@/lib/navigation";
+import type { NavigationItem } from "@/types/dashboard";
 import { Search } from "lucide-react";
 
 type SearchCommandProps = {
@@ -24,6 +25,7 @@ export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
   const router = useRouter();
   const t = useTranslations("navigation.search");
   const tNav = useTranslations("navigation");
+  const items = flattenNavigation(navigation);
 
   return (
     <>
@@ -45,7 +47,7 @@ export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
         <CommandList>
           <CommandEmpty>{t("empty")}</CommandEmpty>
           <CommandGroup heading={t("group")}>
-            {navigation.map((item) => {
+            {items.map((item) => {
               const Icon = item.icon;
               const label = tNav(`items.${item.id}.label`);
               const description = tNav(`items.${item.id}.description`);
@@ -72,4 +74,8 @@ export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
       </CommandDialog>
     </>
   );
+}
+
+function flattenNavigation(items: NavigationItem[]) {
+  return items.flatMap((item) => [item, ...(item.children ?? [])]);
 }

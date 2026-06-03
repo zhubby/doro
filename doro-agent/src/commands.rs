@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use doro_ai::{
     AgentError, AgentRunEvent, AgentRunEventSink, AgentRunOutcome, AgentRunRequest, AgentRunStatus,
 };
+use doro_container::ContainerRuntimeCommandEnvelope;
 use doro_protocol::grpc;
 use doro_vm::{VmCommand, VmCommandEnvelope, VmCommandStatus, VmProviderError};
 use serde::Deserialize;
@@ -115,6 +116,36 @@ pub(crate) async fn handle_command(
             };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue virtual machine command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::RunDockerCommand(docker_command)) => {
+            tracing::info!(command_id = %command_id, "executing Docker command by control-plane request");
+            let event = match &agent.container_runtime {
+                Some(runtime) => {
+                    match serde_json::from_str::<ContainerRuntimeCommandEnvelope>(
+                        &docker_command.command_json,
+                    ) {
+                        Ok(envelope) => {
+                            let result = runtime.execute(envelope).await;
+                            agent.docker_command_result_event(agent_id, command_id, result)
+                        }
+                        Err(error) => agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            format!("invalid Docker command payload: {error}"),
+                        ),
+                    }
+                }
+                None => agent.command_result_event(
+                    agent_id,
+                    command_id,
+                    grpc::CommandStatus::Failed,
+                    "container provider is not enabled",
+                ),
+            };
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue Docker command result event");
             }
         }
         Some(grpc::control_plane_command::Command::ListDirectory(list_command)) => {

@@ -16,6 +16,8 @@ pub(crate) fn test_agent_config(agent_id: Uuid) -> AgentConfig {
         container_metrics_enabled: false,
         docker_socket_path: None,
         docker_manage_enabled: false,
+        docker_compose_enabled: false,
+        docker_compose_root: None,
         vm_manage_enabled: false,
         qemu_binary_dir: None,
         vm_state_dir: None,

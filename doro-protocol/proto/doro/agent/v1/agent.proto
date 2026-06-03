@@ -61,6 +61,7 @@ message AgentEvent {
     AgentChatTextDeltaEvent agent_chat_text_delta = 22;
     AgentChatToolEvent agent_chat_tool = 23;
     AgentChatTurnResultEvent agent_chat_turn_result = 24;
+    DockerCommandResultEvent docker_command_result = 25;
   }
 }
 
@@ -86,6 +87,7 @@ message ControlPlaneCommand {
     AgentToolApprovalDecisionCommand agent_tool_approval_decision = 18;
     ApplyWebsiteRoutesCommand apply_website_routes = 19;
     RunAgentChatTurnCommand run_agent_chat_turn = 20;
+    RunDockerCommandCommand run_docker_command = 21;
   }
 }
 
@@ -102,6 +104,11 @@ message CollectVirtualMachinesCommand {
 }
 
 message RunVirtualMachineCommandCommand {
+  string command_id = 1;
+  string command_json = 2;
+}
+
+message RunDockerCommandCommand {
   string command_id = 1;
   string command_json = 2;
 }
@@ -309,6 +316,13 @@ message TerminalCommandResultEvent {
 }
 
 message VirtualMachineCommandResultEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string message = 3;
+  string details_json = 4;
+}
+
+message DockerCommandResultEvent {
   string command_id = 1;
   CommandStatus status = 2;
   string message = 3;

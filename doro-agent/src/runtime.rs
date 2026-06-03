@@ -1,11 +1,13 @@
 use crate::collectors::system_profile;
+use crate::compose::{ComposeCommandError, ComposeManager};
 use crate::config::AgentConfig;
 use chrono::Utc;
 use doro_ai::{
     AgentError, AgentRunner, AgentRunnerConfig, DisabledAgentProvider, OpenAiAgentProvider,
 };
 use doro_container::{
-    ContainerProvider, ContainerRuntimeSnapshot, DockerProvider, DockerProviderConfig,
+    ContainerProvider, ContainerRuntimeCommandEnvelope, ContainerRuntimeExecutor,
+    ContainerRuntimeSnapshot, DockerProvider, DockerProviderConfig,
 };
 use doro_protocol::{
     AgentCapability, AgentEvent, CapabilityName, CapabilityRisk, Host, HostStatus, MetricSnapshot,
@@ -21,6 +23,8 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub(crate) struct ContainerRuntime {
     provider: Result<Arc<dyn ContainerProvider>, String>,
+    executor: Option<ContainerRuntimeExecutor>,
+    compose: Option<ComposeManager>,
 }
 
 impl std::fmt::Debug for ContainerRuntime {
@@ -34,12 +38,34 @@ impl ContainerRuntime {
         if !config.container_metrics_enabled && !config.docker_manage_enabled {
             return None;
         }
-        let provider = DockerProvider::connect(&DockerProviderConfig::new(
+        let docker = DockerProvider::connect(&DockerProviderConfig::new(
             config.docker_socket_path.clone(),
-        ))
-        .map(|provider| Arc::new(provider) as Arc<dyn ContainerProvider>)
-        .map_err(|error| error.to_string());
-        Some(Self { provider })
+        ));
+        let executor = docker
+            .as_ref()
+            .ok()
+            .filter(|_| config.docker_manage_enabled)
+            .cloned()
+            .map(ContainerRuntimeExecutor::new);
+        let provider = docker
+            .map(|provider| Arc::new(provider) as Arc<dyn ContainerProvider>)
+            .map_err(|error| error.to_string());
+        let compose = if config.docker_manage_enabled && config.docker_compose_enabled {
+            match ComposeManager::from_config(config.docker_compose_root.as_deref()) {
+                Ok(manager) => Some(manager),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to initialize Docker Compose manager");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        Some(Self {
+            provider,
+            executor,
+            compose,
+        })
     }
 
     pub(crate) async fn snapshot(
@@ -50,6 +76,57 @@ impl ContainerRuntime {
             Err(error) => Err(doro_container::ContainerProviderError::InvalidRequest(
                 format!("failed to initialize container provider: {error}"),
             )),
+        }
+    }
+
+    pub(crate) async fn execute(
+        &self,
+        envelope: ContainerRuntimeCommandEnvelope,
+    ) -> doro_container::ContainerCommandResult {
+        match envelope.command {
+            doro_container::ContainerRuntimeCommand::Compose(command) => {
+                let Some(compose) = &self.compose else {
+                    return doro_container::ContainerCommandResult {
+                        command_id: envelope.command_id,
+                        status: doro_container::ContainerCommandStatus::Failed,
+                        message: "docker compose is not enabled".to_string(),
+                        details: serde_json::json!({}),
+                    };
+                };
+                match compose.execute(envelope.command_id, command) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let details = error
+                            .downcast_ref::<ComposeCommandError>()
+                            .map(|error| serde_json::json!(error.output))
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        doro_container::ContainerCommandResult {
+                            command_id: envelope.command_id,
+                            status: doro_container::ContainerCommandStatus::Failed,
+                            message: error.to_string(),
+                            details,
+                        }
+                    }
+                }
+            }
+            command => {
+                let Some(executor) = &self.executor else {
+                    return doro_container::ContainerCommandResult {
+                        command_id: envelope.command_id,
+                        status: doro_container::ContainerCommandStatus::Failed,
+                        message: "docker management is not enabled".to_string(),
+                        details: serde_json::json!({}),
+                    };
+                };
+                executor
+                    .execute(ContainerRuntimeCommandEnvelope {
+                        command_id: envelope.command_id,
+                        task_id: envelope.task_id,
+                        step_id: envelope.step_id,
+                        command,
+                    })
+                    .await
+            }
         }
     }
 }

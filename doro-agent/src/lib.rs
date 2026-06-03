@@ -1,5 +1,6 @@
 mod collectors;
 mod commands;
+mod compose;
 mod config;
 mod constants;
 mod events;

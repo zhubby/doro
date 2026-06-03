@@ -50,6 +50,9 @@ impl ContainerRuntimeExecutor {
             ContainerRuntimeCommand::Container(command) => self.execute_container(command).await,
             ContainerRuntimeCommand::Network(command) => self.execute_network(command).await,
             ContainerRuntimeCommand::Volume(command) => self.execute_volume(command).await,
+            ContainerRuntimeCommand::Compose(_) => Err(ContainerProviderError::InvalidRequest(
+                "compose commands are executed by the agent runtime".to_string(),
+            )),
         }
     }
 

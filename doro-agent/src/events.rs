@@ -4,7 +4,7 @@ use crate::logs::AgentRuntimeLog;
 use crate::runtime::Agent;
 use crate::terminal;
 use doro_ai::{AgentRunOutcome, AgentRunStatus};
-use doro_container::{ContainerRuntimeSnapshot, ContainerSummary};
+use doro_container::{ContainerCommandStatus, ContainerRuntimeSnapshot, ContainerSummary};
 use doro_protocol::{PROTOCOL_VERSION, grpc, protobuf_timestamp_from_utc, protobuf_timestamp_now};
 use doro_vm::{VmCommandStatus, VmRuntimeState, VmStatus};
 use uuid::Uuid;
@@ -112,6 +112,27 @@ impl Agent {
                     details_json: result.details.to_string(),
                 },
             ),
+        )
+    }
+
+    pub fn docker_command_result_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        result: doro_container::ContainerCommandResult,
+    ) -> grpc::AgentEvent {
+        let status = match result.status {
+            ContainerCommandStatus::Succeeded => grpc::CommandStatus::Succeeded,
+            ContainerCommandStatus::Failed => grpc::CommandStatus::Failed,
+        };
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::DockerCommandResult(grpc::DockerCommandResultEvent {
+                command_id,
+                status: status as i32,
+                message: result.message,
+                details_json: result.details.to_string(),
+            }),
         )
     }
 

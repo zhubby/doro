@@ -85,29 +85,61 @@ export function Sidebar({
           <nav className="grid gap-1" aria-label={tNav("ariaLabel")}>
             {navigation.map((item) => {
               const Icon = item.icon;
-              const isActive =
-                item.href === "/"
-                  ? pathname === "/"
-                  : pathname === item.href ||
-                    pathname.startsWith(`${item.href}/`);
+              const isActive = navigationItemActive(item.href, pathname);
+              const childActive = item.children?.some((child) =>
+                navigationItemActive(child.href, pathname),
+              );
 
               return (
-                <Button
-                  key={item.href}
-                  asChild
-                  variant={isActive ? "secondary" : "ghost"}
-                  className={cn("justify-start", isActive && "font-semibold")}
-                >
-                  <Link href={item.href}>
-                    <Icon className="size-4" aria-hidden="true" />
-                    <span>{tNav(`items.${item.id}.label`)}</span>
-                    {item.count ? (
-                      <Badge variant="outline" className="ml-auto">
-                        {item.count}
-                      </Badge>
-                    ) : null}
-                  </Link>
-                </Button>
+                <div key={item.href} className="grid gap-1">
+                  <Button
+                    asChild
+                    variant={isActive || childActive ? "secondary" : "ghost"}
+                    className={cn(
+                      "justify-start",
+                      (isActive || childActive) && "font-semibold",
+                    )}
+                  >
+                    <Link href={item.href}>
+                      <Icon className="size-4" aria-hidden="true" />
+                      <span>{tNav(`items.${item.id}.label`)}</span>
+                      {item.count ? (
+                        <Badge variant="outline" className="ml-auto">
+                          {item.count}
+                        </Badge>
+                      ) : null}
+                    </Link>
+                  </Button>
+                  {item.children?.length ? (
+                    <div className="ml-4 grid gap-1 border-l pl-2">
+                      {item.children.map((child) => {
+                        const ChildIcon = child.icon;
+                        const isChildActive = navigationItemActive(
+                          child.href,
+                          pathname,
+                        );
+
+                        return (
+                          <Button
+                            key={child.href}
+                            asChild
+                            variant={isChildActive ? "secondary" : "ghost"}
+                            size="sm"
+                            className={cn(
+                              "h-8 justify-start text-xs",
+                              isChildActive && "font-semibold",
+                            )}
+                          >
+                            <Link href={child.href}>
+                              <ChildIcon className="size-3.5" aria-hidden="true" />
+                              <span>{tNav(`items.${child.id}.label`)}</span>
+                            </Link>
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
               );
             })}
           </nav>
@@ -181,4 +213,10 @@ export function Sidebar({
       </div>
     </aside>
   );
+}
+
+function navigationItemActive(href: string, pathname: string) {
+  return href === "/"
+    ? pathname === "/"
+    : pathname === href || pathname.startsWith(`${href}/`);
 }

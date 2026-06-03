@@ -223,6 +223,7 @@ pub enum ContainerRuntimeCommand {
     Container(ContainerCommand),
     Network(ContainerNetworkCommand),
     Volume(ContainerVolumeCommand),
+    Compose(ContainerComposeCommand),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -263,6 +264,35 @@ pub enum ContainerVolumeCommand {
     Inspect { name: String },
     Create(CreateVolumeRequest),
     Remove(RemoveVolumeRequest),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ContainerComposeCommand {
+    List,
+    Read {
+        project: String,
+    },
+    CreateOrUpdate {
+        project: String,
+        compose_yaml: String,
+        env_file: Option<String>,
+    },
+    Up {
+        project: String,
+    },
+    Down {
+        project: String,
+    },
+    Restart {
+        project: String,
+    },
+    Pull {
+        project: String,
+    },
+    Delete {
+        project: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

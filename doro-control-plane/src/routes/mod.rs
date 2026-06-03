@@ -10,6 +10,7 @@ use crate::state::AppState;
 
 pub(crate) mod ai;
 pub(crate) mod approvals;
+pub(crate) mod docker;
 pub(crate) mod files;
 pub(crate) mod hosts;
 pub(crate) mod scheduled_tasks;
@@ -21,6 +22,7 @@ pub(crate) mod websites;
 
 use ai::*;
 use approvals::*;
+use docker::*;
 use files::*;
 use hosts::*;
 use logs::*;
@@ -98,6 +100,91 @@ pub(crate) fn app_with_auth_streams_logs_and_chat(
             get(list_host_containers),
         )
         .route("/api/v1/containers", get(refresh_containers))
+        .route(
+            "/api/v1/docker/containers",
+            get(list_docker_containers).post(create_docker_container),
+        )
+        .route(
+            "/api/v1/docker/containers/:id/start",
+            axum::routing::post(start_docker_container),
+        )
+        .route(
+            "/api/v1/docker/containers/:id/stop",
+            axum::routing::post(stop_docker_container),
+        )
+        .route(
+            "/api/v1/docker/containers/:id/restart",
+            axum::routing::post(restart_docker_container),
+        )
+        .route(
+            "/api/v1/docker/containers/:id/delete",
+            axum::routing::post(delete_docker_container),
+        )
+        .route("/api/v1/docker/images", get(list_docker_images))
+        .route(
+            "/api/v1/docker/images/pull",
+            axum::routing::post(pull_docker_image),
+        )
+        .route(
+            "/api/v1/docker/images/remove",
+            axum::routing::post(remove_docker_image),
+        )
+        .route(
+            "/api/v1/docker/networks",
+            get(list_docker_networks).post(create_docker_network),
+        )
+        .route(
+            "/api/v1/docker/networks/:id/remove",
+            axum::routing::post(remove_docker_network),
+        )
+        .route(
+            "/api/v1/docker/networks/:id/connect",
+            axum::routing::post(connect_docker_network),
+        )
+        .route(
+            "/api/v1/docker/networks/:id/disconnect",
+            axum::routing::post(disconnect_docker_network),
+        )
+        .route(
+            "/api/v1/docker/volumes",
+            get(list_docker_volumes).post(create_docker_volume),
+        )
+        .route(
+            "/api/v1/docker/volumes/:name/remove",
+            axum::routing::post(remove_docker_volume),
+        )
+        .route(
+            "/api/v1/docker/compose",
+            get(list_docker_compose_projects).post(create_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/read",
+            get(read_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/update",
+            axum::routing::post(update_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/up",
+            axum::routing::post(up_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/down",
+            axum::routing::post(down_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/restart",
+            axum::routing::post(restart_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/pull",
+            axum::routing::post(pull_docker_compose_project),
+        )
+        .route(
+            "/api/v1/docker/compose/:project/delete",
+            axum::routing::post(delete_docker_compose_project),
+        )
         .route(
             "/api/v1/virtual-machines",
             get(refresh_virtual_machines).post(create_virtual_machine),

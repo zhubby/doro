@@ -20,6 +20,16 @@ import type {
   CreateVirtualMachineSnapshotRequest,
   CreateWebsiteRequest,
   CurrentUserResponse,
+  DockerActionRequest,
+  DockerActionResponse,
+  DockerComposeProjectRequest,
+  DockerComposeProjectResponse,
+  DockerContainerCreateRequest,
+  DockerImagePullRequest,
+  DockerImageRemoveRequest,
+  DockerNetworkContainerRequest,
+  DockerNetworkCreateRequest,
+  DockerVolumeCreateRequest,
   FileDirectoryResponse,
   FileDownloadResponse,
   FileOperationRequest,
@@ -32,6 +42,11 @@ import type {
   ListAiConversationsResponse,
   ListAppsResponse,
   ListApprovalsResponse,
+  ListDockerComposeProjectsResponse,
+  ListDockerContainersResponse,
+  ListDockerImagesResponse,
+  ListDockerNetworksResponse,
+  ListDockerVolumesResponse,
   ListHostContainersResponse,
   ListHostsResponse,
   ListMetricSnapshotsResponse,
@@ -464,6 +479,178 @@ export async function aiChatStreamUrl(
 
 export async function refreshContainers() {
   return getJson<ListHostContainersResponse>("/api/v1/containers");
+}
+
+function hostQuery(hostId?: string) {
+  const query = new URLSearchParams();
+  if (hostId) {
+    query.set("host_id", hostId);
+  }
+  const suffix = query.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+export async function getDockerContainers(hostId?: string) {
+  return getJson<ListDockerContainersResponse>(
+    `/api/v1/docker/containers${hostQuery(hostId)}`,
+  );
+}
+
+export async function createDockerContainer(request: DockerContainerCreateRequest) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/containers", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function dockerContainerAction(
+  containerId: string,
+  action: "start" | "stop" | "restart" | "delete",
+  request: DockerActionRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/containers/${encodeURIComponent(containerId)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getDockerImages(hostId?: string) {
+  return getJson<ListDockerImagesResponse>(
+    `/api/v1/docker/images${hostQuery(hostId)}`,
+  );
+}
+
+export async function pullDockerImage(request: DockerImagePullRequest) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/images/pull", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function removeDockerImage(request: DockerImageRemoveRequest) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/images/remove", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getDockerNetworks(hostId?: string) {
+  return getJson<ListDockerNetworksResponse>(
+    `/api/v1/docker/networks${hostQuery(hostId)}`,
+  );
+}
+
+export async function createDockerNetwork(request: DockerNetworkCreateRequest) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/networks", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function dockerNetworkAction(
+  networkId: string,
+  action: "remove",
+  request: DockerActionRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/networks/${encodeURIComponent(networkId)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function dockerNetworkContainerAction(
+  networkId: string,
+  action: "connect" | "disconnect",
+  request: DockerNetworkContainerRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/networks/${encodeURIComponent(networkId)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getDockerVolumes(hostId?: string) {
+  return getJson<ListDockerVolumesResponse>(
+    `/api/v1/docker/volumes${hostQuery(hostId)}`,
+  );
+}
+
+export async function createDockerVolume(request: DockerVolumeCreateRequest) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/volumes", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function removeDockerVolume(
+  volumeName: string,
+  request: DockerActionRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/volumes/${encodeURIComponent(volumeName)}/remove`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getDockerComposeProjects(hostId?: string) {
+  return getJson<ListDockerComposeProjectsResponse>(
+    `/api/v1/docker/compose${hostQuery(hostId)}`,
+  );
+}
+
+export async function readDockerComposeProject(project: string, hostId: string) {
+  const query = new URLSearchParams({ host_id: hostId });
+  return getJson<DockerComposeProjectResponse>(
+    `/api/v1/docker/compose/${encodeURIComponent(project)}/read?${query}`,
+  );
+}
+
+export async function createDockerComposeProject(
+  request: DockerComposeProjectRequest,
+) {
+  return authedRequest<DockerActionResponse>("/api/v1/docker/compose", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function updateDockerComposeProject(
+  project: string,
+  request: DockerComposeProjectRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/compose/${encodeURIComponent(project)}/update`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function dockerComposeAction(
+  project: string,
+  action: "up" | "down" | "restart" | "pull" | "delete",
+  request: DockerActionRequest,
+) {
+  return authedRequest<DockerActionResponse>(
+    `/api/v1/docker/compose/${encodeURIComponent(project)}/${action}`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export async function refreshVirtualMachines() {

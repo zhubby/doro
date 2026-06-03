@@ -1,6 +1,8 @@
 use crate::error::AppError;
 use crate::prelude::*;
 
+const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(600);
+
 pub(crate) fn with_file_command_id(
     command: grpc::control_plane_command::Command,
     command_id: &str,
@@ -44,6 +46,7 @@ pub(crate) enum AgentCommandReply {
     ContainerSnapshot(grpc::ContainerSnapshotEvent),
     VirtualMachineSnapshot(grpc::VirtualMachineSnapshotEvent),
     VirtualMachineCommandResult,
+    DockerCommandResult(grpc::DockerCommandResultEvent),
     TerminalCommandResult(grpc::TerminalCommandResultEvent),
     FileCommandResult(grpc::FileCommandResultEvent),
     WebsiteRoutesApplied(grpc::WebsiteRoutesAppliedEvent),
@@ -157,6 +160,9 @@ impl AgentStreamRegistry {
             }
             Ok(Ok(AgentCommandReply::TerminalCommandResult(_))) => Err(
                 ContainerRefreshError::AgentFailed("unexpected terminal response".to_string()),
+            ),
+            Ok(Ok(AgentCommandReply::DockerCommandResult(_))) => Err(
+                ContainerRefreshError::AgentFailed("unexpected Docker response".to_string()),
             ),
             Ok(Ok(AgentCommandReply::FileCommandResult(_))) => Err(
                 ContainerRefreshError::AgentFailed("unexpected file response".to_string()),
@@ -286,6 +292,9 @@ impl AgentStreamRegistry {
             }
             Ok(Ok(AgentCommandReply::FileCommandResult(_))) => Err(
                 TerminalCommandError::AgentFailed("unexpected file response".to_string()),
+            ),
+            Ok(Ok(AgentCommandReply::DockerCommandResult(_))) => Err(
+                TerminalCommandError::AgentFailed("unexpected docker response".to_string()),
             ),
             Ok(Ok(AgentCommandReply::ContainerSnapshot(_))) => Err(
                 TerminalCommandError::AgentFailed("unexpected container response".to_string()),
@@ -468,6 +477,61 @@ impl AgentStreamRegistry {
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
                 Err(AgentTaskCommandError::Timeout)
+            }
+        }
+    }
+
+    pub(crate) async fn run_docker_command(
+        &self,
+        host_id: Uuid,
+        command_json: String,
+    ) -> Result<grpc::DockerCommandResultEvent, DockerCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(DockerCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::RunDockerCommand(
+                grpc::RunDockerCommandCommand {
+                    command_id: command_id.clone(),
+                    command_json,
+                },
+            )),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(DockerCommandError::NoStream);
+        }
+
+        match tokio::time::timeout(DOCKER_COMMAND_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::DockerCommandResult(result))) => Ok(result),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(DockerCommandError::AgentFailed(message))
+            }
+            Ok(Ok(AgentCommandReply::CommandResult(result))) => {
+                Err(DockerCommandError::AgentFailed(result.message))
+            }
+            Ok(Ok(_)) => Err(DockerCommandError::AgentFailed(
+                "unexpected agent response".to_string(),
+            )),
+            Ok(Err(_)) => Err(DockerCommandError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(DockerCommandError::Timeout)
             }
         }
     }
@@ -740,6 +804,13 @@ pub(crate) enum AgentTaskCommandError {
     AgentFailed(String),
 }
 
+#[derive(Debug)]
+pub(crate) enum DockerCommandError {
+    NoStream,
+    Timeout,
+    AgentFailed(String),
+}
+
 pub(crate) fn terminal_command_error_message(error: TerminalCommandError) -> String {
     match error {
         TerminalCommandError::NoStream => "agent stream is not connected".to_string(),
@@ -757,6 +828,33 @@ pub(crate) fn agent_task_error_message(error: AgentTaskCommandError) -> String {
         AgentTaskCommandError::AgentFailed(message) => {
             format!("agent task command failed: {message}")
         }
+    }
+}
+
+pub(crate) fn docker_command_error_message(error: DockerCommandError) -> String {
+    match error {
+        DockerCommandError::NoStream => "agent stream is not connected".to_string(),
+        DockerCommandError::Timeout => "agent Docker command timed out".to_string(),
+        DockerCommandError::AgentFailed(message) => {
+            format!("agent Docker command failed: {message}")
+        }
+    }
+}
+
+pub(crate) fn docker_command_app_error(error: DockerCommandError) -> AppError {
+    match error {
+        DockerCommandError::NoStream => AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent stream is not connected",
+        ),
+        DockerCommandError::Timeout => AppError::status(
+            StatusCode::GATEWAY_TIMEOUT,
+            "agent Docker command timed out",
+        ),
+        DockerCommandError::AgentFailed(message) => AppError::status(
+            StatusCode::BAD_GATEWAY,
+            format!("agent Docker command failed: {message}"),
+        ),
     }
 }
 
@@ -927,6 +1025,58 @@ mod tests {
         };
         assert_eq!(result.output, "/tmp");
         assert_eq!(result.exit_code, 0);
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_docker_command_and_receives_result() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let execute = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .run_docker_command(host_id, "{\"resource\":\"compose\"}".to_string())
+                    .await
+            }
+        });
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send Docker command"),
+        };
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::RunDockerCommand(_))
+        ));
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
+            .send(AgentCommandReply::DockerCommandResult(
+                grpc::DockerCommandResultEvent {
+                    command_id: command.command_id,
+                    status: grpc::CommandStatus::Succeeded as i32,
+                    message: "docker command succeeded".to_string(),
+                    details_json: "{\"items\":[]}".to_string(),
+                },
+            ))
+            .is_err()
+        {
+            panic!("waiter should receive Docker result");
+        }
+
+        let result = match execute.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => panic!("Docker command should succeed: {error:?}"),
+            Err(error) => panic!("execute task should complete: {error}"),
+        };
+        assert_eq!(result.message, "docker command succeeded");
+        assert_eq!(result.details_json, "{\"items\":[]}");
     }
 
     #[tokio::test]

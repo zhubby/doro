@@ -12,13 +12,19 @@ export type NavigationItem = {
     | "terminal"
     | "files"
     | "websites"
-    | "containers"
+    | "docker"
+    | "dockerContainers"
+    | "dockerImages"
+    | "dockerNetworks"
+    | "dockerVolumes"
+    | "dockerCompose"
     | "system"
     | "logs"
     | "settings";
   href: string;
   icon: ElementType;
   count?: number;
+  children?: NavigationItem[];
 };
 
 export type AppState = "installed" | "available" | "running" | "upgrade";

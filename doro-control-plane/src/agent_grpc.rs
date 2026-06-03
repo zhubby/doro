@@ -253,6 +253,15 @@ impl AgentControlPlane for GrpcAgentService {
                                 reply_sender.send(AgentCommandReply::VirtualMachineCommandResult);
                         }
                     }
+                    Some(grpc::agent_event::Event::DockerCommandResult(result)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::DockerCommandResult(result.clone()));
+                        }
+                    }
                     Some(grpc::agent_event::Event::CommandResult(result)) => {
                         if let Some(pending_commands) = &pending_commands
                             && let Some(reply_sender) =

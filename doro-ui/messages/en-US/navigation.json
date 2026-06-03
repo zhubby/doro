@@ -54,9 +54,29 @@
       "label": "Websites",
       "description": "Inspect websites, domains, certificates, and service health."
     },
-    "containers": {
+    "docker": {
+      "label": "Docker",
+      "description": "Manage containers, images, networks, volumes, and Compose projects."
+    },
+    "dockerContainers": {
       "label": "Containers",
-      "description": "Manage container lifecycle, images, and resource usage."
+      "description": "Manage Docker container lifecycle and runtime state."
+    },
+    "dockerImages": {
+      "label": "Images",
+      "description": "Pull, inspect, and remove Docker images."
+    },
+    "dockerNetworks": {
+      "label": "Networks",
+      "description": "Manage Docker networks and container attachments."
+    },
+    "dockerVolumes": {
+      "label": "Volumes",
+      "description": "Manage Docker volumes and mounted data."
+    },
+    "dockerCompose": {
+      "label": "Compose",
+      "description": "Manage Compose projects under the Agent controlled root."
     },
     "system": {
       "label": "System",

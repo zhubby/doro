@@ -1261,6 +1261,7 @@ dependencies = [
  "cron",
  "doro-ai",
  "doro-config",
+ "doro-container",
  "doro-protocol",
  "doro-store",
  "futures-util",

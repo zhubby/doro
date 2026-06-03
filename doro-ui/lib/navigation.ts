@@ -3,15 +3,19 @@ import {
   Bot,
   Boxes,
   CheckCircle2,
+  Container,
   FolderTree,
   Home,
+  Layers3,
   MonitorCheck,
   Network,
   ScrollText,
   Server,
   Settings,
+  ShipWheel,
   ShieldCheck,
   Terminal,
+  Waypoints,
   Zap,
 } from "lucide-react";
 
@@ -71,9 +75,36 @@ export const navigation: NavigationItem[] = [
     count: 1,
   },
   {
-    id: "containers",
-    href: "/containers",
+    id: "docker",
+    href: "/docker/containers",
     icon: Boxes,
+    children: [
+      {
+        id: "dockerContainers",
+        href: "/docker/containers",
+        icon: Container,
+      },
+      {
+        id: "dockerImages",
+        href: "/docker/images",
+        icon: Layers3,
+      },
+      {
+        id: "dockerNetworks",
+        href: "/docker/networks",
+        icon: Waypoints,
+      },
+      {
+        id: "dockerVolumes",
+        href: "/docker/volumes",
+        icon: Boxes,
+      },
+      {
+        id: "dockerCompose",
+        href: "/docker/compose",
+        icon: ShipWheel,
+      },
+    ],
   },
   {
     id: "system",
@@ -95,6 +126,7 @@ export const navigation: NavigationItem[] = [
 export function getNavigationItem(pathname: string) {
   return (
     navigation
+      .flatMap((item) => [item, ...(item.children ?? [])])
       .filter((item) =>
         item.href === "/"
           ? pathname === "/"
