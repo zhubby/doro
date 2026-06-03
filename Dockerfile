@@ -2,8 +2,6 @@
 
 ARG DEBIAN_VERSION=bookworm
 ARG RUST_VERSION=1.95
-ARG BUN_VERSION=1.0.4
-ARG NODE_VERSION=22
 
 FROM rust:${RUST_VERSION}-${DEBIAN_VERSION} AS rust-builder
 
@@ -33,42 +31,6 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/workspace/target \
     cargo build --release --locked -p doro-cli --bin doro \
     && cp /workspace/target/release/doro /workspace/doro
-
-FROM oven/bun:${BUN_VERSION} AS ui-deps
-
-WORKDIR /workspace/doro-ui
-
-COPY doro-ui/package.json doro-ui/bun.lockb ./
-
-RUN --mount=type=cache,target=/root/.bun/install/cache \
-    bun install --frozen-lockfile
-
-FROM ui-deps AS ui-builder
-
-ENV NEXT_TELEMETRY_DISABLED=1
-
-COPY doro-ui ./
-
-RUN bun run build
-
-FROM node:${NODE_VERSION}-${DEBIAN_VERSION}-slim AS doro-ui
-
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NODE_ENV=production
-ENV HOSTNAME=0.0.0.0
-ENV PORT=3000
-
-WORKDIR /app
-
-RUN chown node:node /app
-
-COPY --from=ui-builder --chown=node:node /workspace/doro-ui ./
-
-USER node
-
-EXPOSE 3000
-
-CMD ["node", "node_modules/next/dist/bin/next", "start", "-H", "0.0.0.0", "-p", "3000"]
 
 FROM debian:${DEBIAN_VERSION}-slim AS doro-runtime
 
