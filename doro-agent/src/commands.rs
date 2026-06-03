@@ -4,9 +4,13 @@ use crate::runtime::{Agent, VmRuntime};
 use crate::terminal::{TerminalCommand, TerminalManager};
 use crate::tools::{AgentCommandState, LocalAgentToolExecutor, parse_json_value};
 use crate::website_routes::apply_website_routes;
-use doro_ai::{AgentRunOutcome, AgentRunRequest, AgentRunStatus};
+use async_trait::async_trait;
+use doro_ai::{
+    AgentError, AgentRunEvent, AgentRunEventSink, AgentRunOutcome, AgentRunRequest, AgentRunStatus,
+};
 use doro_protocol::grpc;
 use doro_vm::{VmCommand, VmCommandEnvelope, VmCommandStatus, VmProviderError};
+use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -215,6 +219,30 @@ pub(crate) async fn handle_command(
                     agent_id,
                     command_id,
                     agent_task,
+                    task_sender,
+                    task_terminal,
+                    task_state,
+                )
+                .await;
+            });
+        }
+        Some(grpc::control_plane_command::Command::RunAgentChatTurn(chat_turn)) => {
+            tracing::info!(
+                command_id = %command_id,
+                conversation_id = chat_turn.conversation_id,
+                task_id = chat_turn.task_id,
+                "running agent AI chat turn"
+            );
+            let task_agent = agent.clone();
+            let task_sender = sender.clone();
+            let task_terminal = terminal.clone();
+            let task_state = command_state.clone();
+            tokio::spawn(async move {
+                run_agent_chat_turn_command(
+                    task_agent,
+                    agent_id,
+                    command_id,
+                    chat_turn,
                     task_sender,
                     task_terminal,
                     task_state,
@@ -455,6 +483,211 @@ async fn run_agent_task_command(
     if sender.send(command_result).await.is_err() {
         tracing::warn!("failed to enqueue agent task command result event");
     }
+}
+
+async fn run_agent_chat_turn_command(
+    agent: Agent,
+    agent_id: Uuid,
+    command_id: String,
+    chat_turn: grpc::RunAgentChatTurnCommand,
+    sender: mpsc::Sender<grpc::AgentEvent>,
+    terminal: TerminalManager,
+    command_state: AgentCommandState,
+) {
+    let task_id = chat_turn.task_id.clone();
+    let sink = GrpcChatEventSink {
+        agent: agent.clone(),
+        agent_id,
+        command_id: command_id.clone(),
+        conversation_id: chat_turn.conversation_id.clone(),
+        message_id: chat_turn.assistant_message_id.clone(),
+        task_id: task_id.clone(),
+        sender: sender.clone(),
+    };
+
+    let outcome = match agent.ai_runner_for_command(chat_turn.ai_provider.as_ref()) {
+        Ok(runner) => {
+            let executor = LocalAgentToolExecutor {
+                agent: agent.clone(),
+                agent_id,
+                command_id: command_id.clone(),
+                task_id: task_id.clone(),
+                sender: sender.clone(),
+                terminal,
+                command_state,
+                tool_timeout: Duration::from_secs(
+                    agent.config.ai.agent.tool_timeout_seconds.max(1),
+                ),
+                shell_timeout: Duration::from_secs(
+                    agent.config.ai.agent.shell_timeout_seconds.max(1),
+                ),
+                approval_timeout: Duration::from_secs(
+                    agent.config.ai.agent.approval_timeout_seconds.max(1),
+                ),
+            };
+            runner
+                .run_streaming(
+                    AgentRunRequest {
+                        prompt: chat_prompt_from_messages(&chat_turn.messages_json),
+                        context: json!({
+                            "agent_id": agent_id,
+                            "host_id": agent.config.host_id,
+                            "hostname": agent.config.hostname.clone(),
+                            "conversation_id": chat_turn.conversation_id.clone(),
+                            "user_message_id": chat_turn.user_message_id.clone(),
+                            "assistant_message_id": chat_turn.assistant_message_id.clone(),
+                        }),
+                    },
+                    &executor,
+                    &sink,
+                )
+                .await
+        }
+        Err(error) => Err(error),
+    };
+
+    let (status, message, result_outcome) = match outcome {
+        Ok(outcome) => {
+            let status = match outcome.status {
+                AgentRunStatus::Succeeded => grpc::CommandStatus::Succeeded,
+                AgentRunStatus::Failed => grpc::CommandStatus::Failed,
+            };
+            (status, outcome.summary.clone(), outcome)
+        }
+        Err(error) => {
+            let message = error.to_string();
+            (
+                grpc::CommandStatus::Failed,
+                message.clone(),
+                AgentRunOutcome {
+                    status: AgentRunStatus::Failed,
+                    summary: message,
+                    transcript: Vec::new(),
+                },
+            )
+        }
+    };
+
+    let result_event = agent.agent_chat_turn_result_event(
+        agent_id,
+        grpc::AgentChatTurnResultEvent {
+            command_id: command_id.clone(),
+            conversation_id: chat_turn.conversation_id,
+            message_id: chat_turn.assistant_message_id,
+            task_id,
+            status: status as i32,
+            message,
+            result_json: json!({
+                "transcript": result_outcome.transcript,
+            })
+            .to_string(),
+        },
+    );
+    if sender.send(result_event).await.is_err() {
+        tracing::warn!("failed to enqueue agent chat turn result event");
+    }
+}
+
+#[derive(Clone)]
+struct GrpcChatEventSink {
+    agent: Agent,
+    agent_id: Uuid,
+    command_id: String,
+    conversation_id: String,
+    message_id: String,
+    task_id: String,
+    sender: mpsc::Sender<grpc::AgentEvent>,
+}
+
+#[async_trait]
+impl AgentRunEventSink for GrpcChatEventSink {
+    async fn emit(&self, event: AgentRunEvent) -> Result<(), AgentError> {
+        let event = match event {
+            AgentRunEvent::TextDelta { delta } => self.agent.agent_chat_text_delta_event(
+                self.agent_id,
+                grpc::AgentChatTextDeltaEvent {
+                    command_id: self.command_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
+                    message_id: self.message_id.clone(),
+                    task_id: self.task_id.clone(),
+                    delta,
+                },
+            ),
+            AgentRunEvent::ToolCall {
+                call_id,
+                name,
+                arguments,
+            } => self.agent.agent_chat_tool_event(
+                self.agent_id,
+                grpc::AgentChatToolEvent {
+                    command_id: self.command_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
+                    message_id: self.message_id.clone(),
+                    task_id: self.task_id.clone(),
+                    kind: "tool_call".to_string(),
+                    tool_call_id: call_id,
+                    tool_name: name.clone(),
+                    status: "running".to_string(),
+                    content: format!("调用工具 {name}"),
+                    payload_json: json!({ "arguments": arguments }).to_string(),
+                },
+            ),
+            AgentRunEvent::ToolResult {
+                call_id,
+                name,
+                status,
+                output,
+            } => self.agent.agent_chat_tool_event(
+                self.agent_id,
+                grpc::AgentChatToolEvent {
+                    command_id: self.command_id.clone(),
+                    conversation_id: self.conversation_id.clone(),
+                    message_id: self.message_id.clone(),
+                    task_id: self.task_id.clone(),
+                    kind: "tool_result".to_string(),
+                    tool_call_id: call_id,
+                    tool_name: name.clone(),
+                    status: format!("{status:?}").to_lowercase(),
+                    content: format!("工具 {name} 已完成"),
+                    payload_json: json!({ "output": output }).to_string(),
+                },
+            ),
+        };
+
+        self.sender.send(event).await.map_err(|_| AgentError::Tool {
+            name: "chat_stream".to_string(),
+            message: "failed to send chat stream event".to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatInputMessage {
+    role: String,
+    content: String,
+}
+
+fn chat_prompt_from_messages(messages_json: &str) -> String {
+    let messages =
+        serde_json::from_str::<Vec<ChatInputMessage>>(messages_json).unwrap_or_else(|_| Vec::new());
+    if messages.is_empty() {
+        return "Respond to the operator's latest request.".to_string();
+    }
+    let transcript = messages
+        .into_iter()
+        .map(|message| {
+            let role = match message.role.as_str() {
+                "assistant" => "Assistant",
+                "tool" => "Tool",
+                _ => "User",
+            };
+            format!("{role}: {}", message.content.trim())
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    format!(
+        "Continue this Doro AI chat. Use tools when needed and wait for Doro approvals for risky actions.\n\n{transcript}"
+    )
 }
 
 async fn execute_vm_command(

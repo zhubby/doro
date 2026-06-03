@@ -1,6 +1,7 @@
 use crate::agent_events::*;
 use crate::agent_streams::{AgentCommandReply, AgentStreamRegistry};
 use crate::agent_tools::{create_agent_tool_approval, normalize_task_step_status};
+use crate::chat_streams::ChatStreamHub;
 use crate::error::{enrollment_status, store_status};
 use crate::logs::LogHub;
 use crate::prelude::*;
@@ -10,6 +11,7 @@ use crate::server::{shutdown_requested, wait_for_shutdown};
 pub struct GrpcAgentService {
     pub(crate) store: Store,
     pub(crate) agent_streams: AgentStreamRegistry,
+    pub(crate) chat_streams: ChatStreamHub,
     pub(crate) logs: LogHub,
     pub(crate) shutdown_rx: watch::Receiver<bool>,
 }
@@ -126,6 +128,7 @@ impl AgentControlPlane for GrpcAgentService {
     ) -> Result<Response<Self::OpenAgentStreamStream>, Status> {
         let store = self.store.clone();
         let agent_streams = self.agent_streams.clone();
+        let chat_streams = self.chat_streams.clone();
         let logs = self.logs.clone();
         let shutdown_rx = self.shutdown_rx.clone();
         let mut inbound = request.into_inner();
@@ -305,15 +308,62 @@ impl AgentControlPlane for GrpcAgentService {
                         }
                     }
                     Some(grpc::agent_event::Event::AgentToolApprovalRequest(request)) => {
-                        if let Some(host_id) = host_id
-                            && let Err(error) =
-                                create_agent_tool_approval(&store, host_id, request, recorded_at)
-                                    .await
+                        if let Some(host_id) = host_id {
+                            match create_agent_tool_approval(
+                                &store,
+                                host_id,
+                                request.clone(),
+                                recorded_at,
+                            )
+                            .await
+                            {
+                                Ok(approval) => {
+                                    if let Some(task_id) = parse_optional_uuid(&request.task_id)
+                                        && let Err(error) = publish_chat_approval_required(
+                                            &store,
+                                            &chat_streams,
+                                            task_id,
+                                            &request,
+                                            &approval,
+                                            recorded_at,
+                                        )
+                                        .await
+                                    {
+                                        tracing::warn!(
+                                            %error,
+                                            "failed to publish chat approval request"
+                                        );
+                                    }
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        %error,
+                                        "failed to create agent tool approval request"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Some(grpc::agent_event::Event::AgentChatTextDelta(delta)) => {
+                        if let Err(error) =
+                            ingest_chat_text_delta(&store, &chat_streams, delta, recorded_at).await
                         {
-                            tracing::warn!(
-                                %error,
-                                "failed to create agent tool approval request"
-                            );
+                            tracing::warn!(%error, "failed to ingest chat text delta");
+                        }
+                    }
+                    Some(grpc::agent_event::Event::AgentChatTool(tool)) => {
+                        if let Err(error) =
+                            ingest_chat_tool_event(&store, &chat_streams, tool, recorded_at).await
+                        {
+                            tracing::warn!(%error, "failed to ingest chat tool event");
+                        }
+                    }
+                    Some(grpc::agent_event::Event::AgentChatTurnResult(result)) => {
+                        if let Err(error) =
+                            ingest_chat_turn_result(&store, &chat_streams, result, recorded_at)
+                                .await
+                        {
+                            tracing::warn!(%error, "failed to ingest chat turn result");
                         }
                     }
                     Some(grpc::agent_event::Event::TerminalOutput(output)) => {
@@ -339,7 +389,7 @@ impl AgentControlPlane for GrpcAgentService {
                     _ => {}
                 };
 
-                if event_type != "log.line" {
+                if event_type != "log.line" && event_type != "agent_chat.text_delta" {
                     if let Err(error) = store
                         .events()
                         .record(NewAgentEvent {
@@ -397,5 +447,215 @@ impl AgentControlPlane for GrpcAgentService {
         });
 
         Ok(Response::new(ReceiverStream::new(receiver)))
+    }
+}
+
+async fn ingest_chat_text_delta(
+    store: &Store,
+    chat_streams: &ChatStreamHub,
+    delta: grpc::AgentChatTextDeltaEvent,
+    recorded_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let conversation_id = Uuid::parse_str(&delta.conversation_id)?;
+    let message_id = Uuid::parse_str(&delta.message_id)?;
+    store
+        .ai_chats()
+        .append_message_content(message_id, &delta.delta, recorded_at)
+        .await?;
+    chat_streams
+        .publish(AiChatStreamEvent {
+            event_id: Uuid::new_v4(),
+            conversation_id,
+            message_id,
+            kind: AiChatEventKind::TextDelta,
+            content: Some(delta.delta),
+            payload: serde_json::json!({}),
+            created_at: recorded_at,
+        })
+        .await;
+    Ok(())
+}
+
+async fn ingest_chat_tool_event(
+    store: &Store,
+    chat_streams: &ChatStreamHub,
+    tool: grpc::AgentChatToolEvent,
+    recorded_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let conversation_id = Uuid::parse_str(&tool.conversation_id)?;
+    let message_id = Uuid::parse_str(&tool.message_id)?;
+    let kind = match tool.kind.as_str() {
+        "tool_result" => AiChatEventKind::ToolResult,
+        "approval_required" => AiChatEventKind::ApprovalRequired,
+        "error" => AiChatEventKind::Error,
+        _ => AiChatEventKind::ToolCall,
+    };
+    let event = store
+        .ai_chats()
+        .record_event(NewAiChatEvent {
+            id: Uuid::new_v4(),
+            conversation_id,
+            message_id,
+            kind,
+            content: normalize_chat_content(tool.content),
+            payload: serde_json::json!({
+                "command_id": tool.command_id,
+                "task_id": tool.task_id,
+                "tool_call_id": tool.tool_call_id,
+                "tool_name": tool.tool_name,
+                "status": tool.status,
+                "payload": parse_event_payload(&tool.payload_json),
+            }),
+            created_at: recorded_at,
+        })
+        .await?;
+    chat_streams
+        .publish(stream_event_from_chat_event(event))
+        .await;
+    Ok(())
+}
+
+async fn publish_chat_approval_required(
+    store: &Store,
+    chat_streams: &ChatStreamHub,
+    task_id: Uuid,
+    request: &grpc::AgentToolApprovalRequestEvent,
+    approval: &ApprovalRequest,
+    recorded_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let Some(message) = store.ai_chats().message_for_task(task_id).await? else {
+        return Ok(());
+    };
+    let _ = store
+        .ai_chats()
+        .update_message(
+            message.id,
+            AiChatMessageChanges {
+                status: Some(AiChatMessageStatus::WaitingApproval),
+                updated_at: Some(recorded_at),
+                ..AiChatMessageChanges::default()
+            },
+        )
+        .await?;
+    let event = store
+        .ai_chats()
+        .record_event(NewAiChatEvent {
+            id: Uuid::new_v4(),
+            conversation_id: message.conversation_id,
+            message_id: message.id,
+            kind: AiChatEventKind::ApprovalRequired,
+            content: Some(request.summary.clone()),
+            payload: serde_json::json!({
+                "approval": approval,
+                "request_id": request.request_id,
+                "command_id": request.command_id,
+                "tool_call_id": request.tool_call_id,
+                "tool_name": request.tool_name,
+                "risk": request.risk,
+                "arguments": parse_event_payload(&request.arguments_json),
+            }),
+            created_at: recorded_at,
+        })
+        .await?;
+    chat_streams
+        .publish(stream_event_from_chat_event(event))
+        .await;
+    Ok(())
+}
+
+async fn ingest_chat_turn_result(
+    store: &Store,
+    chat_streams: &ChatStreamHub,
+    result: grpc::AgentChatTurnResultEvent,
+    recorded_at: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    let conversation_id = Uuid::parse_str(&result.conversation_id)?;
+    let message_id = Uuid::parse_str(&result.message_id)?;
+    let task_id = Uuid::parse_str(&result.task_id)?;
+    let succeeded = result.status == grpc::CommandStatus::Succeeded as i32;
+    let message_status = if succeeded {
+        AiChatMessageStatus::Succeeded
+    } else {
+        AiChatMessageStatus::Failed
+    };
+    let task_status = if succeeded {
+        TaskStatus::Succeeded
+    } else {
+        TaskStatus::Failed
+    };
+    let event_kind = if succeeded {
+        AiChatEventKind::Done
+    } else {
+        AiChatEventKind::Error
+    };
+    let error_message = (!succeeded).then_some(result.message.clone());
+    store
+        .ai_chats()
+        .update_message(
+            message_id,
+            AiChatMessageChanges {
+                status: Some(message_status),
+                updated_at: Some(recorded_at),
+                metadata: Some(parse_event_payload(&result.result_json)),
+                ..AiChatMessageChanges::default()
+            },
+        )
+        .await?;
+    store
+        .tasks()
+        .update_status(
+            task_id,
+            task_status,
+            Some(recorded_at),
+            error_message.clone(),
+        )
+        .await?;
+    store
+        .tasks()
+        .update_first_step_status_for_task(task_id, if succeeded { "succeeded" } else { "failed" })
+        .await?;
+    store
+        .tasks()
+        .finish_latest_run_for_task(
+            task_id,
+            if succeeded { "succeeded" } else { "failed" }.to_string(),
+            Some(result.command_id.clone()),
+            recorded_at,
+            parse_event_payload(&result.result_json),
+            error_message,
+        )
+        .await?;
+    let event = store
+        .ai_chats()
+        .record_event(NewAiChatEvent {
+            id: Uuid::new_v4(),
+            conversation_id,
+            message_id,
+            kind: event_kind,
+            content: Some(result.message),
+            payload: parse_event_payload(&result.result_json),
+            created_at: recorded_at,
+        })
+        .await?;
+    chat_streams
+        .publish(stream_event_from_chat_event(event))
+        .await;
+    Ok(())
+}
+
+fn normalize_chat_content(content: String) -> Option<String> {
+    let content = content.trim().to_string();
+    (!content.is_empty()).then_some(content)
+}
+
+fn stream_event_from_chat_event(event: AiChatEvent) -> AiChatStreamEvent {
+    AiChatStreamEvent {
+        event_id: event.id,
+        conversation_id: event.conversation_id,
+        message_id: event.message_id,
+        kind: event.kind,
+        content: event.content,
+        payload: event.payload,
+        created_at: event.created_at,
     }
 }

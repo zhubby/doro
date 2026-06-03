@@ -12,6 +12,8 @@ pub mod openai;
 
 pub use agent::AgentError;
 pub use agent::AgentModelProvider;
+pub use agent::AgentRunEvent;
+pub use agent::AgentRunEventSink;
 pub use agent::AgentRunOutcome;
 pub use agent::AgentRunRequest;
 pub use agent::AgentRunStatus;

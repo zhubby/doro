@@ -715,6 +715,7 @@ mod tests {
             store: Store::from_connection(connection, DatabaseBackend::Postgres),
             auth: AuthService::development(),
             agent_streams: AgentStreamRegistry::default(),
+            chat_streams: crate::chat_streams::ChatStreamHub::default(),
             logs: LogHub::default(),
             control_plane_environment: ControlPlaneEnvironment {
                 hostname: "test-host".to_string(),

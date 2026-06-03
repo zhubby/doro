@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Bot,
   Boxes,
   CheckCircle2,
   FolderTree,
@@ -46,6 +47,11 @@ export const navigation: NavigationItem[] = [
   {
     id: "ai",
     href: "/ai",
+    icon: Bot,
+  },
+  {
+    id: "models",
+    href: "/models",
     icon: Zap,
   },
   {

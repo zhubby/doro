@@ -4,7 +4,7 @@
 
 `doro-protocol` contains shared wire types, lifecycle vocabulary, generated tonic/prost gRPC types, and ts-rs TypeScript bindings for UI REST contracts. Public protocol changes should start here.
 
-`doro-control-plane` exposes `/api/v1`, owns task orchestration, AI model provider management, command-scoped AI provider dispatch, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
+`doro-control-plane` exposes `/api/v1`, owns task orchestration, AI model provider management, persistent AI chat conversations, command-scoped AI provider dispatch, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, and emits events.
 
 `doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user. The `AgentRun` capability runs the local AI runner for natural-language host operations while pausing high-risk tools for control-plane approval. When website routing is enabled, the Agent owns the local Pingora runtime and declares `NetworkExpose`.
 
@@ -20,7 +20,8 @@ The first durable schema is organized into table families:
 
 - Identity: `hosts`, `agents`, `enrollment_tokens`, and `agent_capabilities`.
 - Observability: `metric_snapshots`, `agent_events`, and `operation_logs`.
-- Workflows: `tasks`, `task_steps`, `task_runs`, and `approvals`. Approvals are
+- Workflows: `tasks`, `task_steps`, `task_runs`, `approvals`, `ai_conversations`,
+  `ai_chat_messages`, and `ai_chat_events`. Approvals are
   durable control-plane records with explicit expiration and decision metadata.
 - Configuration and resource directory: `settings`, `ai_model_providers`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
 
@@ -34,6 +35,6 @@ The control plane should access these tables through typed `doro-store` reposito
 
 ## UI
 
-`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, files, websites, containers, databases, logs, AI, and settings.
+`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, AI chat, model providers, files, websites, containers, databases, logs, and settings.
 
 The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state. UI API types should come from `doro-ui/types/api.ts`, which re-exports ts-rs bindings generated from `doro-protocol`.

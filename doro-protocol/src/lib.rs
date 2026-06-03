@@ -620,6 +620,126 @@ pub struct ListAiModelProvidersResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiConversation.ts")]
+pub struct AiConversation {
+    pub id: Uuid,
+    pub title: String,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AiChatMessageRole.ts")]
+pub enum AiChatMessageRole {
+    User,
+    Assistant,
+    Tool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AiChatMessageStatus.ts")]
+pub enum AiChatMessageStatus {
+    Pending,
+    Running,
+    WaitingApproval,
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AiChatEventKind.ts")]
+pub enum AiChatEventKind {
+    TextDelta,
+    ToolCall,
+    ApprovalRequired,
+    ToolResult,
+    Done,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiChatMessage.ts")]
+pub struct AiChatMessage {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub role: AiChatMessageRole,
+    pub status: AiChatMessageStatus,
+    pub content: String,
+    pub task_id: Option<Uuid>,
+    pub host_id: Option<Uuid>,
+    pub ai_provider_id: Option<Uuid>,
+    pub model: Option<String>,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiChatEvent.ts")]
+pub struct AiChatEvent {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub message_id: Uuid,
+    pub kind: AiChatEventKind,
+    pub content: Option<String>,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateAiConversationRequest.ts")]
+pub struct CreateAiConversationRequest {
+    pub title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateAiChatTurnRequest.ts")]
+pub struct CreateAiChatTurnRequest {
+    pub host_id: Uuid,
+    pub ai_provider_id: Uuid,
+    pub model: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiConversationResponse.ts")]
+pub struct AiConversationResponse {
+    pub item: AiConversation,
+    pub messages: Vec<AiChatMessage>,
+    pub events: Vec<AiChatEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListAiConversationsResponse.ts")]
+pub struct ListAiConversationsResponse {
+    pub items: Vec<AiConversation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "CreateAiChatTurnResponse.ts")]
+pub struct CreateAiChatTurnResponse {
+    pub user_message: AiChatMessage,
+    pub assistant_message: AiChatMessage,
+    pub task: Task,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AiChatStreamEvent.ts")]
+pub struct AiChatStreamEvent {
+    pub event_id: Uuid,
+    pub conversation_id: Uuid,
+    pub message_id: Uuid,
+    pub kind: AiChatEventKind,
+    pub content: Option<String>,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "CreateScheduledTaskRequest.ts")]
 pub struct CreateScheduledTaskRequest {
     pub name: String,
@@ -1096,6 +1216,18 @@ mod tests {
         assert!(UpdateAiModelProviderRequest::export_all(&cfg).is_ok());
         assert!(AiModelProviderResponse::export_all(&cfg).is_ok());
         assert!(ListAiModelProvidersResponse::export_all(&cfg).is_ok());
+        assert!(AiConversation::export_all(&cfg).is_ok());
+        assert!(AiChatMessageRole::export_all(&cfg).is_ok());
+        assert!(AiChatMessageStatus::export_all(&cfg).is_ok());
+        assert!(AiChatEventKind::export_all(&cfg).is_ok());
+        assert!(AiChatMessage::export_all(&cfg).is_ok());
+        assert!(AiChatEvent::export_all(&cfg).is_ok());
+        assert!(CreateAiConversationRequest::export_all(&cfg).is_ok());
+        assert!(CreateAiChatTurnRequest::export_all(&cfg).is_ok());
+        assert!(AiConversationResponse::export_all(&cfg).is_ok());
+        assert!(ListAiConversationsResponse::export_all(&cfg).is_ok());
+        assert!(CreateAiChatTurnResponse::export_all(&cfg).is_ok());
+        assert!(AiChatStreamEvent::export_all(&cfg).is_ok());
         assert!(CreateScheduledTaskRequest::export_all(&cfg).is_ok());
         assert!(UpdateScheduledTaskRequest::export_all(&cfg).is_ok());
         assert!(TerminalCommandRequest::export_all(&cfg).is_ok());

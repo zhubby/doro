@@ -1,10 +1,14 @@
 import type {
+  AiConversationResponse,
   AiModelProviderResponse,
   AuthStatusResponse,
   AuthTokenResponse,
   ChangeCurrentUserPasswordRequest,
   ControlPlaneEnvironmentResponse,
   CreateAiModelProviderRequest,
+  CreateAiChatTurnRequest,
+  CreateAiChatTurnResponse,
+  CreateAiConversationRequest,
   CreateApprovalRequest,
   CreateApprovalResponse,
   CreateEnrollmentTokenRequest,
@@ -25,6 +29,7 @@ import type {
   FileUploadResponse,
   LatestMetricResponse,
   ListAiModelProvidersResponse,
+  ListAiConversationsResponse,
   ListAppsResponse,
   ListApprovalsResponse,
   ListHostContainersResponse,
@@ -402,6 +407,59 @@ export async function deleteAiModelProvider(providerId: string) {
   return authedRequest<null>(`/api/v1/ai/model-providers/${providerId}`, {
     method: "DELETE",
   });
+}
+
+export async function getAiConversations() {
+  return getJson<ListAiConversationsResponse>("/api/v1/ai/conversations");
+}
+
+export async function createAiConversation(
+  request: CreateAiConversationRequest = { title: null },
+) {
+  return authedRequest<AiConversationResponse>("/api/v1/ai/conversations", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function getAiConversation(conversationId: string) {
+  return getJson<AiConversationResponse>(
+    `/api/v1/ai/conversations/${conversationId}`,
+  );
+}
+
+export async function deleteAiConversation(conversationId: string) {
+  return authedRequest<null>(`/api/v1/ai/conversations/${conversationId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function createAiChatTurn(
+  conversationId: string,
+  request: CreateAiChatTurnRequest,
+) {
+  return authedRequest<CreateAiChatTurnResponse>(
+    `/api/v1/ai/conversations/${conversationId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function aiChatStreamUrl(
+  conversationId: string,
+  messageId: string,
+) {
+  const token = await authToken();
+  if (!token) {
+    return null;
+  }
+  const query = new URLSearchParams({
+    message_id: messageId,
+    token,
+  });
+  return `${controlPlaneUrl()}/api/v1/ai/conversations/${conversationId}/stream?${query}`;
 }
 
 export async function refreshContainers() {

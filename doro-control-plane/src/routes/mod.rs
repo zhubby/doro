@@ -3,6 +3,7 @@ use crate::auth::{
     AuthService, auth_middleware, auth_status, change_password, login, logout, me, refresh,
     register, update_me,
 };
+use crate::chat_streams::ChatStreamHub;
 use crate::logs;
 use crate::prelude::*;
 use crate::state::AppState;
@@ -58,10 +59,21 @@ pub fn app_with_auth_streams_and_websites(
     agent_streams: AgentStreamRegistry,
     logs: LogHub,
 ) -> Router {
+    app_with_auth_streams_logs_and_chat(store, auth, agent_streams, logs, ChatStreamHub::default())
+}
+
+pub(crate) fn app_with_auth_streams_logs_and_chat(
+    store: Store,
+    auth: AuthService,
+    agent_streams: AgentStreamRegistry,
+    logs: LogHub,
+    chat_streams: ChatStreamHub,
+) -> Router {
     let state = AppState {
         store,
         auth,
         agent_streams,
+        chat_streams,
         logs,
         control_plane_environment: collect_control_plane_environment(),
     };
@@ -161,6 +173,18 @@ pub fn app_with_auth_streams_and_websites(
                 .delete(delete_ai_model_provider),
         )
         .route(
+            "/api/v1/ai/conversations",
+            get(list_ai_conversations).post(create_ai_conversation),
+        )
+        .route(
+            "/api/v1/ai/conversations/:conversation_id",
+            get(get_ai_conversation).delete(delete_ai_conversation),
+        )
+        .route(
+            "/api/v1/ai/conversations/:conversation_id/messages",
+            axum::routing::post(create_ai_chat_turn),
+        )
+        .route(
             "/api/v1/scheduled-tasks",
             get(list_scheduled_tasks).post(create_scheduled_task),
         )
@@ -235,6 +259,10 @@ pub fn app_with_auth_streams_and_websites(
         .route("/health", get(health))
         .route("/api/v1/terminal/:host_id/ws", get(terminal_session_ws))
         .route("/api/v1/logs/stream", get(runtime_log_stream))
+        .route(
+            "/api/v1/ai/conversations/:conversation_id/stream",
+            get(ai_chat_stream),
+        )
         .route("/api/v1/auth/status", get(auth_status))
         .route("/api/v1/auth/register", axum::routing::post(register))
         .route("/api/v1/auth/login", axum::routing::post(login))

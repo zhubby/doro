@@ -8,7 +8,7 @@ pub(crate) async fn create_agent_tool_approval(
     host_id: Uuid,
     request: grpc::AgentToolApprovalRequestEvent,
     requested_at: DateTime<Utc>,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<ApprovalRequest, sea_orm::DbErr> {
     let task_id = doro_store::parse_uuid(&request.task_id).map_err(|_| {
         sea_orm::DbErr::Custom("agent tool approval task_id is invalid".to_string())
     })?;
@@ -21,7 +21,7 @@ pub(crate) async fn create_agent_tool_approval(
         request.summary.clone()
     };
 
-    store
+    let approval = store
         .tasks()
         .append_step_with_approval(
             task_id,
@@ -51,7 +51,7 @@ pub(crate) async fn create_agent_tool_approval(
         .tasks()
         .update_status(task_id, TaskStatus::WaitingApproval, None, None)
         .await?;
-    Ok(())
+    Ok(approval)
 }
 
 pub(crate) async fn apply_agent_tool_approval_decision(

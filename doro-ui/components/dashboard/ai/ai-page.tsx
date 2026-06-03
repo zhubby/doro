@@ -2,153 +2,119 @@
 
 import {
   Bot,
-  Eye,
-  KeyRound,
-  Pencil,
-  Plus,
+  CheckCircle2,
+  Clock,
+  MessageSquarePlus,
   RefreshCw,
-  Search,
   Send,
-  Trash2,
+  ShieldCheck,
+  Wrench,
 } from "lucide-react";
-import { type FormEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import { DataTable, TruncatedText } from "@/components/admin/data-table";
-import { PageSection } from "@/components/admin/page-section";
-import { Toolbar } from "@/components/admin/toolbar";
-import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { Link } from "@/i18n/navigation";
 import {
-  createAiModelProvider,
-  createTask,
-  deleteAiModelProvider,
+  aiChatStreamUrl,
+  createAiChatTurn,
+  createAiConversation,
+  getAiConversation,
+  getAiConversations,
   getAiModelProviders,
   getHosts,
-  getTasks,
-  updateAiModelProvider,
 } from "@/lib/control-plane-api";
-import { formatRelativeTime } from "@/lib/datetime";
+import { cn } from "@/lib/utils";
 import type {
+  AiChatEvent,
+  AiChatMessage,
+  AiChatStreamEvent,
+  AiConversation,
   AiModelProvider,
-  CreateAiModelProviderRequest,
   Host,
-  Task,
-  UpdateAiModelProviderRequest,
 } from "@/types/api";
-import type { ResourceColumn } from "@/types/dashboard";
 
-type ProviderFormState = {
-  id: string | null;
-  name: string;
-  baseUrl: string;
-  defaultModel: string;
-  timeoutSeconds: string;
-  apiKey: string;
-  enabled: boolean;
-};
-
-type ProviderRow = AiModelProvider & {
-  keyLabel: string;
-  updatedLabel: string;
-};
-
-const emptyProviderForm: ProviderFormState = {
-  id: null,
-  name: "",
-  baseUrl: "https://api.openai.com/v1",
-  defaultModel: "gpt-4.1-mini",
-  timeoutSeconds: "60",
-  apiKey: "",
-  enabled: true,
-};
-
-function taskStatusBadge(status: Task["status"]) {
-  if (status === "succeeded") {
-    return <Badge className="min-w-16 justify-center">成功</Badge>;
-  }
-  if (status === "running" || status === "queued") {
-    return (
-      <Badge variant="secondary" className="min-w-16 justify-center">
-        运行中
-      </Badge>
-    );
-  }
-  if (status === "waiting_approval") {
-    return (
-      <Badge variant="secondary" className="min-w-16 justify-center">
-        待审批
-      </Badge>
-    );
-  }
-  if (status === "failed" || status === "cancelled") {
-    return (
-      <Badge variant="destructive" className="min-w-16 justify-center">
-        失败
-      </Badge>
-    );
-  }
-  return (
-    <Badge variant="outline" className="min-w-16 justify-center">
-      草稿
-    </Badge>
-  );
-}
-
-function providerStatusBadge(provider: AiModelProvider) {
-  if (!provider.enabled) {
-    return (
-      <Badge variant="outline" className="min-w-14 justify-center">
-        停用
-      </Badge>
-    );
-  }
-  if (!provider.has_api_key) {
-    return (
-      <Badge variant="secondary" className="min-w-14 justify-center">
-        缺少密钥
-      </Badge>
-    );
-  }
-  return <Badge className="min-w-14 justify-center">启用</Badge>;
-}
+type DisplayMap = Record<string, string>;
 
 function hostLabel(host: Host) {
   const labels = host.labels.length ? ` · ${host.labels.join(", ")}` : "";
   return `${host.display_name || host.hostname}${labels}`;
 }
 
-function isAiTask(task: Task) {
-  return task.steps.some((step) => step.capability === "agent_run");
+function conversationTitle(conversation: AiConversation) {
+  return conversation.title || "新 AI 对话";
+}
+
+function messageStatusLabel(message: AiChatMessage) {
+  if (message.status === "waiting_approval") {
+    return "等待审批";
+  }
+  if (message.status === "running" || message.status === "pending") {
+    return "生成中";
+  }
+  if (message.status === "failed") {
+    return "失败";
+  }
+  return "完成";
+}
+
+function streamEventToChatEvent(event: AiChatStreamEvent): AiChatEvent {
+  return {
+    id: event.event_id,
+    conversation_id: event.conversation_id,
+    message_id: event.message_id,
+    kind: event.kind,
+    content: event.content,
+    payload: event.payload,
+    created_at: event.created_at,
+  };
+}
+
+function jsonStringField(value: unknown, key: string) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const field = (value as Record<string, unknown>)[key];
+  return typeof field === "string" ? field : null;
+}
+
+function eventApprovalId(event: AiChatEvent) {
+  if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+    return null;
+  }
+  const approval = (event.payload as Record<string, unknown>).approval;
+  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+    return null;
+  }
+  const id = (approval as Record<string, unknown>).id;
+  return typeof id === "string" ? id : null;
 }
 
 export function AiPage() {
-  const [providers, setProviders] = useState<AiModelProvider[]>([]);
+  const [conversations, setConversations] = useState<AiConversation[]>([]);
+  const [selectedConversationId, setSelectedConversationId] = useState("");
+  const [messages, setMessages] = useState<AiChatMessage[]>([]);
+  const [events, setEvents] = useState<AiChatEvent[]>([]);
+  const [displayedContent, setDisplayedContent] = useState<DisplayMap>({});
   const [hosts, setHosts] = useState<Host[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [query, setQuery] = useState("");
+  const [providers, setProviders] = useState<AiModelProvider[]>([]);
   const [selectedHostId, setSelectedHostId] = useState("");
   const [selectedProviderId, setSelectedProviderId] = useState("");
-  const [title, setTitle] = useState("AI 运维任务");
-  const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState("");
+  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
-  const [submittingTask, setSubmittingTask] = useState(false);
-  const [submittingProvider, setSubmittingProvider] = useState(false);
-  const [busyId, setBusyId] = useState<string | null>(null);
-  const [providerDialogOpen, setProviderDialogOpen] = useState(false);
-  const [providerForm, setProviderForm] = useState<ProviderFormState>(emptyProviderForm);
-  const [detailProvider, setDetailProvider] = useState<AiModelProvider | null>(null);
+  const [sending, setSending] = useState(false);
+  const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const queuesRef = useRef<Record<string, string>>({});
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   const onlineAgentHosts = useMemo(
     () =>
@@ -163,672 +129,434 @@ export function AiPage() {
     () => providers.filter((provider) => provider.enabled && provider.has_api_key),
     [providers],
   );
-  const aiTasks = useMemo(() => tasks.filter(isAiTask).slice(0, 12), [tasks]);
-  const providerRows = useMemo(
-    () =>
-      providers.map((provider) => ({
-        ...provider,
-        keyLabel: provider.has_api_key
-          ? `已配置 ${provider.api_key_hint ?? ""}`.trim()
-          : "未配置",
-        updatedLabel: formatRelativeTime(provider.updated_at),
-      })),
-    [providers],
+  const selectedProvider = useMemo(
+    () => providers.find((provider) => provider.id === selectedProviderId) ?? null,
+    [providers, selectedProviderId],
   );
-  const filteredProviders = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
-      return providerRows;
+  const eventsByMessage = useMemo(() => {
+    const grouped: Record<string, AiChatEvent[]> = {};
+    for (const event of events) {
+      grouped[event.message_id] = [...(grouped[event.message_id] ?? []), event];
     }
-    return providerRows.filter(
-      (provider) =>
-        provider.name.toLowerCase().includes(normalizedQuery) ||
-        provider.base_url.toLowerCase().includes(normalizedQuery) ||
-        provider.default_model.toLowerCase().includes(normalizedQuery),
-    );
-  }, [providerRows, query]);
+    return grouped;
+  }, [events]);
 
-  async function load() {
+  async function loadShell() {
     setLoading(true);
-    const [providersResult, hostsResult, tasksResult] = await Promise.all([
-      getAiModelProviders(),
+    const [conversationsResult, hostsResult, providersResult] = await Promise.all([
+      getAiConversations(),
       getHosts(),
-      getTasks(),
+      getAiModelProviders(),
     ]);
-    if (providersResult.data) {
-      const nextProviders = providersResult.data.items;
-      setProviders(nextProviders);
-      const firstProvider = nextProviders.find(
-        (provider) => provider.enabled && provider.has_api_key,
-      );
-      setSelectedProviderId((current) =>
-        current &&
-        nextProviders.some(
-          (provider) =>
-            provider.id === current && provider.enabled && provider.has_api_key,
-        )
-          ? current
-          : firstProvider?.id ?? "",
-      );
+    if (conversationsResult.data) {
+      const items = conversationsResult.data.items;
+      setConversations(items);
+      setSelectedConversationId((current) => current || items[0]?.id || "");
     }
     if (hostsResult.data) {
-      const nextHosts = hostsResult.data.items;
-      setHosts(nextHosts);
-      const firstHost = nextHosts.find(
+      const items = hostsResult.data.items;
+      setHosts(items);
+      const firstHost = items.find(
         (host) =>
           host.status === "online" &&
           host.capabilities.some((capability) => capability.name === "agent_run"),
       );
-      setSelectedHostId((current) =>
-        current &&
-        nextHosts.some(
-          (host) =>
-            host.id === current &&
-            host.status === "online" &&
-            host.capabilities.some((capability) => capability.name === "agent_run"),
-        )
-          ? current
-          : firstHost?.id ?? "",
+      setSelectedHostId((current) => current || firstHost?.id || "");
+    }
+    if (providersResult.data) {
+      const items = providersResult.data.items;
+      setProviders(items);
+      const firstProvider = items.find(
+        (provider) => provider.enabled && provider.has_api_key,
       );
+      setSelectedProviderId((current) => current || firstProvider?.id || "");
+      setModel((current) => current || firstProvider?.default_model || "");
     }
-    if (tasksResult.data) {
-      setTasks(tasksResult.data.items);
-    }
-    setApiError(providersResult.error ?? hostsResult.error ?? tasksResult.error);
+    setApiError(
+      conversationsResult.error ?? hostsResult.error ?? providersResult.error ?? null,
+    );
     setLoading(false);
   }
 
+  async function loadConversation(conversationId: string) {
+    if (!conversationId) {
+      setMessages([]);
+      setEvents([]);
+      setDisplayedContent({});
+      return;
+    }
+    const result = await getAiConversation(conversationId);
+    if (result.data) {
+      setMessages(result.data.messages);
+      setEvents(result.data.events);
+      setDisplayedContent(
+        Object.fromEntries(
+          result.data.messages.map((message) => [message.id, message.content]),
+        ),
+      );
+    } else {
+      setApiError(result.error ?? "无法加载 AI 对话");
+    }
+  }
+
   useEffect(() => {
-    void load();
+    void loadShell();
+    return () => eventSourceRef.current?.close();
   }, []);
 
-  async function submitTask() {
-    const normalizedPrompt = prompt.trim();
-    if (!selectedHostId || !selectedProviderId || !normalizedPrompt || submittingTask) {
+  useEffect(() => {
+    void loadConversation(selectedConversationId);
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (selectedProvider && !model.trim()) {
+      setModel(selectedProvider.default_model);
+    }
+  }, [selectedProvider, model]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const entries = Object.entries(queuesRef.current).filter(([, queue]) => queue);
+      if (!entries.length) {
+        return;
+      }
+      setDisplayedContent((current) => {
+        const next = { ...current };
+        for (const [messageId, queue] of entries) {
+          const chunk = queue.slice(0, 3);
+          queuesRef.current[messageId] = queue.slice(chunk.length);
+          next[messageId] = `${next[messageId] ?? ""}${chunk}`;
+        }
+        return next;
+      });
+    }, 24);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function ensureConversation() {
+    if (selectedConversationId) {
+      return selectedConversationId;
+    }
+    const result = await createAiConversation({
+      title: input.trim().slice(0, 32) || "新 AI 对话",
+    });
+    if (!result.data) {
+      setApiError(result.error ?? "无法创建 AI 对话");
+      return null;
+    }
+    const conversation = result.data.item;
+    setConversations((current) => [conversation, ...current]);
+    setSelectedConversationId(conversation.id);
+    return conversation.id;
+  }
+
+  async function startStream(conversationId: string, messageId: string) {
+    eventSourceRef.current?.close();
+    const url = await aiChatStreamUrl(conversationId, messageId);
+    if (!url) {
+      setApiError("未登录，无法连接 AI 流");
       return;
     }
-    setSubmittingTask(true);
-    setApiError(null);
-    setNotice(null);
-    const result = await createTask({
-      title: title.trim() || "AI 运维任务",
-      host_id: selectedHostId,
-      prompt: normalizedPrompt,
-      ai_provider_id: selectedProviderId,
+    setStreamingMessageId(messageId);
+    const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
+    eventSource.onerror = () => {
+      setStreamingMessageId(null);
+      eventSource.close();
+    };
+    eventSource.addEventListener("ai_chat", (event) => {
+      const streamEvent = JSON.parse((event as MessageEvent).data) as AiChatStreamEvent;
+      if (streamEvent.kind === "text_delta" && streamEvent.content) {
+        queuesRef.current[messageId] =
+          `${queuesRef.current[messageId] ?? ""}${streamEvent.content}`;
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? { ...message, content: `${message.content}${streamEvent.content}` }
+              : message,
+          ),
+        );
+        return;
+      }
+
+      setEvents((current) => [...current, streamEventToChatEvent(streamEvent)]);
+      if (streamEvent.kind === "done" || streamEvent.kind === "error") {
+        const queued = queuesRef.current[messageId] ?? "";
+        queuesRef.current[messageId] = "";
+        setStreamingMessageId(null);
+        setDisplayedContent((current) => {
+          return { ...current, [messageId]: `${current[messageId] ?? ""}${queued}` };
+        });
+        eventSource.close();
+      }
     });
-    if (result.data) {
-      setTasks((current) => [result.data as Task, ...current]);
-      setPrompt("");
-      setNotice("AI 任务已提交，控制平面会使用选定供应商下发单次任务配置。");
-    } else {
-      setApiError(result.error ?? "任务创建失败");
-    }
-    setSubmittingTask(false);
   }
 
-  function openCreateProviderDialog() {
-    setProviderForm(emptyProviderForm);
-    setProviderDialogOpen(true);
-  }
-
-  function openEditProviderDialog(provider: AiModelProvider) {
-    setProviderForm({
-      id: provider.id,
-      name: provider.name,
-      baseUrl: provider.base_url,
-      defaultModel: provider.default_model,
-      timeoutSeconds: String(provider.timeout_seconds),
-      apiKey: "",
-      enabled: provider.enabled,
-    });
-    setProviderDialogOpen(true);
-  }
-
-  async function submitProvider(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmittingProvider(true);
-    setApiError(null);
-    setNotice(null);
-
-    const result = providerForm.id
-      ? await updateAiModelProvider(providerForm.id, providerUpdateRequest(providerForm))
-      : await createAiModelProvider(providerCreateRequest(providerForm));
-
-    if (result.data) {
-      setProviderDialogOpen(false);
-      setNotice(providerForm.id ? "模型供应商配置已保存。" : "模型供应商已创建。");
-      await load();
-    } else {
-      setApiError(result.error ?? "模型供应商保存失败");
-    }
-    setSubmittingProvider(false);
-  }
-
-  async function removeProvider(provider: AiModelProvider) {
-    if (!window.confirm(`删除模型供应商 ${provider.name}？`)) {
+    const content = input.trim();
+    if (!content || !selectedHostId || !selectedProviderId || !model.trim() || sending) {
       return;
     }
-    setBusyId(provider.id);
+    setSending(true);
     setApiError(null);
-    setNotice(null);
-    const result = await deleteAiModelProvider(provider.id);
-    if (!result.error) {
-      setNotice("模型供应商已删除。");
-      await load();
-    } else {
-      setApiError(result.error);
+    const conversationId = await ensureConversation();
+    if (!conversationId) {
+      setSending(false);
+      return;
     }
-    setBusyId(null);
+    const result = await createAiChatTurn(conversationId, {
+      host_id: selectedHostId,
+      ai_provider_id: selectedProviderId,
+      model: model.trim(),
+      content,
+    });
+    const turn = result.data;
+    if (turn) {
+      setInput("");
+      setMessages((current) => [
+        ...current,
+        turn.user_message,
+        turn.assistant_message,
+      ]);
+      setDisplayedContent((current) => ({
+        ...current,
+        [turn.user_message.id]: turn.user_message.content,
+        [turn.assistant_message.id]: "",
+      }));
+      void startStream(conversationId, turn.assistant_message.id);
+    } else {
+      setApiError(result.error ?? "发送失败");
+    }
+    setSending(false);
   }
 
-  const providerColumns: ResourceColumn<ProviderRow>[] = [
-    {
-      key: "name",
-      label: "名称 / Base URL",
-      width: "30%",
-      render: (row) => (
-        <div className="min-w-0">
-          <p className="truncate font-medium" title={row.name}>
-            {row.name}
-          </p>
-          <p className="truncate text-xs text-muted-foreground" title={row.base_url}>
-            {row.base_url}
-          </p>
-        </div>
-      ),
-    },
-    {
-      key: "default_model",
-      label: "默认模型",
-      width: "18%",
-      render: (row) => <TruncatedText value={row.default_model} />,
-    },
-    {
-      key: "enabled",
-      label: "状态",
-      width: "7rem",
-      render: (row) => providerStatusBadge(row),
-    },
-    {
-      key: "keyLabel",
-      label: "密钥",
-      width: "10rem",
-      render: (row) => <TruncatedText value={row.keyLabel} />,
-    },
-    {
-      key: "timeout_seconds",
-      label: "超时",
-      width: "6rem",
-      render: (row) => <span>{row.timeout_seconds}s</span>,
-    },
-    {
-      key: "updatedLabel",
-      label: "更新时间",
-      width: "9rem",
-      render: (row) => <TruncatedText value={row.updatedLabel} />,
-    },
-  ];
-
-  const taskColumns: ResourceColumn<Task>[] = [
-    {
-      key: "title",
-      label: "任务",
-      width: "34%",
-      render: (row) => (
-        <div className="min-w-0">
-          <p className="truncate font-medium">{row.title}</p>
-          <p className="truncate text-xs text-muted-foreground">{row.id}</p>
-        </div>
-      ),
-    },
-    {
-      key: "status",
-      label: "状态",
-      width: "8rem",
-      render: (row) => taskStatusBadge(row.status),
-    },
-    {
-      key: "host_id",
-      label: "Agent",
-      width: "24%",
-      render: (row) => {
-        const host = hosts.find((item) => item.id === row.host_id);
-        return <span className="block truncate">{host ? host.display_name : row.host_id}</span>;
-      },
-    },
-    {
-      key: "created_at",
-      label: "创建时间",
-      width: "10rem",
-      render: (row) => <span>{formatRelativeTime(row.created_at)}</span>,
-    },
-  ];
+  async function createConversation() {
+    const result = await createAiConversation({ title: "新 AI 对话" });
+    const created = result.data;
+    if (created) {
+      setConversations((current) => [created.item, ...current]);
+      setSelectedConversationId(created.item.id);
+      setMessages([]);
+      setEvents([]);
+      setDisplayedContent({});
+    } else {
+      setApiError(result.error ?? "无法创建 AI 对话");
+    }
+  }
 
   return (
-    <PageContainer
-      aside={
-        <PageSection title="AI 状态">
-          <div className="space-y-3">
-            <StatusLine label="模型供应商" value={providers.length} />
-            <StatusLine label="可用供应商" value={enabledProviders.length} />
-            <StatusLine label="在线 Agent" value={onlineAgentHosts.length} />
-            <StatusLine
-              label="运行中任务"
-              value={aiTasks.filter((task) => task.status === "running").length}
-            />
-          </div>
-        </PageSection>
-      }
-    >
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-lg border border-primary/30 p-4 text-sm text-muted-foreground">
-          {notice}
-        </div>
-      ) : null}
-
-      <PageSection
-        title="手动 AI 任务"
-        description="选择在线 Agent 和模型供应商后，下发一次 OpenAI Responses 兼容任务。"
-      >
-        <div className="rounded-lg border p-4">
-          <div className="grid gap-3 md:grid-cols-[1fr_16rem_16rem]">
-            <Field label="任务标题">
-              <input
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-              />
-            </Field>
-            <Field label="目标 Agent">
-              <Select
-                value={selectedHostId}
-                onValueChange={setSelectedHostId}
-                options={[
-                  { value: "", label: "未选择" },
-                  ...onlineAgentHosts.map((host) => ({
-                    value: host.id,
-                    label: hostLabel(host),
-                  })),
-                ]}
-              />
-            </Field>
-            <Field label="模型供应商">
-              <Select
-                value={selectedProviderId}
-                onValueChange={setSelectedProviderId}
-                options={[
-                  { value: "", label: "未选择" },
-                  ...enabledProviders.map((provider) => ({
-                    value: provider.id,
-                    label: `${provider.name} · ${provider.default_model}`,
-                  })),
-                ]}
-              />
-            </Field>
-          </div>
-          <Field label="自然语言任务" className="mt-3">
-            <textarea
-              className="min-h-28 w-full resize-y rounded-md border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-            />
-          </Field>
-          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-muted-foreground">
-              {enabledProviders.length === 0
-                ? "暂无可用模型供应商，请先创建并配置 API Key。"
-                : "任务会使用所选供应商配置，不会把 API Key 写入任务记录。"}
+    <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[18rem_1fr]">
+      <aside className="min-h-0 border-b bg-card lg:border-b-0 lg:border-r">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="flex h-16 items-center justify-between border-b px-4">
+            <div>
+              <p className="text-sm font-semibold">AI 对话</p>
+              <p className="text-xs text-muted-foreground">持久化 Agent 聊天</p>
             </div>
             <Button
-              onClick={() => void submitTask()}
+              variant="outline"
+              size="icon"
+              aria-label="新建对话"
+              onClick={() => void createConversation()}
+            >
+              <MessageSquarePlus className="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            <div className="grid gap-1">
+              {conversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  onClick={() => setSelectedConversationId(conversation.id)}
+                  className={cn(
+                    "rounded-md px-3 py-2 text-left text-sm outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                    selectedConversationId === conversation.id && "bg-accent font-medium",
+                  )}
+                >
+                  <span className="block truncate">{conversationTitle(conversation)}</span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {conversation.updated_at}
+                  </span>
+                </button>
+              ))}
+              {!conversations.length && !loading ? (
+                <div className="rounded-md border p-3 text-sm text-muted-foreground">
+                  暂无对话
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <section className="flex min-h-0 flex-col overflow-hidden">
+        <div className="grid gap-3 border-b bg-background p-4 xl:grid-cols-[1fr_14rem_18rem_16rem]">
+          <div className="min-w-0">
+            <p className="text-sm font-semibold">Agent AI</p>
+            <p className="truncate text-xs text-muted-foreground">
+              控制平面下发请求和模型，Agent 流式回传结果。
+            </p>
+          </div>
+          <Select
+            value={selectedHostId}
+            onValueChange={setSelectedHostId}
+            options={[
+              { value: "", label: "未选择 Agent" },
+              ...onlineAgentHosts.map((host) => ({
+                value: host.id,
+                label: hostLabel(host),
+              })),
+            ]}
+          />
+          <Select
+            value={selectedProviderId}
+            onValueChange={(value) => {
+              setSelectedProviderId(value);
+              const provider = providers.find((item) => item.id === value);
+              if (provider) {
+                setModel(provider.default_model);
+              }
+            }}
+            options={[
+              { value: "", label: "未选择模型供应商" },
+              ...enabledProviders.map((provider) => ({
+                value: provider.id,
+                label: `${provider.name} · ${provider.default_model}`,
+              })),
+            ]}
+          />
+          <input
+            value={model}
+            onChange={(event) => setModel(event.target.value)}
+            placeholder="模型名"
+            className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </div>
+
+        {apiError ? (
+          <div className="border-b border-destructive/30 px-4 py-3 text-sm text-muted-foreground">
+            控制平面暂不可用：{apiError}
+          </div>
+        ) : null}
+
+        <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-4">
+          <div className="mx-auto flex max-w-5xl flex-col gap-4">
+            {messages.map((message) => (
+              <article
+                key={message.id}
+                className={cn(
+                  "max-w-[86%] rounded-lg border bg-background p-4 shadow-sm",
+                  message.role === "user" && "ml-auto bg-primary text-primary-foreground",
+                )}
+              >
+                <div className="mb-2 flex items-center gap-2 text-xs">
+                  {message.role === "assistant" ? (
+                    <Bot className="size-4" aria-hidden="true" />
+                  ) : null}
+                  <span className="font-medium">
+                    {message.role === "assistant" ? "AI" : "用户"}
+                  </span>
+                  {message.role === "assistant" ? (
+                    <Badge variant="outline" className="ml-auto">
+                      {messageStatusLabel(message)}
+                    </Badge>
+                  ) : null}
+                </div>
+                <p className="whitespace-pre-wrap text-sm leading-6">
+                  {displayedContent[message.id] || (message.role === "assistant" ? "" : message.content)}
+                  {message.id === streamingMessageId ? (
+                    <span className="ml-1 inline-block h-4 w-1 animate-pulse bg-current align-[-2px]" />
+                  ) : null}
+                </p>
+                {eventsByMessage[message.id]?.length ? (
+                  <div className="mt-3 grid gap-2">
+                    {eventsByMessage[message.id].map((event) => (
+                      <ChatEventLine key={event.id} event={event} />
+                    ))}
+                  </div>
+                ) : null}
+              </article>
+            ))}
+            {!messages.length ? (
+              <div className="rounded-lg border bg-background p-6 text-sm text-muted-foreground">
+                选择 Agent 和模型后发送第一条消息。Agent 可以使用本机工具，高风险操作会等待审批。
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="border-t bg-background p-4">
+          <div className="mx-auto flex max-w-5xl gap-3">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="输入要交给 Agent 的请求..."
+              className="min-h-14 flex-1 resize-none rounded-md border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <Button
+              type="submit"
+              className="h-14 px-5"
               disabled={
+                !input.trim() ||
                 !selectedHostId ||
                 !selectedProviderId ||
-                !prompt.trim() ||
-                submittingTask
+                !model.trim() ||
+                sending
               }
             >
-              {submittingTask ? (
+              {sending ? (
                 <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
               ) : (
                 <Send className="size-4" aria-hidden="true" />
               )}
-              提交
+              发送
             </Button>
           </div>
-        </div>
-      </PageSection>
-
-      <PageSection
-        title="模型供应商"
-        description="仅支持 OpenAI Responses 兼容配置。"
-        contentClassName="space-y-4"
-      >
-        <Toolbar
-          left={
-            <Button onClick={openCreateProviderDialog}>
-              <Plus className="size-4" aria-hidden="true" />
-              创建
-            </Button>
-          }
-          right={
-            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-              <label className="relative min-w-0 sm:w-72">
-                <Search
-                  className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                  aria-hidden="true"
-                />
-                <span className="sr-only">搜索模型供应商</span>
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索名称、URL 或模型"
-                  className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </label>
-              <Button
-                variant="outline"
-                size="icon"
-                aria-label="刷新"
-                disabled={loading}
-                onClick={() => void load()}
-              >
-                <RefreshCw className="size-4" aria-hidden="true" />
-              </Button>
-            </div>
-          }
-        />
-        <DataTable
-          columns={providerColumns}
-          rows={filteredProviders}
-          actionsWidth="14rem"
-          emptyText={loading ? "正在加载模型供应商..." : "暂无模型供应商"}
-          renderActions={(row) => (
-            <>
-              <Button variant="outline" size="sm" onClick={() => setDetailProvider(row)}>
-                <Eye className="size-4" aria-hidden="true" />
-                详情
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busyId === row.id}
-                onClick={() => openEditProviderDialog(row)}
-              >
-                <Pencil className="size-4" aria-hidden="true" />
-                编辑
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={busyId === row.id}
-                onClick={() => void removeProvider(row)}
-              >
-                <Trash2 className="size-4" aria-hidden="true" />
-                删除
-              </Button>
-            </>
-          )}
-        />
-      </PageSection>
-
-      <PageSection contentClassName="space-y-4">
-        <Toolbar
-          left={
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Bot className="size-4" aria-hidden="true" />
-              最近 AgentRun 任务
-            </div>
-          }
-        />
-        <DataTable
-          columns={taskColumns}
-          rows={aiTasks}
-          actions={[]}
-          emptyText={loading ? "加载中" : "暂无任务"}
-        />
-      </PageSection>
-
-      <ProviderDialog
-        open={providerDialogOpen}
-        form={providerForm}
-        submitting={submittingProvider}
-        onOpenChange={setProviderDialogOpen}
-        onFormChange={setProviderForm}
-        onSubmit={submitProvider}
-      />
-      <ProviderDetailDialog
-        provider={detailProvider}
-        onOpenChange={(open) => {
-          if (!open) {
-            setDetailProvider(null);
-          }
-        }}
-      />
-    </PageContainer>
-  );
-}
-
-function StatusLine({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border p-3">
-      <span className="text-sm">{label}</span>
-      <Badge variant="secondary">{value}</Badge>
-    </div>
-  );
-}
-
-function ProviderDialog({
-  open,
-  form,
-  submitting,
-  onOpenChange,
-  onFormChange,
-  onSubmit,
-}: {
-  open: boolean;
-  form: ProviderFormState;
-  submitting: boolean;
-  onOpenChange: (open: boolean) => void;
-  onFormChange: (form: ProviderFormState) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-}) {
-  const editing = Boolean(form.id);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <form onSubmit={onSubmit} className="space-y-5">
-          <DialogHeader>
-            <DialogTitle>{editing ? "编辑模型供应商" : "创建模型供应商"}</DialogTitle>
-            <DialogDescription>
-              当前仅支持 OpenAI Responses 兼容接口；编辑时 API Key 留空表示保留现有密钥。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="名称">
-              <input
-                required
-                value={form.name}
-                onChange={(event) => onFormChange({ ...form, name: event.target.value })}
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </Field>
-            <Field label="默认模型">
-              <input
-                required
-                value={form.defaultModel}
-                onChange={(event) =>
-                  onFormChange({ ...form, defaultModel: event.target.value })
-                }
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </Field>
-            <Field label="Base URL">
-              <input
-                required
-                value={form.baseUrl}
-                onChange={(event) => onFormChange({ ...form, baseUrl: event.target.value })}
-                placeholder="https://api.openai.com/v1"
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </Field>
-            <Field label="超时秒数">
-              <input
-                required
-                type="number"
-                min={1}
-                value={form.timeoutSeconds}
-                onChange={(event) =>
-                  onFormChange({ ...form, timeoutSeconds: event.target.value })
-                }
-                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </Field>
-          </div>
-
-          <Field label="API Key">
-            <div className="relative">
-              <KeyRound
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <input
-                required={!editing}
-                type="password"
-                value={form.apiKey}
-                onChange={(event) => onFormChange({ ...form, apiKey: event.target.value })}
-                placeholder={editing ? "留空表示不替换" : "sk-..."}
-                className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
-          </Field>
-
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.enabled}
-              onChange={(event) =>
-                onFormChange({ ...form, enabled: event.target.checked })
-              }
-              className="size-4 rounded border"
-            />
-            <span className="font-medium">启用此供应商</span>
-          </label>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              取消
-            </Button>
-            <Button type="submit" disabled={submitting}>
-              {submitting ? (
-                <RefreshCw className="size-4 animate-spin" aria-hidden="true" />
-              ) : null}
-              {editing ? "保存" : "创建"}
-            </Button>
-          </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ProviderDetailDialog({
-  provider,
-  onOpenChange,
-}: {
-  provider: AiModelProvider | null;
-  onOpenChange: (open: boolean) => void;
-}) {
-  return (
-    <Dialog open={Boolean(provider)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>模型供应商详情</DialogTitle>
-          <DialogDescription>接口不会返回 API Key 明文。</DialogDescription>
-        </DialogHeader>
-        {provider ? (
-          <div className="grid gap-3 text-sm sm:grid-cols-2">
-            <DetailItem label="ID" value={provider.id} />
-            <DetailItem label="名称" value={provider.name} />
-            <DetailItem label="Base URL" value={provider.base_url} />
-            <DetailItem label="默认模型" value={provider.default_model} />
-            <DetailItem label="超时" value={`${provider.timeout_seconds}s`} />
-            <DetailItem label="状态" value={provider.enabled ? "启用" : "停用"} />
-            <DetailItem
-              label="密钥"
-              value={
-                provider.has_api_key
-                  ? `已配置 ${provider.api_key_hint ?? ""}`.trim()
-                  : "未配置"
-              }
-            />
-            <DetailItem label="创建时间" value={provider.created_at} />
-            <DetailItem label="更新时间" value={provider.updated_at} />
-          </div>
-        ) : null}
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            关闭
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DetailItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-md border p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 truncate font-medium" title={value}>
-        {value}
-      </p>
+      </section>
     </div>
   );
 }
 
-function Field({
-  label,
-  children,
-  className,
-}: {
-  label: string;
-  children: ReactNode;
-  className?: string;
-}) {
+function ChatEventLine({ event }: { event: AiChatEvent }) {
+  const approvalId = event.kind === "approval_required" ? eventApprovalId(event) : null;
+  const icon =
+    event.kind === "approval_required" ? (
+      <ShieldCheck className="size-4" aria-hidden="true" />
+    ) : event.kind === "tool_result" ? (
+      <CheckCircle2 className="size-4" aria-hidden="true" />
+    ) : event.kind === "done" ? (
+      <Clock className="size-4" aria-hidden="true" />
+    ) : (
+      <Wrench className="size-4" aria-hidden="true" />
+    );
+  const label =
+    event.kind === "approval_required"
+      ? "等待审批"
+      : event.kind === "tool_result"
+        ? "工具结果"
+        : event.kind === "done"
+          ? "回合完成"
+          : event.kind === "error"
+            ? "错误"
+            : "工具调用";
+
   return (
-    <label className={`block space-y-2 text-sm ${className ?? ""}`}>
-      <span className="font-medium">{label}</span>
-      {children}
-    </label>
+    <div className="flex items-start gap-2 rounded-md border bg-muted/40 p-2 text-xs text-muted-foreground">
+      {icon}
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-foreground">{label}</p>
+        <p className="truncate" title={event.content ?? ""}>
+          {event.content ?? jsonStringField(event.payload, "tool_name") ?? event.created_at}
+        </p>
+        {approvalId ? (
+          <Button asChild variant="link" className="mt-1 h-auto p-0 text-xs">
+            <Link href="/approvals">打开审批</Link>
+          </Button>
+        ) : null}
+      </div>
+    </div>
   );
-}
-
-function providerCreateRequest(form: ProviderFormState): CreateAiModelProviderRequest {
-  return {
-    name: form.name.trim(),
-    base_url: form.baseUrl.trim(),
-    default_model: form.defaultModel.trim(),
-    timeout_seconds: Number(form.timeoutSeconds),
-    api_key: form.apiKey.trim(),
-    enabled: form.enabled,
-  };
-}
-
-function providerUpdateRequest(form: ProviderFormState): UpdateAiModelProviderRequest {
-  return {
-    name: form.name.trim(),
-    base_url: form.baseUrl.trim(),
-    default_model: form.defaultModel.trim(),
-    timeout_seconds: Number(form.timeoutSeconds),
-    api_key: form.apiKey.trim() || null,
-    enabled: form.enabled,
-  };
 }

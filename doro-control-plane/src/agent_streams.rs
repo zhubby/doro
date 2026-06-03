@@ -361,6 +361,35 @@ impl AgentStreamRegistry {
         }
     }
 
+    pub(crate) async fn start_agent_chat_turn(
+        &self,
+        host_id: Uuid,
+        mut command: grpc::RunAgentChatTurnCommand,
+    ) -> Result<String, AgentTaskCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(AgentTaskCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        command.command_id = command_id.clone();
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::RunAgentChatTurn(
+                command,
+            )),
+        };
+        handle
+            .sender
+            .send(Ok(command))
+            .await
+            .map_err(|_| AgentTaskCommandError::NoStream)?;
+        Ok(command_id)
+    }
+
     pub(crate) async fn send_agent_tool_approval_decision(
         &self,
         host_id: Uuid,

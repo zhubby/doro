@@ -3,6 +3,12 @@ use chrono::Utc;
 use doro_config::StoreBackend;
 use doro_config::StoreConfig;
 use doro_protocol::AgentCapability;
+use doro_protocol::AiChatEvent;
+use doro_protocol::AiChatEventKind;
+use doro_protocol::AiChatMessage;
+use doro_protocol::AiChatMessageRole;
+use doro_protocol::AiChatMessageStatus;
+use doro_protocol::AiConversation;
 use doro_protocol::AiModelProvider;
 use doro_protocol::AppSummary;
 use doro_protocol::ApprovalRequest;
@@ -168,6 +174,49 @@ pub struct StoredAiModelProviderSecret {
     pub timeout_seconds: u32,
     pub api_key_secret: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAiConversation {
+    pub id: Uuid,
+    pub title: String,
+    pub created_by: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAiChatMessage {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub role: AiChatMessageRole,
+    pub status: AiChatMessageStatus,
+    pub content: String,
+    pub task_id: Option<Uuid>,
+    pub host_id: Option<Uuid>,
+    pub ai_provider_id: Option<Uuid>,
+    pub model: Option<String>,
+    pub metadata: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAiChatEvent {
+    pub id: Uuid,
+    pub conversation_id: Uuid,
+    pub message_id: Uuid,
+    pub kind: AiChatEventKind,
+    pub content: Option<String>,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AiChatMessageChanges {
+    pub content: Option<String>,
+    pub status: Option<AiChatMessageStatus>,
+    pub task_id: Option<Option<Uuid>>,
+    pub metadata: Option<Value>,
+    pub updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]
@@ -412,6 +461,10 @@ impl Store {
 
     pub fn ai_model_providers(&self) -> AiModelProviderRepository<'_> {
         AiModelProviderRepository { store: self }
+    }
+
+    pub fn ai_chats(&self) -> AiChatRepository<'_> {
+        AiChatRepository { store: self }
     }
 
     pub fn events(&self) -> EventRepository<'_> {
@@ -939,6 +992,25 @@ impl TaskRepository<'_> {
         Ok(())
     }
 
+    pub async fn update_first_step_status_for_task(
+        &self,
+        task_id: Uuid,
+        status: &str,
+    ) -> Result<(), DbErr> {
+        let Some(model) = entities::task_steps::Entity::find()
+            .filter(entities::task_steps::Column::TaskId.eq(task_id))
+            .order_by(entities::task_steps::Column::Position, Order::Asc)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(());
+        };
+        let mut active: entities::task_steps::ActiveModel = model.into();
+        active.status = Set(status.to_string());
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+
     pub async fn append_step_with_approval(
         &self,
         task_id: Uuid,
@@ -1028,6 +1100,33 @@ impl TaskRepository<'_> {
             .await?
         else {
             return Err(DbErr::RecordNotFound("task run not found".to_string()));
+        };
+        let mut active: entities::task_runs::ActiveModel = model.into();
+        active.status = Set(status);
+        active.command_id = Set(command_id);
+        active.finished_at = Set(Some(finished_at.into()));
+        active.result_json = Set(result_json);
+        active.error_message = Set(error_message);
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+
+    pub async fn finish_latest_run_for_task(
+        &self,
+        task_id: Uuid,
+        status: String,
+        command_id: Option<String>,
+        finished_at: DateTime<Utc>,
+        result_json: Value,
+        error_message: Option<String>,
+    ) -> Result<(), DbErr> {
+        let Some(model) = entities::task_runs::Entity::find()
+            .filter(entities::task_runs::Column::TaskId.eq(task_id))
+            .order_by(entities::task_runs::Column::StartedAt, Order::Desc)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(());
         };
         let mut active: entities::task_runs::ActiveModel = model.into();
         active.status = Set(status);
@@ -1571,6 +1670,321 @@ fn ai_provider_model_to_secret(
         timeout_seconds: provider.timeout_seconds.max(0) as u32,
         api_key_secret: provider.api_key_secret,
         enabled: provider.enabled,
+    }
+}
+
+pub struct AiChatRepository<'a> {
+    store: &'a Store,
+}
+
+impl AiChatRepository<'_> {
+    pub async fn list_conversations(&self) -> Result<Vec<AiConversation>, DbErr> {
+        let rows = entities::ai_conversations::Entity::find()
+            .order_by(entities::ai_conversations::Column::UpdatedAt, Order::Desc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(ai_conversation_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn get_conversation(
+        &self,
+        conversation_id: Uuid,
+    ) -> Result<Option<AiConversation>, DbErr> {
+        Ok(
+            entities::ai_conversations::Entity::find_by_id(conversation_id)
+                .one(self.store.connection())
+                .await?
+                .map(ai_conversation_model_to_protocol),
+        )
+    }
+
+    pub async fn create_conversation(
+        &self,
+        conversation: NewAiConversation,
+    ) -> Result<AiConversation, DbErr> {
+        let title = required_trimmed(conversation.title, "ai conversation title is required")?;
+        let created_by = required_trimmed(
+            conversation.created_by,
+            "ai conversation created_by is required",
+        )?;
+        let model = entities::ai_conversations::ActiveModel {
+            id: Set(conversation.id),
+            title: Set(title),
+            created_by: Set(created_by),
+            created_at: Set(conversation.created_at.into()),
+            updated_at: Set(conversation.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(ai_conversation_model_to_protocol(model))
+    }
+
+    pub async fn delete_conversation(&self, conversation_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::ai_conversations::Entity::delete_by_id(conversation_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    pub async fn list_messages(&self, conversation_id: Uuid) -> Result<Vec<AiChatMessage>, DbErr> {
+        let rows = entities::ai_chat_messages::Entity::find()
+            .filter(entities::ai_chat_messages::Column::ConversationId.eq(conversation_id))
+            .order_by(entities::ai_chat_messages::Column::CreatedAt, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(ai_chat_message_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn list_events(&self, conversation_id: Uuid) -> Result<Vec<AiChatEvent>, DbErr> {
+        let rows = entities::ai_chat_events::Entity::find()
+            .filter(entities::ai_chat_events::Column::ConversationId.eq(conversation_id))
+            .order_by(entities::ai_chat_events::Column::CreatedAt, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(ai_chat_event_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn list_message_events(&self, message_id: Uuid) -> Result<Vec<AiChatEvent>, DbErr> {
+        let rows = entities::ai_chat_events::Entity::find()
+            .filter(entities::ai_chat_events::Column::MessageId.eq(message_id))
+            .order_by(entities::ai_chat_events::Column::CreatedAt, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(ai_chat_event_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn create_message(&self, message: NewAiChatMessage) -> Result<AiChatMessage, DbErr> {
+        let model = entities::ai_chat_messages::ActiveModel {
+            id: Set(message.id),
+            conversation_id: Set(message.conversation_id),
+            role: Set(serialize_ai_chat_message_role(message.role)),
+            status: Set(serialize_ai_chat_message_status(message.status)),
+            content: Set(message.content),
+            task_id: Set(message.task_id),
+            host_id: Set(message.host_id),
+            ai_provider_id: Set(message.ai_provider_id),
+            model: Set(message.model),
+            metadata: Set(message.metadata),
+            created_at: Set(message.created_at.into()),
+            updated_at: Set(message.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        self.touch_conversation(message.conversation_id, message.created_at)
+            .await?;
+        Ok(ai_chat_message_model_to_protocol(model))
+    }
+
+    pub async fn update_message(
+        &self,
+        message_id: Uuid,
+        changes: AiChatMessageChanges,
+    ) -> Result<Option<AiChatMessage>, DbErr> {
+        let Some(model) = entities::ai_chat_messages::Entity::find_by_id(message_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let mut active: entities::ai_chat_messages::ActiveModel = model.into();
+        if let Some(content) = changes.content {
+            active.content = Set(content);
+        }
+        if let Some(status) = changes.status {
+            active.status = Set(serialize_ai_chat_message_status(status));
+        }
+        if let Some(task_id) = changes.task_id {
+            active.task_id = Set(task_id);
+        }
+        if let Some(metadata) = changes.metadata {
+            active.metadata = Set(metadata);
+        }
+        let updated_at = changes.updated_at.unwrap_or_else(Utc::now);
+        active.updated_at = Set(updated_at.into());
+        let model = active.update(self.store.connection()).await?;
+        self.touch_conversation(model.conversation_id, updated_at)
+            .await?;
+        Ok(Some(ai_chat_message_model_to_protocol(model)))
+    }
+
+    pub async fn append_message_content(
+        &self,
+        message_id: Uuid,
+        delta: &str,
+        updated_at: DateTime<Utc>,
+    ) -> Result<Option<AiChatMessage>, DbErr> {
+        let Some(model) = entities::ai_chat_messages::Entity::find_by_id(message_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let mut content = model.content.clone();
+        let mut active: entities::ai_chat_messages::ActiveModel = model.into();
+        content.push_str(delta);
+        active.content = Set(content);
+        active.updated_at = Set(updated_at.into());
+        let model = active.update(self.store.connection()).await?;
+        self.touch_conversation(model.conversation_id, updated_at)
+            .await?;
+        Ok(Some(ai_chat_message_model_to_protocol(model)))
+    }
+
+    pub async fn record_event(&self, event: NewAiChatEvent) -> Result<AiChatEvent, DbErr> {
+        let model = entities::ai_chat_events::ActiveModel {
+            id: Set(event.id),
+            conversation_id: Set(event.conversation_id),
+            message_id: Set(event.message_id),
+            kind: Set(serialize_ai_chat_event_kind(event.kind)),
+            content: Set(event.content),
+            payload: Set(event.payload),
+            created_at: Set(event.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        self.touch_conversation(event.conversation_id, event.created_at)
+            .await?;
+        Ok(ai_chat_event_model_to_protocol(model))
+    }
+
+    pub async fn message_for_task(&self, task_id: Uuid) -> Result<Option<AiChatMessage>, DbErr> {
+        Ok(entities::ai_chat_messages::Entity::find()
+            .filter(entities::ai_chat_messages::Column::TaskId.eq(task_id))
+            .filter(entities::ai_chat_messages::Column::Role.eq("assistant"))
+            .one(self.store.connection())
+            .await?
+            .map(ai_chat_message_model_to_protocol))
+    }
+
+    async fn touch_conversation(
+        &self,
+        conversation_id: Uuid,
+        updated_at: DateTime<Utc>,
+    ) -> Result<(), DbErr> {
+        let Some(model) = entities::ai_conversations::Entity::find_by_id(conversation_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(());
+        };
+        let mut active: entities::ai_conversations::ActiveModel = model.into();
+        active.updated_at = Set(updated_at.into());
+        active.update(self.store.connection()).await?;
+        Ok(())
+    }
+}
+
+fn ai_conversation_model_to_protocol(
+    conversation: entities::ai_conversations::Model,
+) -> AiConversation {
+    AiConversation {
+        id: conversation.id,
+        title: conversation.title,
+        created_by: conversation.created_by,
+        created_at: conversation.created_at.into(),
+        updated_at: conversation.updated_at.into(),
+    }
+}
+
+fn ai_chat_message_model_to_protocol(message: entities::ai_chat_messages::Model) -> AiChatMessage {
+    AiChatMessage {
+        id: message.id,
+        conversation_id: message.conversation_id,
+        role: parse_ai_chat_message_role(&message.role),
+        status: parse_ai_chat_message_status(&message.status),
+        content: message.content,
+        task_id: message.task_id,
+        host_id: message.host_id,
+        ai_provider_id: message.ai_provider_id,
+        model: message.model,
+        metadata: message.metadata,
+        created_at: message.created_at.into(),
+        updated_at: message.updated_at.into(),
+    }
+}
+
+fn ai_chat_event_model_to_protocol(event: entities::ai_chat_events::Model) -> AiChatEvent {
+    AiChatEvent {
+        id: event.id,
+        conversation_id: event.conversation_id,
+        message_id: event.message_id,
+        kind: parse_ai_chat_event_kind(&event.kind),
+        content: event.content,
+        payload: event.payload,
+        created_at: event.created_at.into(),
+    }
+}
+
+fn serialize_ai_chat_message_role(role: AiChatMessageRole) -> String {
+    match role {
+        AiChatMessageRole::User => "user",
+        AiChatMessageRole::Assistant => "assistant",
+        AiChatMessageRole::Tool => "tool",
+    }
+    .to_string()
+}
+
+fn parse_ai_chat_message_role(role: &str) -> AiChatMessageRole {
+    match role {
+        "assistant" => AiChatMessageRole::Assistant,
+        "tool" => AiChatMessageRole::Tool,
+        _ => AiChatMessageRole::User,
+    }
+}
+
+fn serialize_ai_chat_message_status(status: AiChatMessageStatus) -> String {
+    match status {
+        AiChatMessageStatus::Pending => "pending",
+        AiChatMessageStatus::Running => "running",
+        AiChatMessageStatus::WaitingApproval => "waiting_approval",
+        AiChatMessageStatus::Succeeded => "succeeded",
+        AiChatMessageStatus::Failed => "failed",
+    }
+    .to_string()
+}
+
+fn parse_ai_chat_message_status(status: &str) -> AiChatMessageStatus {
+    match status {
+        "running" => AiChatMessageStatus::Running,
+        "waiting_approval" => AiChatMessageStatus::WaitingApproval,
+        "succeeded" => AiChatMessageStatus::Succeeded,
+        "failed" => AiChatMessageStatus::Failed,
+        _ => AiChatMessageStatus::Pending,
+    }
+}
+
+fn serialize_ai_chat_event_kind(kind: AiChatEventKind) -> String {
+    match kind {
+        AiChatEventKind::TextDelta => "text_delta",
+        AiChatEventKind::ToolCall => "tool_call",
+        AiChatEventKind::ApprovalRequired => "approval_required",
+        AiChatEventKind::ToolResult => "tool_result",
+        AiChatEventKind::Done => "done",
+        AiChatEventKind::Error => "error",
+    }
+    .to_string()
+}
+
+fn parse_ai_chat_event_kind(kind: &str) -> AiChatEventKind {
+    match kind {
+        "tool_call" => AiChatEventKind::ToolCall,
+        "approval_required" => AiChatEventKind::ApprovalRequired,
+        "tool_result" => AiChatEventKind::ToolResult,
+        "done" => AiChatEventKind::Done,
+        "error" => AiChatEventKind::Error,
+        _ => AiChatEventKind::TextDelta,
     }
 }
 
@@ -3544,6 +3958,173 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn persists_ai_chat_conversation_messages_and_events() -> anyhow::Result<()> {
+        let conversation_id = Uuid::new_v4();
+        let user_message_id = Uuid::new_v4();
+        let assistant_message_id = Uuid::new_v4();
+        let event_id = Uuid::new_v4();
+        let task_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let provider_id = Uuid::new_v4();
+        let created_at = Utc::now();
+        let appended_at = created_at + chrono::Duration::seconds(1);
+        let event_at = appended_at + chrono::Duration::seconds(1);
+        let secret = "sk-never-persist";
+
+        let conversation =
+            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
+        let conversation_after_user =
+            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
+        let conversation_after_assistant =
+            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
+        let conversation_after_append =
+            ai_conversation_model(conversation_id, "Storage check", "admin", appended_at);
+        let conversation_after_event =
+            ai_conversation_model(conversation_id, "Storage check", "admin", event_at);
+        let user_message = ai_chat_message_model(
+            user_message_id,
+            conversation_id,
+            AiChatMessageRole::User,
+            AiChatMessageStatus::Succeeded,
+            "你好",
+            None,
+            Some(host_id),
+            Some(provider_id),
+            Some("gpt-4.1-mini"),
+            created_at,
+        );
+        let assistant_message = ai_chat_message_model(
+            assistant_message_id,
+            conversation_id,
+            AiChatMessageRole::Assistant,
+            AiChatMessageStatus::Running,
+            "",
+            Some(task_id),
+            Some(host_id),
+            Some(provider_id),
+            Some("gpt-4.1-mini"),
+            created_at,
+        );
+        let mut appended_assistant = assistant_message.clone();
+        appended_assistant.content = "收到".to_string();
+        appended_assistant.updated_at = appended_at.into();
+        let event = ai_chat_event_model(
+            event_id,
+            conversation_id,
+            assistant_message_id,
+            AiChatEventKind::ToolResult,
+            Some("工具完成"),
+            json!({"tool": "shell_execute", "status": "ok"}),
+            event_at,
+        );
+
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[conversation.clone()]])
+            .append_query_results([[user_message.clone()]])
+            .append_query_results([[conversation.clone()]])
+            .append_query_results([[conversation_after_user]])
+            .append_query_results([[assistant_message.clone()]])
+            .append_query_results([[conversation.clone()]])
+            .append_query_results([[conversation_after_assistant]])
+            .append_query_results([[assistant_message]])
+            .append_query_results([[appended_assistant.clone()]])
+            .append_query_results([[conversation.clone()]])
+            .append_query_results([[conversation_after_append.clone()]])
+            .append_query_results([[event.clone()]])
+            .append_query_results([[conversation_after_append]])
+            .append_query_results([[conversation_after_event]])
+            .append_query_results([[user_message.clone(), appended_assistant.clone()]])
+            .append_query_results([[event.clone()]])
+            .append_query_results([[event]])
+            .append_query_results([[appended_assistant.clone()]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let created = store
+            .ai_chats()
+            .create_conversation(NewAiConversation {
+                id: conversation_id,
+                title: " Storage check ".to_string(),
+                created_by: "admin".to_string(),
+                created_at,
+            })
+            .await?;
+        let user = store
+            .ai_chats()
+            .create_message(NewAiChatMessage {
+                id: user_message_id,
+                conversation_id,
+                role: AiChatMessageRole::User,
+                status: AiChatMessageStatus::Succeeded,
+                content: "你好".to_string(),
+                task_id: None,
+                host_id: Some(host_id),
+                ai_provider_id: Some(provider_id),
+                model: Some("gpt-4.1-mini".to_string()),
+                metadata: json!({}),
+                created_at,
+            })
+            .await?;
+        let assistant = store
+            .ai_chats()
+            .create_message(NewAiChatMessage {
+                id: assistant_message_id,
+                conversation_id,
+                role: AiChatMessageRole::Assistant,
+                status: AiChatMessageStatus::Running,
+                content: String::new(),
+                task_id: Some(task_id),
+                host_id: Some(host_id),
+                ai_provider_id: Some(provider_id),
+                model: Some("gpt-4.1-mini".to_string()),
+                metadata: json!({}),
+                created_at,
+            })
+            .await?;
+        let appended = store
+            .ai_chats()
+            .append_message_content(assistant_message_id, "收到", appended_at)
+            .await?
+            .expect("assistant message should append");
+        let recorded = store
+            .ai_chats()
+            .record_event(NewAiChatEvent {
+                id: event_id,
+                conversation_id,
+                message_id: assistant_message_id,
+                kind: AiChatEventKind::ToolResult,
+                content: Some("工具完成".to_string()),
+                payload: json!({"tool": "shell_execute", "status": "ok"}),
+                created_at: event_at,
+            })
+            .await?;
+        let messages = store.ai_chats().list_messages(conversation_id).await?;
+        let events = store.ai_chats().list_events(conversation_id).await?;
+        let message_events = store
+            .ai_chats()
+            .list_message_events(assistant_message_id)
+            .await?;
+        let message_for_task = store
+            .ai_chats()
+            .message_for_task(task_id)
+            .await?
+            .expect("assistant message should be linked to task");
+
+        assert_eq!(created.title, "Storage check");
+        assert_eq!(user.role, AiChatMessageRole::User);
+        assert_eq!(assistant.task_id, Some(task_id));
+        assert_eq!(appended.content, "收到");
+        assert_eq!(recorded.kind, AiChatEventKind::ToolResult);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(events.len(), 1);
+        assert_eq!(message_events[0].message_id, assistant_message_id);
+        assert_eq!(message_for_task.id, assistant_message_id);
+        assert!(!serde_json::to_string(&messages)?.contains(secret));
+        assert!(!serde_json::to_string(&events)?.contains(secret));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn creates_website_and_maps_protocol_fields() -> anyhow::Result<()> {
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
@@ -3925,6 +4506,69 @@ mod tests {
             enabled,
             created_at: Utc::now().into(),
             updated_at: Utc::now().into(),
+        }
+    }
+
+    fn ai_conversation_model(
+        id: Uuid,
+        title: &str,
+        created_by: &str,
+        updated_at: DateTime<Utc>,
+    ) -> entities::ai_conversations::Model {
+        entities::ai_conversations::Model {
+            id,
+            title: title.to_string(),
+            created_by: created_by.to_string(),
+            created_at: updated_at.into(),
+            updated_at: updated_at.into(),
+        }
+    }
+
+    fn ai_chat_message_model(
+        id: Uuid,
+        conversation_id: Uuid,
+        role: AiChatMessageRole,
+        status: AiChatMessageStatus,
+        content: &str,
+        task_id: Option<Uuid>,
+        host_id: Option<Uuid>,
+        ai_provider_id: Option<Uuid>,
+        model: Option<&str>,
+        created_at: DateTime<Utc>,
+    ) -> entities::ai_chat_messages::Model {
+        entities::ai_chat_messages::Model {
+            id,
+            conversation_id,
+            role: serialize_ai_chat_message_role(role),
+            status: serialize_ai_chat_message_status(status),
+            content: content.to_string(),
+            task_id,
+            host_id,
+            ai_provider_id,
+            model: model.map(ToString::to_string),
+            metadata: json!({}),
+            created_at: created_at.into(),
+            updated_at: created_at.into(),
+        }
+    }
+
+    fn ai_chat_event_model(
+        id: Uuid,
+        conversation_id: Uuid,
+        message_id: Uuid,
+        kind: AiChatEventKind,
+        content: Option<&str>,
+        payload: Value,
+        created_at: DateTime<Utc>,
+    ) -> entities::ai_chat_events::Model {
+        entities::ai_chat_events::Model {
+            id,
+            conversation_id,
+            message_id,
+            kind: serialize_ai_chat_event_kind(kind),
+            content: content.map(ToString::to_string),
+            payload,
+            created_at: created_at.into(),
         }
     }
 

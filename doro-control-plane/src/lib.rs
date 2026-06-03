@@ -3,6 +3,7 @@ mod agent_grpc;
 mod agent_streams;
 mod agent_tools;
 mod auth;
+mod chat_streams;
 mod constants;
 mod error;
 mod logs;

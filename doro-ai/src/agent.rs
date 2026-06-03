@@ -1,6 +1,7 @@
 use crate::openai;
 use async_trait::async_trait;
 use doro_protocol::CapabilityRisk;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
@@ -110,9 +111,50 @@ pub struct AgentModelResponse {
     pub final_text: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentRunEvent {
+    TextDelta {
+        delta: String,
+    },
+    ToolCall {
+        call_id: String,
+        name: String,
+        arguments: Value,
+    },
+    ToolResult {
+        call_id: String,
+        name: String,
+        status: AgentToolResultStatus,
+        output: Value,
+    },
+}
+
+#[async_trait]
+pub trait AgentRunEventSink: Send + Sync {
+    async fn emit(&self, event: AgentRunEvent) -> Result<(), AgentError>;
+}
+
 #[async_trait]
 pub trait AgentModelProvider: Send + Sync {
     async fn respond(&self, request: AgentModelRequest) -> Result<AgentModelResponse, AgentError>;
+
+    async fn respond_stream(
+        &self,
+        request: AgentModelRequest,
+        sink: &dyn AgentRunEventSink,
+    ) -> Result<AgentModelResponse, AgentError> {
+        let response = self.respond(request).await?;
+        if let Some(text) = response.final_text.as_ref()
+            && !text.trim().is_empty()
+        {
+            sink.emit(AgentRunEvent::TextDelta {
+                delta: text.clone(),
+            })
+            .await?;
+        }
+        Ok(response)
+    }
 }
 
 #[async_trait]
@@ -263,6 +305,116 @@ impl AgentRunner {
 
         Err(AgentError::MaxTurns(self.config.max_turns))
     }
+
+    pub async fn run_streaming(
+        &self,
+        request: AgentRunRequest,
+        executor: &dyn AgentToolExecutor,
+        sink: &dyn AgentRunEventSink,
+    ) -> Result<AgentRunOutcome, AgentError> {
+        let mut input = vec![user_input_item(&request.prompt, &request.context)];
+        let tools_by_name = self
+            .tools
+            .iter()
+            .map(|tool| (tool.name.as_str(), tool))
+            .collect::<HashMap<_, _>>();
+        let mut transcript = Vec::new();
+        let mut tool_call_count = 0_u32;
+
+        for _ in 0..self.config.max_turns {
+            let response = self
+                .provider
+                .respond_stream(
+                    AgentModelRequest {
+                        instructions: self.instructions.clone(),
+                        input: input.clone(),
+                        tools: self.tools.clone(),
+                    },
+                    sink,
+                )
+                .await?;
+
+            if let Some(text) = response.final_text.clone()
+                && !text.trim().is_empty()
+            {
+                transcript.push(AgentTranscriptItem::ModelText { text });
+            }
+            input.extend(response.raw_output);
+
+            if response.tool_calls.is_empty() {
+                let summary = response
+                    .final_text
+                    .filter(|text| !text.trim().is_empty())
+                    .unwrap_or_else(|| "AI agent completed without additional output".to_string());
+                return Ok(AgentRunOutcome {
+                    status: AgentRunStatus::Succeeded,
+                    summary,
+                    transcript,
+                });
+            }
+
+            for call in response.tool_calls {
+                tool_call_count += 1;
+                if tool_call_count > self.config.max_tool_calls {
+                    return Err(AgentError::MaxToolCalls(self.config.max_tool_calls));
+                }
+
+                sink.emit(AgentRunEvent::ToolCall {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                })
+                .await?;
+                transcript.push(AgentTranscriptItem::ToolCall {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.clone(),
+                });
+
+                let Some(definition) = tools_by_name.get(call.name.as_str()).copied() else {
+                    let result = AgentToolResult {
+                        status: AgentToolResultStatus::Failed,
+                        output: json!({
+                            "error": format!("unknown Doro agent tool: {}", call.name),
+                        }),
+                    };
+                    sink.emit(AgentRunEvent::ToolResult {
+                        call_id: call.call_id.clone(),
+                        name: call.name.clone(),
+                        status: result.status,
+                        output: result.output.clone(),
+                    })
+                    .await?;
+                    input.push(function_call_output(&call.call_id, &result.output));
+                    transcript.push(AgentTranscriptItem::ToolResult {
+                        call_id: call.call_id,
+                        name: call.name,
+                        status: result.status,
+                        output: result.output,
+                    });
+                    continue;
+                };
+
+                let result = executor.execute(call.clone(), definition).await?;
+                sink.emit(AgentRunEvent::ToolResult {
+                    call_id: call.call_id.clone(),
+                    name: call.name.clone(),
+                    status: result.status,
+                    output: result.output.clone(),
+                })
+                .await?;
+                input.push(function_call_output(&call.call_id, &result.output));
+                transcript.push(AgentTranscriptItem::ToolResult {
+                    call_id: call.call_id,
+                    name: call.name,
+                    status: result.status,
+                    output: result.output,
+                });
+            }
+        }
+
+        Err(AgentError::MaxTurns(self.config.max_turns))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +462,97 @@ impl AgentModelProvider for OpenAiAgentProvider {
             .map_err(|error| AgentError::Model(error.to_string()))?;
 
         Ok(model_response_from_openai(response))
+    }
+
+    async fn respond_stream(
+        &self,
+        request: AgentModelRequest,
+        sink: &dyn AgentRunEventSink,
+    ) -> Result<AgentModelResponse, AgentError> {
+        let mut response_request =
+            openai::ResponseRequest::items(self.model.clone(), request.input);
+        response_request.instructions = Some(request.instructions);
+        response_request
+            .extra
+            .insert("tools".to_string(), tools_to_openai(&request.tools));
+        response_request
+            .extra
+            .insert("tool_choice".to_string(), Value::String("auto".to_string()));
+
+        let mut stream = self
+            .client
+            .stream_response(response_request)
+            .await
+            .map_err(|error| AgentError::Model(error.to_string()))?;
+        let mut raw_output = Vec::new();
+        let mut tool_calls = Vec::new();
+        let mut final_text = String::new();
+
+        while let Some(event) = stream.next().await {
+            match event.map_err(|error| AgentError::Model(error.to_string()))? {
+                openai::OpenAiStreamEvent::Response(event) => {
+                    if event.event_type == "response.output_text.delta" {
+                        if let Some(delta) = event.payload.get("delta").and_then(Value::as_str)
+                            && !delta.is_empty()
+                        {
+                            final_text.push_str(delta);
+                            sink.emit(AgentRunEvent::TextDelta {
+                                delta: delta.to_string(),
+                            })
+                            .await?;
+                        }
+                    }
+
+                    if event.event_type == "response.output_item.done"
+                        && let Some(item) = event.payload.get("item")
+                    {
+                        raw_output.push(item.clone());
+                        if let Some(call) = tool_call_from_openai_value(item) {
+                            tool_calls.push(call);
+                        }
+                    }
+
+                    if event.event_type == "response.completed"
+                        && let Some(response) = event.payload.get("response")
+                    {
+                        if let Ok(response) =
+                            serde_json::from_value::<openai::ResponseObject>(response.clone())
+                        {
+                            let parsed = model_response_from_openai(response);
+                            if final_text.is_empty()
+                                && let Some(text) = parsed.final_text.as_ref()
+                            {
+                                final_text.push_str(text);
+                                if !text.trim().is_empty() {
+                                    sink.emit(AgentRunEvent::TextDelta {
+                                        delta: text.clone(),
+                                    })
+                                    .await?;
+                                }
+                            }
+                            if raw_output.is_empty() {
+                                raw_output = parsed.raw_output;
+                            }
+                            if tool_calls.is_empty() {
+                                tool_calls = parsed.tool_calls;
+                            }
+                        }
+                    }
+                }
+                openai::OpenAiStreamEvent::Done => break,
+                openai::OpenAiStreamEvent::Chat(_) => {}
+            }
+        }
+
+        Ok(AgentModelResponse {
+            raw_output,
+            tool_calls,
+            final_text: if final_text.trim().is_empty() {
+                None
+            } else {
+                Some(final_text)
+            },
+        })
     }
 }
 
@@ -414,6 +657,30 @@ fn tool_call_from_openai_item(item: &openai::ResponseOutputItem) -> Option<Agent
     })
 }
 
+fn tool_call_from_openai_value(item: &Value) -> Option<AgentToolCall> {
+    if item.get("type").and_then(Value::as_str) != Some("function_call") {
+        return None;
+    }
+    let name = item.get("name").and_then(Value::as_str)?.to_string();
+    let call_id = item
+        .get("call_id")
+        .or_else(|| item.get("id"))
+        .and_then(Value::as_str)?
+        .to_string();
+    let arguments = match item.get("arguments") {
+        Some(Value::String(arguments)) => {
+            serde_json::from_str(arguments).unwrap_or_else(|_| json!({ "raw": arguments }))
+        }
+        Some(value) => value.clone(),
+        None => json!({}),
+    };
+    Some(AgentToolCall {
+        call_id,
+        name,
+        arguments,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,6 +722,22 @@ mod tests {
                 status: AgentToolResultStatus::Succeeded,
                 output: json!({ "tool": call.name, "arguments": call.arguments }),
             })
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct RecordingSink {
+        events: Mutex<Vec<AgentRunEvent>>,
+    }
+
+    #[async_trait]
+    impl AgentRunEventSink for RecordingSink {
+        async fn emit(&self, event: AgentRunEvent) -> Result<(), AgentError> {
+            self.events
+                .lock()
+                .map_err(|_| AgentError::Model("lock".into()))?
+                .push(event);
+            Ok(())
         }
     }
 
@@ -527,6 +810,65 @@ mod tests {
             result.transcript.first(),
             Some(AgentTranscriptItem::ToolCall { name, .. }) if name == "host_metrics"
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn streaming_runner_emits_tool_and_text_events() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = ScriptedProvider {
+            responses: Mutex::new(vec![
+                AgentModelResponse {
+                    raw_output: vec![json!({"type": "function_call", "name": "host_metrics"})],
+                    tool_calls: vec![AgentToolCall {
+                        call_id: "call-1".to_string(),
+                        name: "host_metrics".to_string(),
+                        arguments: json!({}),
+                    }],
+                    final_text: None,
+                },
+                AgentModelResponse {
+                    raw_output: Vec::new(),
+                    tool_calls: Vec::new(),
+                    final_text: Some("metrics collected".to_string()),
+                },
+            ]),
+        };
+        let tools = vec![AgentToolDefinition {
+            name: "host_metrics".to_string(),
+            description: "Read metrics".to_string(),
+            risk: CapabilityRisk::Low,
+            parameters: json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        }];
+        let runner = AgentRunner::new(Arc::new(provider), tools, AgentRunnerConfig::default());
+        let sink = RecordingSink::default();
+
+        let result = runner
+            .run_streaming(
+                AgentRunRequest {
+                    prompt: "check host".to_string(),
+                    context: json!({}),
+                },
+                &EchoExecutor,
+                &sink,
+            )
+            .await?;
+
+        let events = sink.events.lock().map_err(|_| "lock")?;
+        assert_eq!(result.summary, "metrics collected");
+        assert!(matches!(
+            events.first(),
+            Some(AgentRunEvent::ToolCall { name, .. }) if name == "host_metrics"
+        ));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentRunEvent::ToolResult { name, status, .. }
+                if name == "host_metrics" && *status == AgentToolResultStatus::Succeeded
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AgentRunEvent::TextDelta { delta } if delta == "metrics collected"
+        )));
         Ok(())
     }
 }

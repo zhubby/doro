@@ -8,6 +8,7 @@ export type NavigationItem = {
     | "approvals"
     | "apps"
     | "ai"
+    | "models"
     | "terminal"
     | "files"
     | "websites"

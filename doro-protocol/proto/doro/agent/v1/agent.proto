@@ -58,6 +58,9 @@ message AgentEvent {
     AgentTaskResultEvent agent_task_result = 19;
     AgentToolApprovalRequestEvent agent_tool_approval_request = 20;
     WebsiteRoutesAppliedEvent website_routes_applied = 21;
+    AgentChatTextDeltaEvent agent_chat_text_delta = 22;
+    AgentChatToolEvent agent_chat_tool = 23;
+    AgentChatTurnResultEvent agent_chat_turn_result = 24;
   }
 }
 
@@ -82,6 +85,7 @@ message ControlPlaneCommand {
     RunAgentTaskCommand run_agent_task = 17;
     AgentToolApprovalDecisionCommand agent_tool_approval_decision = 18;
     ApplyWebsiteRoutesCommand apply_website_routes = 19;
+    RunAgentChatTurnCommand run_agent_chat_turn = 20;
   }
 }
 
@@ -136,6 +140,16 @@ message RunAgentTaskCommand {
   string prompt = 4;
   string template_json = 5;
   AgentAiProviderConfig ai_provider = 6;
+}
+
+message RunAgentChatTurnCommand {
+  string command_id = 1;
+  string conversation_id = 2;
+  string user_message_id = 3;
+  string assistant_message_id = 4;
+  string task_id = 5;
+  string messages_json = 6;
+  AgentAiProviderConfig ai_provider = 7;
 }
 
 message AgentAiProviderConfig {
@@ -343,6 +357,37 @@ message AgentToolApprovalRequestEvent {
   string risk = 6;
   string summary = 7;
   string arguments_json = 8;
+}
+
+message AgentChatTextDeltaEvent {
+  string command_id = 1;
+  string conversation_id = 2;
+  string message_id = 3;
+  string task_id = 4;
+  string delta = 5;
+}
+
+message AgentChatToolEvent {
+  string command_id = 1;
+  string conversation_id = 2;
+  string message_id = 3;
+  string task_id = 4;
+  string kind = 5;
+  string tool_call_id = 6;
+  string tool_name = 7;
+  string status = 8;
+  string content = 9;
+  string payload_json = 10;
+}
+
+message AgentChatTurnResultEvent {
+  string command_id = 1;
+  string conversation_id = 2;
+  string message_id = 3;
+  string task_id = 4;
+  CommandStatus status = 5;
+  string message = 6;
+  string result_json = 7;
 }
 
 message TerminalOutputEvent {

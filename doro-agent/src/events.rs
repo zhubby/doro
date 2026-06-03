@@ -208,6 +208,36 @@ impl Agent {
         )
     }
 
+    pub fn agent_chat_text_delta_event(
+        &self,
+        agent_id: Uuid,
+        delta: grpc::AgentChatTextDeltaEvent,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::AgentChatTextDelta(delta),
+        )
+    }
+
+    pub fn agent_chat_tool_event(
+        &self,
+        agent_id: Uuid,
+        tool: grpc::AgentChatToolEvent,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(agent_id, grpc::agent_event::Event::AgentChatTool(tool))
+    }
+
+    pub fn agent_chat_turn_result_event(
+        &self,
+        agent_id: Uuid,
+        result: grpc::AgentChatTurnResultEvent,
+    ) -> grpc::AgentEvent {
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::AgentChatTurnResult(result),
+        )
+    }
+
     pub fn collector_error_event(
         &self,
         agent_id: Uuid,

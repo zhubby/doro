@@ -36,7 +36,11 @@
     },
     "ai": {
       "label": "AI",
-      "description": "Manage agent runtime environments and task capabilities."
+      "description": "Chat with agents using streamed model and tool responses."
+    },
+    "models": {
+      "label": "Models",
+      "description": "Manage model providers, default models, and API keys."
     },
     "terminal": {
       "label": "Terminal",

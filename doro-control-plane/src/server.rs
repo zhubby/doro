@@ -1,9 +1,10 @@
 use crate::agent_grpc::GrpcAgentService;
 use crate::agent_streams::AgentStreamRegistry;
 use crate::auth::AuthService;
+use crate::chat_streams::ChatStreamHub;
 use crate::logs::LogHub;
 use crate::prelude::*;
-use crate::routes::app_with_auth_streams_and_websites;
+use crate::routes::app_with_auth_streams_logs_and_chat;
 use crate::routes::scheduled_tasks::run_scheduled_task_scheduler;
 use crate::startup::print_control_plane_startup_summary;
 use std::path::Path;
@@ -49,12 +50,15 @@ async fn run_inner(
     });
 
     let agent_streams = AgentStreamRegistry::default();
+    let chat_streams = ChatStreamHub::default();
     let shutdown_streams = agent_streams.clone();
     let console_store = store.clone();
     let console_streams = agent_streams.clone();
+    let console_chat_streams = chat_streams.clone();
     let console_logs = logs.clone();
     let agent_store = store.clone();
     let grpc_streams = agent_streams.clone();
+    let grpc_chat_streams = chat_streams.clone();
     let agent_logs = logs.clone();
     let console_shutdown = shutdown_rx.clone();
     let stream_shutdown = shutdown_rx.clone();
@@ -74,7 +78,13 @@ async fn run_inner(
     let console_server = async move {
         axum::serve(
             console_listener,
-            app_with_auth_streams_and_websites(console_store, auth, console_streams, console_logs),
+            app_with_auth_streams_logs_and_chat(
+                console_store,
+                auth,
+                console_streams,
+                console_logs,
+                console_chat_streams,
+            ),
         )
         .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
         .await
@@ -85,6 +95,7 @@ async fn run_inner(
             .add_service(AgentControlPlaneServer::new(GrpcAgentService {
                 store: agent_store,
                 agent_streams: grpc_streams,
+                chat_streams: grpc_chat_streams,
                 logs: agent_logs,
                 shutdown_rx: agent_shutdown.clone(),
             }))

@@ -36,7 +36,11 @@
     },
     "ai": {
       "label": "AI",
-      "description": "管理智能体运行环境和任务能力。"
+      "description": "与 Agent 聊天，流式执行模型和工具请求。"
+    },
+    "models": {
+      "label": "模型",
+      "description": "管理模型供应商、默认模型和 API Key。"
     },
     "terminal": {
       "label": "终端",

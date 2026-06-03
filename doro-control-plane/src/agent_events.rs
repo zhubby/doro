@@ -178,6 +178,42 @@ pub(crate) fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(Str
                 "arguments": parse_event_payload(&request.arguments_json),
             }),
         )),
+        grpc::agent_event::Event::AgentChatTextDelta(delta) => Some((
+            "agent_chat.text_delta".to_string(),
+            serde_json::json!({
+                "command_id": delta.command_id,
+                "conversation_id": delta.conversation_id,
+                "message_id": delta.message_id,
+                "task_id": delta.task_id,
+                "bytes": delta.delta.len(),
+            }),
+        )),
+        grpc::agent_event::Event::AgentChatTool(tool) => Some((
+            "agent_chat.tool".to_string(),
+            serde_json::json!({
+                "command_id": tool.command_id,
+                "conversation_id": tool.conversation_id,
+                "message_id": tool.message_id,
+                "task_id": tool.task_id,
+                "kind": tool.kind,
+                "tool_call_id": tool.tool_call_id,
+                "tool_name": tool.tool_name,
+                "status": tool.status,
+                "payload": parse_event_payload(&tool.payload_json),
+            }),
+        )),
+        grpc::agent_event::Event::AgentChatTurnResult(result) => Some((
+            "agent_chat.turn_result".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "conversation_id": result.conversation_id,
+                "message_id": result.message_id,
+                "task_id": result.task_id,
+                "status": result.status,
+                "message": result.message,
+                "result": parse_event_payload(&result.result_json),
+            }),
+        )),
     }
 }
 

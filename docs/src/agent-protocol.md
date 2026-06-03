@@ -80,6 +80,8 @@ Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunT
 
 Manual UI-created AgentRun tasks can include an `AgentAiProviderConfig` inside `RunAgentTaskCommand`. This command-scoped config is OpenAI Responses compatible and contains the selected provider name, base URL, model, timeout, and API key needed for that single dispatch. The Agent prefers the command-scoped provider when present and falls back to its local `[ai]` config when it is absent. The control plane must not persist the API key in task metadata, task step payloads, logs, or agent events.
 
+AI chat uses the same Agent stream and safety model. The UI creates a durable conversation and a background `Task` for each user turn. The control plane sends `RunAgentChatTurnCommand` with conversation/message IDs, the serialized chat history, and a command-scoped `AgentAiProviderConfig` whose model may override the provider default for that turn. The Agent runs the local Doro AI runner with OpenAI Responses streaming, emits `agent_chat.text_delta` for browser streaming, `agent_chat.tool` for tool calls and results, and `agent_chat.turn_result` when the turn finishes. Text deltas are applied to the assistant message and streamed to the browser, but they are not stored as per-token `ai_chat_events`.
+
 AI tool approval is carried over the same stream. When the Agent runner needs a high-risk tool such as shell execution or file mutation, it emits `agent_tool.approval_requested`. The control plane appends a dynamic task step, creates an approval request, and sends `AgentToolApprovalDecisionCommand` back to the Agent after an operator approves or denies the request.
 
 Interactive terminal sessions use the same agent stream plus a browser WebSocket bridge. The UI connects to `/api/v1/terminal/:host_id/ws`, the control plane sends `OpenTerminalSessionCommand`, browser keypresses become `TerminalInputCommand`, terminal resizes become `ResizeTerminalSessionCommand`, and agent PTY output returns as `TerminalOutputEvent`. Closing the browser socket sends `CloseTerminalSessionCommand`, and the agent confirms with `TerminalSessionClosedEvent`.
@@ -99,6 +101,9 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `agent_task.progress`: progress from the local AI runner, including high-risk tool step status changes.
 - `agent_task.result`: final AI task summary and transcript payload.
 - `agent_tool.approval_requested`: high-risk AI tool request converted by the control plane into a normal approval.
+- `agent_chat.text_delta`: streamed assistant text for one persisted chat message. The control plane updates the message content and broadcasts it over SSE without writing every token to `ai_chat_events`.
+- `agent_chat.tool`: recoverable chat event for tool calls and tool results.
+- `agent_chat.turn_result`: final chat turn status. The control plane marks the assistant message and background task succeeded or failed.
 - `command_result`: generic command result, including the final result for `RunAgentTaskCommand`.
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
@@ -116,6 +121,7 @@ Agent protocol traffic is persisted by `doro-store`:
 - `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
 - `virtual_machine.snapshot` payloads update current `virtual_machines` rows by host, provider, and VM reference.
 - `website.routes_applied` payloads are stored as audit events. Website desired state remains in `websites`; route application does not create a separate runtime state table.
+- AI chat history is stored in `ai_conversations`, `ai_chat_messages`, and `ai_chat_events`. Messages keep visible content and the task/provider/model IDs used by each turn. Events keep tool calls, tool results, approval waits, completion, and errors. Provider API keys remain command-scoped secrets and must not be persisted in chat rows or event payloads.
 
 Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
 
@@ -133,6 +139,8 @@ The `agents` table is the durable identity table. The initial status values are 
 Scheduled tasks are owned by the control plane. A scheduled script task requires approval when it is created or re-enabled; once approved, each trigger is automatically dispatched to every online Agent whose host labels match the task selector and whose capabilities include the required capability. Every trigger creates task and run records for audit.
 
 Natural-language Agent tasks are also owned by the control plane. A UI request creates a `Task` with an `AgentRun` step for one target host and one enabled OpenAI-compatible model provider. The control plane validates the online Agent, declared capability, provider status, and API key presence before dispatch. The Agent may inspect local state directly, but high-risk tools pause at approval before execution.
+
+AI chat is a persistent conversation UX over the same natural-language Agent capability. Each user message creates a background task so approvals, task runs, and audit records remain visible through the existing workflow model.
 
 ## Core Types
 
