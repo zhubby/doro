@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   createAiModelProvider,
   deleteAiModelProvider,
@@ -93,6 +94,13 @@ export function ModelsPage() {
   const [detailProvider, setDetailProvider] = useState<AiModelProvider | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useToastMessage(apiError, {
+    id: "models-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+  useToastMessage(notice, { id: "models-notice", kind: "success" });
 
   const providerRows = useMemo(
     () =>
@@ -228,17 +236,6 @@ export function ModelsPage() {
 
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-lg border border-primary/30 p-4 text-sm text-muted-foreground">
-          {notice}
-        </div>
-      ) : null}
-
       <PageSection
         title="模型供应商"
         description="配置 OpenAI Responses 兼容供应商，AI 聊天和 Agent 任务会按回合下发模型与密钥。"

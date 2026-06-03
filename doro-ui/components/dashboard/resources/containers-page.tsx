@@ -15,6 +15,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import { formatRelativeTime } from "@/lib/datetime";
 import type { Host, HostContainer } from "@/types/api";
 import type { ContainerResource, ResourceColumn, ResourceStatus } from "@/types/dashboard";
@@ -168,6 +169,16 @@ export function ContainersPage({
     onRefresh?.();
   };
 
+  useToastMessage(apiError, {
+    id: "containers-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+  useToastMessage(isRefreshing ? "正在刷新容器状态..." : null, {
+    id: "containers-refreshing",
+    kind: "info",
+  });
+
   return (
     <ResourceListPage
       title="容器"
@@ -247,17 +258,6 @@ export function ContainersPage({
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-      }
-      notice={
-        apiError ? (
-          <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-            控制平面暂不可用：{apiError}
-          </div>
-        ) : isRefreshing ? (
-          <div className="rounded-lg border p-4 text-sm text-muted-foreground">
-            正在刷新容器状态...
-          </div>
-        ) : null
       }
     />
   );

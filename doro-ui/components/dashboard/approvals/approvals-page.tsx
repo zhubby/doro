@@ -18,6 +18,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   approveApproval,
   createApproval,
@@ -146,6 +147,20 @@ export function ApprovalsPage({
   const [actionPending, setActionPending] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
+  useToastMessage(apiError, {
+    id: "approvals-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+  useToastMessage(createError ? `创建失败：${createError}` : null, {
+    id: "approvals-create-error",
+    kind: "error",
+  });
+  useToastMessage(actionError ? `操作失败：${actionError}` : null, {
+    id: "approvals-action-error",
+    kind: "error",
+  });
+
   async function handleCreateApproval() {
     setCreatePending(true);
     setCreateError(null);
@@ -207,11 +222,6 @@ export function ApprovalsPage({
 
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
       <PageSection>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -288,11 +298,6 @@ export function ApprovalsPage({
                     className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
                   />
                 </div>
-                {createError ? (
-                  <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-                    创建失败：{createError}
-                  </div>
-                ) : null}
               </div>
 
               <DialogFooter>
@@ -316,11 +321,6 @@ export function ApprovalsPage({
             </DialogContent>
           </Dialog>
         </div>
-        {actionError ? (
-          <div className="mb-4 rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-            操作失败：{actionError}
-          </div>
-        ) : null}
         <DataTable
           columns={approvalColumns}
           rows={approvals}

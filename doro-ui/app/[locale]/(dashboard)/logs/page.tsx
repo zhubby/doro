@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   getAgentLogs,
   getControlPlaneLogs,
@@ -30,7 +31,6 @@ type StreamState = "connecting" | "connected" | "closed" | "error";
 type LogViewerProps = {
   entries: RuntimeLogEntry[];
   state: StreamState;
-  error: string | null;
   emptyText: string;
 };
 
@@ -79,7 +79,7 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
-function LogViewer({ entries, state, error, emptyText }: LogViewerProps) {
+function LogViewer({ entries, state, emptyText }: LogViewerProps) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number | null>(null);
@@ -133,11 +133,6 @@ function LogViewer({ entries, state, error, emptyText }: LogViewerProps) {
           {streamLabel(state)}
         </Badge>
       </div>
-      {error ? (
-        <div className="border-b border-destructive/30 px-4 py-2 text-sm text-muted-foreground">
-          {error}
-        </div>
-      ) : null}
       <div
         className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-background p-3 text-foreground dark:bg-zinc-950 dark:text-zinc-100"
         ref={scrollRef}
@@ -190,6 +185,11 @@ export default function LogsRoute() {
     useState<StreamState>("connecting");
   const [agentState, setAgentState] = useState<StreamState>("closed");
   const [error, setError] = useState<string | null>(null);
+
+  useToastMessage(error, {
+    id: "logs-error",
+    kind: "error",
+  });
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId) ?? null,
@@ -364,7 +364,6 @@ export default function LogsRoute() {
           <LogViewer
             entries={controlPlaneLogs}
             state={controlPlaneState}
-            error={error}
             emptyText="暂无控制平面日志"
           />
         </TabsContent>
@@ -375,7 +374,6 @@ export default function LogsRoute() {
           <LogViewer
             entries={agentLogs}
             state={agentState}
-            error={error}
             emptyText={selectedHostId ? "暂无 Agent 日志" : "请选择 Agent"}
           />
         </TabsContent>

@@ -22,7 +22,6 @@ type ResourceListPageProps<T extends { id: string; status: ResourceStatus }> = {
   importLabel?: string;
   batchActions?: string[];
   rowActions?: string[];
-  notice?: ReactNode;
   filteredRows?: T[];
   toolbarRight?: ReactNode;
   showStatusChips?: boolean;
@@ -37,7 +36,6 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
   importLabel,
   batchActions = [],
   rowActions,
-  notice,
   filteredRows: controlledRows,
   toolbarRight,
   showStatusChips = true,
@@ -75,7 +73,6 @@ export function ResourceListPage<T extends { id: string; status: ResourceStatus 
 
   return (
     <PageContainer>
-      {notice}
       {showStatusChips ? (
         <PageSection contentClassName="space-y-4">
           <FilterChips

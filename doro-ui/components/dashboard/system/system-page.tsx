@@ -6,6 +6,7 @@ import { TrendPreview } from "@/components/dashboard/overview/trend-preview";
 import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { ToastMessage } from "@/components/ui/use-toast-message";
 import { formatRelativeTime } from "@/lib/datetime";
 import { systemInfo } from "@/lib/mock-data";
 import type { Host, MetricSnapshot } from "@/types/api";
@@ -276,11 +277,12 @@ export function SystemPage({ hosts = [], metric, apiError }: SystemPageProps) {
         </PageSection>
       }
     >
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
+      <ToastMessage
+        id="system-api-error"
+        kind="error"
+        message={apiError}
+        prefix="控制平面暂不可用："
+      />
       <PageSection
         title="资源概览"
         description="来自 Agent 单向上报的主机核心资源指标。"

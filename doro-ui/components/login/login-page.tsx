@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/card";
 import { useRouter } from "@/i18n/navigation";
 import { useSearchParams } from "next/navigation";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 
 export function LoginPage() {
   const router = useRouter();
@@ -27,6 +28,8 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  useToastMessage(error, { id: "login-error", kind: "error" });
 
   useEffect(() => {
     authStatus().then((result) => {
@@ -125,12 +128,6 @@ export function LoginPage() {
                 required
               />
             </label>
-
-            {error ? (
-              <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
 
             <Button className="w-full" type="submit" disabled={pending}>
               {pending

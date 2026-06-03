@@ -4,6 +4,7 @@ import { setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 
 import { LocaleHtmlSync } from "@/components/layout/locale-html-sync";
+import { AppToaster } from "@/components/ui/sonner";
 import { isAppLocale, locales } from "@/i18n/routing";
 import "../globals.css";
 
@@ -53,6 +54,7 @@ export default async function LocaleLayout({
         <NextIntlClientProvider>
           <LocaleHtmlSync locale={locale} />
           {children}
+          <AppToaster />
         </NextIntlClientProvider>
       </body>
     </html>

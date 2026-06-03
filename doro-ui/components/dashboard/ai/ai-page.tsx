@@ -21,6 +21,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import { Link } from "@/i18n/navigation";
 import {
   aiChatStreamUrl,
@@ -140,6 +141,11 @@ export function AiPage() {
     }
     return grouped;
   }, [events]);
+
+  useToastMessage(apiError, {
+    id: "ai-api-error",
+    kind: "error",
+  });
 
   async function loadShell() {
     setLoading(true);
@@ -434,12 +440,6 @@ export function AiPage() {
             className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
-
-        {apiError ? (
-          <div className="border-b border-destructive/30 px-4 py-3 text-sm text-muted-foreground">
-            控制平面暂不可用：{apiError}
-          </div>
-        ) : null}
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-muted/20 p-4">
           <div className="mx-auto flex max-w-5xl flex-col gap-4">

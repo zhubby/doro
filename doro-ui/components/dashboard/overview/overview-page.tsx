@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CircleGauge, HardDrive, Network, NotebookPen } from "lucide-react";
+import { CircleGauge, HardDrive, Network, NotebookPen } from "lucide-react";
 
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
 import type { TrendPoint } from "@/components/dashboard/overview/trend-preview";
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import { notes } from "@/lib/mock-data";
 import type {
   ApprovalRequest,
@@ -391,17 +392,14 @@ export function OverviewPage({
     },
   ];
 
+  useToastMessage(apiError, {
+    id: "overview-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+
   return (
     <PageContainer>
-      {apiError ? (
-        <Card className="border-destructive/30">
-          <CardContent className="flex items-center gap-3 pt-6 text-sm text-muted-foreground">
-            <AlertTriangle className="size-4 text-destructive" aria-hidden="true" />
-            控制平面暂不可用：{apiError}
-          </CardContent>
-        </Card>
-      ) : null}
-
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <div className="space-y-6 xl:col-start-1 xl:row-start-1">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">

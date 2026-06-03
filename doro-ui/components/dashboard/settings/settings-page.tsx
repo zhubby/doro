@@ -1,6 +1,7 @@
 import { PageSection } from "@/components/admin/page-section";
 import { SettingList } from "@/components/admin/setting-list";
 import { PageContainer } from "@/components/layout/page-container";
+import { ToastMessage } from "@/components/ui/use-toast-message";
 import type { SettingsResponse } from "@/types/api";
 import { useTranslations } from "next-intl";
 
@@ -49,11 +50,15 @@ export function SettingsPage({
 
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          {tCommon("errors.controlPlaneUnavailable", { error: apiError })}
-        </div>
-      ) : null}
+      <ToastMessage
+        id="settings-api-error"
+        kind="error"
+        message={
+          apiError
+            ? tCommon("errors.controlPlaneUnavailable", { error: apiError })
+            : null
+        }
+      />
       <PageSection>
         {controlPlaneSettings.length > 0 ? (
           <SettingList settings={controlPlaneSettings} />

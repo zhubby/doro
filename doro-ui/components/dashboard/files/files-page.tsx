@@ -21,6 +21,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   downloadFile,
   getHosts,
@@ -123,6 +124,11 @@ export function FilesPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
+
+  useToastMessage(error, {
+    id: "files-error",
+    kind: "error",
+  });
 
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId) ?? null,
@@ -468,11 +474,6 @@ export function FilesPage() {
               </Button>
             </div>
 
-            {error ? (
-              <div className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
-                {error}
-              </div>
-            ) : null}
             {searchMode ? (
               <div className="border-b px-4 py-2 text-xs text-muted-foreground">
                 搜索结果 · {items.length} 项

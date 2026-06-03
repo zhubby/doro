@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -58,9 +59,7 @@ export function AccountSettingsDialog({
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [profileStatus, setProfileStatus] = useState<FormStatus>("idle");
-  const [profileError, setProfileError] = useState<string | null>(null);
   const [passwordStatus, setPasswordStatus] = useState<FormStatus>("idle");
-  const [passwordError, setPasswordError] = useState<string | null>(null);
 
   const profilePending = profileStatus === "pending";
   const passwordPending = passwordStatus === "pending";
@@ -72,9 +71,7 @@ export function AccountSettingsDialog({
       setTab(initialTab);
       setDisplayName(user.display_name);
       setProfileStatus("idle");
-      setProfileError(null);
       setPasswordStatus("idle");
-      setPasswordError(null);
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -84,26 +81,25 @@ export function AccountSettingsDialog({
   async function submitProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setProfileStatus("pending");
-    setProfileError(null);
 
     const result = await updateCurrentUser({ display_name: displayName });
     if (!result.data) {
       setProfileStatus("idle");
-      setProfileError(result.error ?? t("errors.profileFailed"));
+      toast.error(result.error ?? t("errors.profileFailed"));
       return;
     }
 
     onUserChange(result.data.user);
     setDisplayName(result.data.user.display_name);
-    setProfileStatus("success");
+    setProfileStatus("idle");
+    toast.success(t("profileSaved"));
   }
 
   async function submitPassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPasswordError(null);
     if (newPassword !== confirmPassword) {
       setPasswordStatus("idle");
-      setPasswordError(t("errors.passwordMismatch"));
+      toast.error(t("errors.passwordMismatch"));
       return;
     }
 
@@ -114,7 +110,7 @@ export function AccountSettingsDialog({
     });
     if (result.error) {
       setPasswordStatus("idle");
-      setPasswordError(result.error ?? t("errors.passwordFailed"));
+      toast.error(result.error ?? t("errors.passwordFailed"));
       return;
     }
 
@@ -186,11 +182,6 @@ export function AccountSettingsDialog({
                   disabled={profilePending}
                 />
               </label>
-              <StatusMessage
-                status={profileStatus}
-                error={profileError}
-                success={t("profileSaved")}
-              />
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
@@ -235,7 +226,6 @@ export function AccountSettingsDialog({
               <p className="text-xs text-muted-foreground">
                 {t("passwordHelper")}
               </p>
-              <StatusMessage status={passwordStatus} error={passwordError} />
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
@@ -294,7 +284,7 @@ export function AccountSettingsDialog({
   );
 }
 
-type FormStatus = "idle" | "pending" | "success";
+type FormStatus = "idle" | "pending";
 
 function ReadOnlyField({ label, value }: { label: string; value: string }) {
   return (
@@ -337,32 +327,4 @@ function PasswordField({
       />
     </label>
   );
-}
-
-function StatusMessage({
-  status,
-  error,
-  success,
-}: {
-  status: FormStatus;
-  error: string | null;
-  success?: string;
-}) {
-  if (error) {
-    return (
-      <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive dark:text-red-300">
-        {error}
-      </div>
-    );
-  }
-
-  if (status === "success" && success) {
-    return (
-      <div className="rounded-md border border-emerald-500/30 p-3 text-sm text-emerald-700 dark:text-emerald-300">
-        {success}
-      </div>
-    );
-  }
-
-  return null;
 }

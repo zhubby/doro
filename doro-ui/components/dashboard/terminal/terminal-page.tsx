@@ -10,6 +10,7 @@ import { PageSection } from "@/components/admin/page-section";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import { getHosts, terminalSessionWebSocketUrl } from "@/lib/control-plane-api";
 import type { Host } from "@/types/api";
 
@@ -46,6 +47,11 @@ export function TerminalPage() {
   const [loading, setLoading] = useState(true);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useToastMessage(error, {
+    id: "terminal-error",
+    kind: "error",
+  });
 
   useEffect(() => {
     const terminal = new XTerm({
@@ -233,7 +239,6 @@ export function TerminalPage() {
               )}
               {connected ? tCommon("actions.disconnect") : tCommon("actions.connect")}
             </Button>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
           </div>
 
           <div className="min-w-0 overflow-hidden rounded-lg border bg-[#0b0f14]">

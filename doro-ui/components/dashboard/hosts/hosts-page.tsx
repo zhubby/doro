@@ -16,6 +16,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   createEnrollmentToken,
   deleteHost,
@@ -35,6 +36,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { toast } from "sonner";
 
 type HostsPageProps = {
   hosts: Host[];
@@ -294,7 +296,6 @@ export function HostsPage({
     useState<EnrollmentToken | null>(null);
   const [tokenPending, setTokenPending] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
-  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [agentControlPlaneUrl, setAgentControlPlaneUrl] = useState(
     DEFAULT_AGENT_CONTROL_PLANE_URL,
   );
@@ -318,6 +319,29 @@ export function HostsPage({
     "--hostname homelab-node",
     `--enrollment-token ${enrollmentToken?.token ?? "TOKEN_LOADING"}`,
   ].join(" \\\n  ");
+  const displayedEnrollmentCommand = tokenPending
+    ? "正在生成接入令牌..."
+    : enrollmentToken
+      ? enrollmentCommand
+      : "等待生成接入令牌";
+
+  useToastMessage(apiError, {
+    id: "hosts-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+  useToastMessage(tokenError ? `创建失败：${tokenError}` : null, {
+    id: "hosts-token-error",
+    kind: "error",
+  });
+  useToastMessage(editError ? `保存失败：${editError}` : null, {
+    id: "hosts-edit-error",
+    kind: "error",
+  });
+  useToastMessage(deleteError ? `删除失败：${deleteError}` : null, {
+    id: "hosts-delete-error",
+    kind: "error",
+  });
 
   useEffect(() => {
     setAgentControlPlaneUrl(inferredAgentControlPlaneUrl());
@@ -327,7 +351,6 @@ export function HostsPage({
     setTokenPending(true);
     setTokenError(null);
     setEnrollmentToken(null);
-    setCopiedCommand(null);
     const result = await createEnrollmentToken();
     setTokenPending(false);
 
@@ -344,20 +367,24 @@ export function HostsPage({
     if (!open) {
       setEnrollmentToken(null);
       setTokenError(null);
-      setCopiedCommand(null);
       return;
     }
 
     void generateHostToken();
   }
 
-  async function copyText(value: string, copiedKey: string) {
+  async function copyText(value: string) {
     if (!navigator.clipboard) {
+      toast.error("当前浏览器不支持复制");
       return;
     }
 
-    await navigator.clipboard.writeText(value);
-    setCopiedCommand(copiedKey);
+    try {
+      await navigator.clipboard.writeText(value);
+      toast.success("命令已复制");
+    } catch {
+      toast.error("复制失败");
+    }
   }
 
   async function handleDeleteHost() {
@@ -438,11 +465,6 @@ export function HostsPage({
 
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
       <div className="space-y-4">
         <div className="flex justify-end">
           <Dialog open={hostDialogOpen} onOpenChange={handleHostDialogOpen}>
@@ -487,26 +509,17 @@ export function HostsPage({
                         size="icon"
                         title="复制命令"
                         disabled={!enrollmentToken}
-                        onClick={() => void copyText(enrollmentCommand, "agent")}
+                        onClick={() => void copyText(enrollmentCommand)}
                       >
                         <Clipboard className="size-4" />
                       </Button>
                     </div>
                   </div>
-                  {tokenError ? (
-                    <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-                      创建失败：{tokenError}
-                    </div>
-                  ) : (
-                    <pre className="max-w-full overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
-                      <code className="block min-w-max">
-                        {tokenPending ? "正在生成接入令牌..." : enrollmentCommand}
-                      </code>
-                    </pre>
-                  )}
-                  {copiedCommand === "agent" ? (
-                    <p className="mt-2 text-xs text-muted-foreground">命令已复制</p>
-                  ) : null}
+                  <pre className="max-w-full overflow-x-auto rounded-md bg-background p-3 text-xs text-foreground">
+                    <code className="block min-w-max">
+                      {displayedEnrollmentCommand}
+                    </code>
+                  </pre>
                 </div>
 
                 <div className="min-w-0 rounded-md border bg-muted/30 p-4">
@@ -685,11 +698,6 @@ export function HostsPage({
               </Button>
             </div>
 
-            {editError ? (
-              <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-                保存失败：{editError}
-              </div>
-            ) : null}
           </div>
 
           <DialogFooter>
@@ -729,12 +737,6 @@ export function HostsPage({
             <p className="font-medium">{deleteTarget?.hostname}</p>
             <p className="mt-1 text-xs text-muted-foreground">{deleteTarget?.id}</p>
           </div>
-
-          {deleteError ? (
-            <div className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">
-              删除失败：{deleteError}
-            </div>
-          ) : null}
 
           <DialogFooter>
             <DialogClose asChild>

@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   createScheduledTask,
   deleteScheduledTask,
@@ -95,6 +96,8 @@ export function CronPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState<string | null>(null);
+
+  useToastMessage(error, { id: "cron-error", kind: "error" });
 
   async function load() {
     setLoading(true);
@@ -261,14 +264,6 @@ export function CronPage() {
 
   return (
     <PageContainer>
-      {error ? (
-        <PageSection>
-          <div className="rounded-md border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        </PageSection>
-      ) : null}
-
       <PageSection title={t("title")} description={t("description")} contentClassName="space-y-4">
         <Toolbar
           left={

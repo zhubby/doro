@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   createWebsite,
   deleteWebsite,
@@ -161,6 +162,13 @@ export function WebsitesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<WebsiteFormState>(emptyForm);
+
+  useToastMessage(apiError, {
+    id: "websites-api-error",
+    kind: "error",
+    prefix: "控制平面暂不可用：",
+  });
+  useToastMessage(notice, { id: "websites-notice", kind: "success" });
 
   const loadData = async () => {
     setLoading(true);
@@ -299,17 +307,6 @@ export function WebsitesPage() {
 
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          控制平面暂不可用：{apiError}
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="rounded-lg border border-primary/30 p-4 text-sm text-muted-foreground">
-          {notice}
-        </div>
-      ) : null}
-
       <PageSection
         title="网站"
         description="通过控制平面管理 Pingora 反向代理站点。"

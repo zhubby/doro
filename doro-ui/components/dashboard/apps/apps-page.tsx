@@ -22,6 +22,7 @@ import { PageContainer } from "@/components/layout/page-container";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { useToastMessage } from "@/components/ui/use-toast-message";
 import { cn } from "@/lib/utils";
 import type { ResourceStatus, VirtualMachineResource } from "@/types/dashboard";
 import type { Host, VirtualMachine } from "@/types/api";
@@ -187,14 +188,18 @@ export function AppsPage({ hosts = [], machines = [], apiError }: AppsPageProps)
     (machine) => machine.status === "warning",
   ).length;
 
+  useToastMessage(
+    apiError
+      ? tCommon("errors.controlPlaneUnavailable", { error: apiError })
+      : null,
+    {
+      id: "apps-api-error",
+      kind: "error",
+    },
+  );
+
   return (
     <PageContainer>
-      {apiError ? (
-        <div className="rounded-lg border border-destructive/30 p-4 text-sm text-muted-foreground">
-          {tCommon("errors.controlPlaneUnavailable", { error: apiError })}
-        </div>
-      ) : null}
-
       <div className="grid gap-4 md:grid-cols-3">
         {[
           {
