@@ -17,6 +17,7 @@ pub struct QemuPaths {
 pub fn build_qemu_argv(
     spec: &VmSpec,
     paths: &QemuPaths,
+    vnc_bind_host: &str,
     vnc_display: u16,
 ) -> Result<Vec<String>, VmProviderError> {
     if spec.cpu_cores == 0 {
@@ -53,7 +54,7 @@ pub fn build_qemu_argv(
         "-serial".to_string(),
         format!("file:{}", paths.serial_log.display()),
         "-vnc".to_string(),
-        format!("127.0.0.1:{vnc_display}"),
+        format!("{vnc_bind_host}:{vnc_display}"),
     ];
 
     for disk in &spec.disks {
@@ -131,6 +132,12 @@ pub fn qemu_binary(binary_dir: Option<&Path>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(binary))
 }
 
+pub fn qemu_img_binary(binary_dir: Option<&Path>) -> PathBuf {
+    binary_dir
+        .map(|dir| dir.join("qemu-img"))
+        .unwrap_or_else(|| PathBuf::from("qemu-img"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +189,7 @@ mod tests {
                 qga_socket: "/tmp/qga.sock".into(),
                 serial_log: "/tmp/serial.log".into(),
             },
+            "127.0.0.1",
             1,
         ) {
             Ok(args) => args,

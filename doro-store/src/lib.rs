@@ -2480,6 +2480,7 @@ impl VirtualMachineRepository<'_> {
         Ok(rows
             .into_iter()
             .map(|image| VirtualMachineImage {
+                host_id: image.host_id,
                 id: image.image_ref,
                 name: image.name,
                 path: image.path,
@@ -3842,7 +3843,7 @@ mod tests {
                 },
             )
             .await?
-            .expect("provider should update");
+            .ok_or_else(|| anyhow::anyhow!("provider should update"))?;
 
         assert_eq!(provider.name, "OpenAI Compatible");
         assert_eq!(provider.default_model, "gpt-4.1");
@@ -3873,7 +3874,7 @@ mod tests {
                 },
             )
             .await?
-            .expect("provider should update");
+            .ok_or_else(|| anyhow::anyhow!("provider should update"))?;
 
         assert_eq!(provider.api_key_hint.as_deref(), Some("...cret"));
         Ok(())
@@ -3894,7 +3895,7 @@ mod tests {
             .users()
             .update_display_name(id, "Home Operator".to_string(), Utc::now())
             .await?
-            .expect("user should update");
+            .ok_or_else(|| anyhow::anyhow!("user should update"))?;
 
         assert_eq!(user.display_name, "Home Operator");
         Ok(())
@@ -3916,7 +3917,7 @@ mod tests {
             .users()
             .update_password_hash_and_revoke_refresh_tokens(id, "new-hash".to_string(), Utc::now())
             .await?
-            .expect("user should update");
+            .ok_or_else(|| anyhow::anyhow!("user should update"))?;
 
         assert_eq!(user.password_hash, "new-hash");
         Ok(())
@@ -3950,7 +3951,7 @@ mod tests {
             .ai_model_providers()
             .get_secret(id)
             .await?
-            .expect("provider should exist");
+            .ok_or_else(|| anyhow::anyhow!("provider should exist"))?;
 
         assert_eq!(secret.api_key_secret, "sk-secret");
         assert!(secret.enabled);
@@ -4085,7 +4086,7 @@ mod tests {
             .ai_chats()
             .append_message_content(assistant_message_id, "收到", appended_at)
             .await?
-            .expect("assistant message should append");
+            .ok_or_else(|| anyhow::anyhow!("assistant message should append"))?;
         let recorded = store
             .ai_chats()
             .record_event(NewAiChatEvent {
@@ -4108,7 +4109,7 @@ mod tests {
             .ai_chats()
             .message_for_task(task_id)
             .await?
-            .expect("assistant message should be linked to task");
+            .ok_or_else(|| anyhow::anyhow!("assistant message should be linked to task"))?;
 
         assert_eq!(created.title, "Storage check");
         assert_eq!(user.role, AiChatMessageRole::User);
@@ -4524,6 +4525,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn ai_chat_message_model(
         id: Uuid,
         conversation_id: Uuid,

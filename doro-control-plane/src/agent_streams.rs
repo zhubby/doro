@@ -2,6 +2,7 @@ use crate::error::AppError;
 use crate::prelude::*;
 
 const DOCKER_COMMAND_TIMEOUT: Duration = Duration::from_secs(600);
+const VIRTUAL_MACHINE_COMMAND_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub(crate) fn with_file_command_id(
     command: grpc::control_plane_command::Command,
@@ -45,7 +46,7 @@ pub(crate) struct AgentStreamHandle {
 pub(crate) enum AgentCommandReply {
     ContainerSnapshot(grpc::ContainerSnapshotEvent),
     VirtualMachineSnapshot(grpc::VirtualMachineSnapshotEvent),
-    VirtualMachineCommandResult,
+    VirtualMachineCommandResult(grpc::VirtualMachineCommandResultEvent),
     DockerCommandResult(grpc::DockerCommandResultEvent),
     TerminalCommandResult(grpc::TerminalCommandResultEvent),
     FileCommandResult(grpc::FileCommandResultEvent),
@@ -174,7 +175,7 @@ impl AgentStreamRegistry {
                 Err(ContainerRefreshError::AgentFailed(result.message))
             }
             Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(_)))
-            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult)) => {
+            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult(_))) => {
                 Err(ContainerRefreshError::AgentFailed(
                     "unexpected virtual machine response".to_string(),
                 ))
@@ -306,7 +307,7 @@ impl AgentStreamRegistry {
                 Err(TerminalCommandError::AgentFailed(result.message))
             }
             Ok(Ok(AgentCommandReply::VirtualMachineSnapshot(_)))
-            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult)) => {
+            | Ok(Ok(AgentCommandReply::VirtualMachineCommandResult(_))) => {
                 Err(TerminalCommandError::AgentFailed(
                     "unexpected virtual machine response".to_string(),
                 ))
@@ -532,6 +533,63 @@ impl AgentStreamRegistry {
             Err(_) => {
                 handle.pending.lock().await.remove(&command_id);
                 Err(DockerCommandError::Timeout)
+            }
+        }
+    }
+
+    pub(crate) async fn run_virtual_machine_command(
+        &self,
+        host_id: Uuid,
+        command_json: String,
+    ) -> Result<grpc::VirtualMachineCommandResultEvent, VirtualMachineCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(VirtualMachineCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(
+                grpc::control_plane_command::Command::RunVirtualMachineCommand(
+                    grpc::RunVirtualMachineCommandCommand {
+                        command_id: command_id.clone(),
+                        command_json,
+                    },
+                ),
+            ),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(VirtualMachineCommandError::NoStream);
+        }
+
+        match tokio::time::timeout(VIRTUAL_MACHINE_COMMAND_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::VirtualMachineCommandResult(result))) => Ok(result),
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(VirtualMachineCommandError::AgentFailed(message))
+            }
+            Ok(Ok(AgentCommandReply::CommandResult(result))) => {
+                Err(VirtualMachineCommandError::AgentFailed(result.message))
+            }
+            Ok(Ok(_)) => Err(VirtualMachineCommandError::AgentFailed(
+                "unexpected agent response".to_string(),
+            )),
+            Ok(Err(_)) => Err(VirtualMachineCommandError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(VirtualMachineCommandError::Timeout)
             }
         }
     }
@@ -811,6 +869,13 @@ pub(crate) enum DockerCommandError {
     AgentFailed(String),
 }
 
+#[derive(Debug)]
+pub(crate) enum VirtualMachineCommandError {
+    NoStream,
+    Timeout,
+    AgentFailed(String),
+}
+
 pub(crate) fn terminal_command_error_message(error: TerminalCommandError) -> String {
     match error {
         TerminalCommandError::NoStream => "agent stream is not connected".to_string(),
@@ -838,6 +903,35 @@ pub(crate) fn docker_command_error_message(error: DockerCommandError) -> String 
         DockerCommandError::AgentFailed(message) => {
             format!("agent Docker command failed: {message}")
         }
+    }
+}
+
+pub(crate) fn virtual_machine_command_error_message(error: VirtualMachineCommandError) -> String {
+    match error {
+        VirtualMachineCommandError::NoStream => "agent stream is not connected".to_string(),
+        VirtualMachineCommandError::Timeout => {
+            "agent virtual machine command timed out".to_string()
+        }
+        VirtualMachineCommandError::AgentFailed(message) => {
+            format!("agent virtual machine command failed: {message}")
+        }
+    }
+}
+
+pub(crate) fn virtual_machine_command_app_error(error: VirtualMachineCommandError) -> AppError {
+    match error {
+        VirtualMachineCommandError::NoStream => AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent stream is not connected",
+        ),
+        VirtualMachineCommandError::Timeout => AppError::status(
+            StatusCode::GATEWAY_TIMEOUT,
+            "agent virtual machine command timed out",
+        ),
+        VirtualMachineCommandError::AgentFailed(message) => AppError::status(
+            StatusCode::BAD_GATEWAY,
+            format!("agent virtual machine command failed: {message}"),
+        ),
     }
 }
 
@@ -1076,6 +1170,61 @@ mod tests {
             Err(error) => panic!("execute task should complete: {error}"),
         };
         assert_eq!(result.message, "docker command succeeded");
+        assert_eq!(result.details_json, "{\"items\":[]}");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_virtual_machine_command_and_receives_result() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let execute = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .run_virtual_machine_command(
+                        host_id,
+                        "{\"command\":{\"action\":\"list_images\"}}".to_string(),
+                    )
+                    .await
+            }
+        });
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send virtual machine command"),
+        };
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::RunVirtualMachineCommand(_))
+        ));
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
+            .send(AgentCommandReply::VirtualMachineCommandResult(
+                grpc::VirtualMachineCommandResultEvent {
+                    command_id: command.command_id,
+                    status: grpc::CommandStatus::Succeeded as i32,
+                    message: "virtual machine command succeeded".to_string(),
+                    details_json: "{\"items\":[]}".to_string(),
+                },
+            ))
+            .is_err()
+        {
+            panic!("waiter should receive virtual machine result");
+        }
+
+        let result = match execute.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => panic!("virtual machine command should succeed: {error:?}"),
+            Err(error) => panic!("execute task should complete: {error}"),
+        };
+        assert_eq!(result.message, "virtual machine command succeeded");
         assert_eq!(result.details_json, "{\"items\":[]}");
     }
 

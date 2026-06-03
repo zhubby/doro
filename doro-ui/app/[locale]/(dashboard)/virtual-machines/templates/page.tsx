@@ -1,5 +1,5 @@
 import { VirtualMachinesPage } from "@/components/dashboard/virtual-machines/virtual-machines-page";
 
-export default function Apps() {
-  return <VirtualMachinesPage kind="instances" />;
+export default function VirtualMachineTemplates() {
+  return <VirtualMachinesPage kind="templates" />;
 }

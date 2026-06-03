@@ -1,6 +1,8 @@
 use crate::VmId;
 use crate::VmProviderError;
 use crate::VmRuntimeState;
+use crate::VmSnapshot;
+use std::cmp::Reverse;
 use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
@@ -26,6 +28,19 @@ impl FileStateStore {
 
     pub fn state_path(&self, id: &VmId) -> Result<PathBuf, VmProviderError> {
         Ok(self.vm_dir(id)?.join("state.json"))
+    }
+
+    pub fn disk_path(&self, id: &VmId) -> Result<PathBuf, VmProviderError> {
+        Ok(self.vm_dir(id)?.join("disk.qcow2"))
+    }
+
+    pub fn snapshots_dir(&self, id: &VmId) -> Result<PathBuf, VmProviderError> {
+        Ok(self.vm_dir(id)?.join("snapshots"))
+    }
+
+    pub fn snapshot_path(&self, id: &VmId, snapshot_ref: &str) -> Result<PathBuf, VmProviderError> {
+        validate_ref(snapshot_ref, "snapshot ref")?;
+        Ok(self.snapshots_dir(id)?.join(format!("{snapshot_ref}.json")))
     }
 
     pub fn list(&self) -> Result<Vec<VmRuntimeState>, VmProviderError> {
@@ -69,6 +84,39 @@ impl FileStateStore {
         Ok(())
     }
 
+    pub fn snapshots(&self, id: &VmId) -> Result<Vec<VmSnapshot>, VmProviderError> {
+        let dir = self.snapshots_dir(id)?;
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut snapshots: Vec<VmSnapshot> = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let raw = fs::read_to_string(path)?;
+            snapshots.push(serde_json::from_str(&raw)?);
+        }
+        snapshots.sort_by_key(|snapshot| Reverse(snapshot.created_at));
+        Ok(snapshots)
+    }
+
+    pub fn save_snapshot(&self, snapshot: &VmSnapshot) -> Result<(), VmProviderError> {
+        let dir = self.snapshots_dir(&snapshot.vm_id)?;
+        fs::create_dir_all(&dir)?;
+        fs::write(
+            self.snapshot_path(&snapshot.vm_id, &snapshot.snapshot_ref)?,
+            serde_json::to_string_pretty(snapshot)?.as_bytes(),
+        )?;
+        Ok(())
+    }
+
     pub fn delete(&self, id: &VmId) -> Result<(), VmProviderError> {
         let dir = self.vm_dir(id)?;
         if dir.exists() {
@@ -79,14 +127,18 @@ impl FileStateStore {
 }
 
 fn validate_id(id: &VmId) -> Result<(), VmProviderError> {
-    if id.0.is_empty()
-        || id.0.chars().any(|character| {
+    validate_ref(&id.0, "vm id")
+}
+
+fn validate_ref(value: &str, label: &str) -> Result<(), VmProviderError> {
+    if value.is_empty()
+        || value.chars().any(|character| {
             !(character.is_ascii_alphanumeric() || character == '-' || character == '_')
         })
     {
-        return Err(VmProviderError::InvalidRequest(
-            "vm id may only contain ascii letters, numbers, dashes, and underscores".to_string(),
-        ));
+        return Err(VmProviderError::InvalidRequest(format!(
+            "{label} may only contain ascii letters, numbers, dashes, and underscores"
+        )));
     }
     Ok(())
 }

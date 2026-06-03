@@ -6,14 +6,17 @@ import {
   Container,
   FolderTree,
   Home,
+  Images,
   Layers3,
   MonitorCheck,
+  MonitorPlay,
   Network,
   ScrollText,
   Server,
   Settings,
   ShipWheel,
   ShieldCheck,
+  SquareStack,
   Terminal,
   Waypoints,
   Zap,
@@ -43,10 +46,31 @@ export const navigation: NavigationItem[] = [
     icon: ShieldCheck,
   },
   {
-    id: "apps",
-    href: "/apps",
+    id: "virtualMachines",
+    href: "/virtual-machines/instances",
     icon: AppWindow,
-    count: 4,
+    children: [
+      {
+        id: "virtualMachineInstances",
+        href: "/virtual-machines/instances",
+        icon: MonitorPlay,
+      },
+      {
+        id: "virtualMachineImages",
+        href: "/virtual-machines/images",
+        icon: Images,
+      },
+      {
+        id: "virtualMachineSnapshots",
+        href: "/virtual-machines/snapshots",
+        icon: SquareStack,
+      },
+      {
+        id: "virtualMachineTemplates",
+        href: "/virtual-machines/templates",
+        icon: Layers3,
+      },
+    ],
   },
   {
     id: "ai",
@@ -124,6 +148,11 @@ export const navigation: NavigationItem[] = [
 ];
 
 export function getNavigationItem(pathname: string) {
+  if (pathname === "/apps") {
+    return navigation
+      .flatMap((item) => [item, ...(item.children ?? [])])
+      .find((item) => item.id === "virtualMachines") ?? navigation[0];
+  }
   return (
     navigation
       .flatMap((item) => [item, ...(item.children ?? [])])

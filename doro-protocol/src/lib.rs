@@ -601,6 +601,7 @@ pub struct VirtualMachineDisk {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "VirtualMachineImage.ts")]
 pub struct VirtualMachineImage {
+    pub host_id: Option<Uuid>,
     pub id: String,
     pub name: String,
     pub path: String,
@@ -661,6 +662,7 @@ pub struct CreateVirtualMachineRequest {
     pub disk_gb: u32,
     pub networks: Vec<VirtualMachineNetwork>,
     pub cloud_init: Value,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -680,6 +682,7 @@ pub struct VirtualMachineActionResponse {
 pub struct CreateVirtualMachineSnapshotRequest {
     pub name: String,
     pub description: Option<String>,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]

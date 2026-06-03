@@ -388,6 +388,7 @@ async fn conversation_response(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_ai_chat_turn(
     state: AppState,
     host_id: Uuid,

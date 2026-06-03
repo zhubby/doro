@@ -131,6 +131,7 @@ pub struct VmRuntimeState {
 pub struct VmSnapshot {
     pub id: Uuid,
     pub vm_id: VmId,
+    pub snapshot_ref: String,
     pub name: String,
     pub description: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -161,6 +162,11 @@ pub struct VmCommandResult {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum VmCommand {
+    Probe,
+    ListImages,
+    ListSnapshots {
+        id: VmId,
+    },
     Create {
         spec: Box<VmSpec>,
     },

@@ -30,9 +30,25 @@
       "label": "审批",
       "description": "处理高风险主机操作和 AI 计划审批。"
     },
-    "apps": {
+    "virtualMachines": {
       "label": "虚拟机",
-      "description": "管理虚拟机生命周期、镜像、宿主机和资源分配。"
+      "description": "管理 QEMU 虚拟机实例、镜像、快照和模板。"
+    },
+    "virtualMachineInstances": {
+      "label": "实例",
+      "description": "管理虚拟机生命周期、控制台和资源分配。"
+    },
+    "virtualMachineImages": {
+      "label": "镜像",
+      "description": "查看各 Agent 本地 QEMU 镜像缓存。"
+    },
+    "virtualMachineSnapshots": {
+      "label": "快照",
+      "description": "查看虚拟机快照并创建新的审批任务。"
+    },
+    "virtualMachineTemplates": {
+      "label": "模板",
+      "description": "查看创建虚拟机时可套用的资源模板。"
     },
     "ai": {
       "label": "AI",

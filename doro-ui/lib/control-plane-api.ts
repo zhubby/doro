@@ -684,8 +684,10 @@ export async function virtualMachineAction(
   );
 }
 
-export async function getVirtualMachineImages() {
-  return getJson<ListVirtualMachineImagesResponse>("/api/v1/virtual-machines/images");
+export async function getVirtualMachineImages(hostId?: string) {
+  return getJson<ListVirtualMachineImagesResponse>(
+    `/api/v1/virtual-machines/images${hostQuery(hostId)}`,
+  );
 }
 
 export async function getVirtualMachineTemplates() {

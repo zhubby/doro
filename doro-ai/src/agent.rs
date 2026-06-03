@@ -491,16 +491,15 @@ impl AgentModelProvider for OpenAiAgentProvider {
         while let Some(event) = stream.next().await {
             match event.map_err(|error| AgentError::Model(error.to_string()))? {
                 openai::OpenAiStreamEvent::Response(event) => {
-                    if event.event_type == "response.output_text.delta" {
-                        if let Some(delta) = event.payload.get("delta").and_then(Value::as_str)
-                            && !delta.is_empty()
-                        {
-                            final_text.push_str(delta);
-                            sink.emit(AgentRunEvent::TextDelta {
-                                delta: delta.to_string(),
-                            })
-                            .await?;
-                        }
+                    if event.event_type == "response.output_text.delta"
+                        && let Some(delta) = event.payload.get("delta").and_then(Value::as_str)
+                        && !delta.is_empty()
+                    {
+                        final_text.push_str(delta);
+                        sink.emit(AgentRunEvent::TextDelta {
+                            delta: delta.to_string(),
+                        })
+                        .await?;
                     }
 
                     if event.event_type == "response.output_item.done"
@@ -514,28 +513,26 @@ impl AgentModelProvider for OpenAiAgentProvider {
 
                     if event.event_type == "response.completed"
                         && let Some(response) = event.payload.get("response")
-                    {
-                        if let Ok(response) =
+                        && let Ok(response) =
                             serde_json::from_value::<openai::ResponseObject>(response.clone())
+                    {
+                        let parsed = model_response_from_openai(response);
+                        if final_text.is_empty()
+                            && let Some(text) = parsed.final_text.as_ref()
                         {
-                            let parsed = model_response_from_openai(response);
-                            if final_text.is_empty()
-                                && let Some(text) = parsed.final_text.as_ref()
-                            {
-                                final_text.push_str(text);
-                                if !text.trim().is_empty() {
-                                    sink.emit(AgentRunEvent::TextDelta {
-                                        delta: text.clone(),
-                                    })
-                                    .await?;
-                                }
+                            final_text.push_str(text);
+                            if !text.trim().is_empty() {
+                                sink.emit(AgentRunEvent::TextDelta {
+                                    delta: text.clone(),
+                                })
+                                .await?;
                             }
-                            if raw_output.is_empty() {
-                                raw_output = parsed.raw_output;
-                            }
-                            if tool_calls.is_empty() {
-                                tool_calls = parsed.tool_calls;
-                            }
+                        }
+                        if raw_output.is_empty() {
+                            raw_output = parsed.raw_output;
+                        }
+                        if tool_calls.is_empty() {
+                            tool_calls = parsed.tool_calls;
                         }
                     }
                 }

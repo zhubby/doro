@@ -18,6 +18,7 @@ doro-config = { workspace = true }
 doro-container = { workspace = true }
 doro-protocol = { workspace = true }
 doro-store = { workspace = true }
+doro-vm = { workspace = true }
 futures-util = { workspace = true }
 jsonwebtoken = { workspace = true }
 prost-types = { workspace = true }

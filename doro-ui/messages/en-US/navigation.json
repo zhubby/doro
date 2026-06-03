@@ -30,9 +30,25 @@
       "label": "Approvals",
       "description": "Handle high-risk host actions and AI plan approvals."
     },
-    "apps": {
+    "virtualMachines": {
       "label": "Virtual machines",
-      "description": "Manage VM lifecycle, images, hosts, and resource allocation."
+      "description": "Manage QEMU VM instances, images, snapshots, and templates."
+    },
+    "virtualMachineInstances": {
+      "label": "Instances",
+      "description": "Manage VM lifecycle, consoles, and resource allocation."
+    },
+    "virtualMachineImages": {
+      "label": "Images",
+      "description": "Inspect local QEMU image caches across agents."
+    },
+    "virtualMachineSnapshots": {
+      "label": "Snapshots",
+      "description": "Review VM snapshots and create approved snapshot tasks."
+    },
+    "virtualMachineTemplates": {
+      "label": "Templates",
+      "description": "Review VM resource presets for creation flows."
     },
     "ai": {
       "label": "AI",

@@ -606,7 +606,7 @@ mod tests {
                 .into_connection(),
         );
 
-        let error = change_password(
+        let result = change_password(
             State(state),
             Extension(CurrentUser {
                 id: user.id,
@@ -618,8 +618,11 @@ mod tests {
                 new_password: "replacement-password".to_string(),
             }),
         )
-        .await
-        .expect_err("wrong current password should fail");
+        .await;
+        let error = match result {
+            Ok(_) => return Err(anyhow::anyhow!("wrong current password should fail")),
+            Err(error) => error,
+        };
 
         assert_eq!(error_status(error), StatusCode::UNAUTHORIZED);
         Ok(())
@@ -631,7 +634,7 @@ mod tests {
         let state =
             app_state_for_auth_test(MockDatabase::new(DatabaseBackend::Postgres).into_connection());
 
-        let error = change_password(
+        let result = change_password(
             State(state),
             Extension(CurrentUser {
                 id: user.id,
@@ -643,8 +646,11 @@ mod tests {
                 new_password: "short".to_string(),
             }),
         )
-        .await
-        .expect_err("short new password should fail");
+        .await;
+        let error = match result {
+            Ok(_) => return Err(anyhow::anyhow!("short new password should fail")),
+            Err(error) => error,
+        };
 
         assert_eq!(error_status(error), StatusCode::BAD_REQUEST);
         Ok(())

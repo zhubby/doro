@@ -2,4 +2,4 @@
 import type { VirtualMachineNetwork } from "./VirtualMachineNetwork";
 import type { JsonValue } from "./serde_json/JsonValue";
 
-export type CreateVirtualMachineRequest = { host_id: string, name: string, image_id: string, cpu_cores: number, memory_mib: number, disk_gb: number, networks: Array<VirtualMachineNetwork>, cloud_init: JsonValue, };
+export type CreateVirtualMachineRequest = { host_id: string, name: string, image_id: string, cpu_cores: number, memory_mib: number, disk_gb: number, networks: Array<VirtualMachineNetwork>, cloud_init: JsonValue, reason: string | null, };

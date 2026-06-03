@@ -726,6 +726,36 @@ async fn execute_vm_command(
     envelope: VmCommandEnvelope,
 ) -> Result<doro_vm::VmCommandResult, VmProviderError> {
     match envelope.command {
+        VmCommand::Probe => {
+            let status = runtime.provider.probe().await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: None,
+                status: VmCommandStatus::Succeeded,
+                message: status.message.clone(),
+                details: serde_json::to_value(status)?,
+            })
+        }
+        VmCommand::ListImages => {
+            let images = runtime.provider.images().await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: None,
+                status: VmCommandStatus::Succeeded,
+                message: "virtual machine images listed".to_string(),
+                details: serde_json::to_value(images)?,
+            })
+        }
+        VmCommand::ListSnapshots { id } => {
+            let snapshots = runtime.provider.snapshots(&id).await?;
+            Ok(doro_vm::VmCommandResult {
+                command_id: envelope.command_id,
+                vm_id: Some(id),
+                status: VmCommandStatus::Succeeded,
+                message: "virtual machine snapshots listed".to_string(),
+                details: serde_json::to_value(snapshots)?,
+            })
+        }
         VmCommand::Create { spec } => {
             let state = runtime.provider.create(*spec).await?;
             Ok(doro_vm::VmCommandResult {

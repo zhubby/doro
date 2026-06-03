@@ -4,6 +4,7 @@ use crate::error::{AppError, approval_store_app_error, normalize_optional_text};
 use crate::prelude::*;
 use crate::routes::docker::apply_approved_docker_task;
 use crate::routes::scheduled_tasks::apply_approved_scheduled_task;
+use crate::routes::virtual_machines::apply_approved_virtual_machine_task;
 use crate::routes::websites::apply_approved_website_task;
 use crate::state::AppState;
 
@@ -90,6 +91,7 @@ pub(crate) async fn approve_approval(
         Ok(item) => {
             apply_approved_website_task(&state, item.task_id, item.step_id).await;
             apply_approved_docker_task(&state, item.task_id, item.step_id).await;
+            apply_approved_virtual_machine_task(&state, item.task_id, item.step_id).await;
             apply_approved_scheduled_task(&state, &item).await;
             apply_agent_tool_approval_decision(&state, &item, true).await;
             Ok(Json(ResolveApprovalResponse { item }))
