@@ -33,6 +33,11 @@ use doro_protocol::Host;
 use doro_protocol::HostStatus;
 use doro_protocol::MetricSnapshot;
 use doro_protocol::PROTOCOL_VERSION;
+use doro_protocol::Website;
+use doro_protocol::WebsiteKind;
+use doro_protocol::WebsiteProtocol;
+use doro_protocol::WebsiteProxyTarget;
+use doro_protocol::WebsiteStatus;
 use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use doro_protocol::protobuf_timestamp_from_utc;
@@ -47,6 +52,9 @@ use doro_vm::VmProviderError;
 use doro_vm::VmRuntimeState;
 use doro_vm::VmStatus;
 use doro_vm::network::NetworkPolicy;
+use doro_website::WebsiteRuntime;
+use doro_website::WebsiteRuntimeConfig;
+use doro_website::WebsiteRuntimeHandle;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::HashMap;
@@ -178,6 +186,7 @@ pub struct AgentConfig {
     pub vm_console_enabled: bool,
     pub vm_vnc_bind: String,
     pub gpu_metrics_enabled: bool,
+    pub websites: doro_config::WebsiteConfig,
     pub ai: doro_config::AiConfig,
 }
 
@@ -209,16 +218,13 @@ impl AgentConfig {
             vm_console_enabled: true,
             vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
+            websites: doro_config::WebsiteConfig::default(),
             ai: doro_config::AiConfig::default(),
         }
     }
 
     pub fn from_config(config: &doro_config::AgentConfig) -> Self {
         Self::from_config_with_ai(config, doro_config::AiConfig::default())
-    }
-
-    pub fn from_file_config(config: &doro_config::AgentFileConfig) -> Self {
-        Self::from_config_with_ai(&config.agent, config.ai.clone())
     }
 
     fn from_config_with_ai(config: &doro_config::AgentConfig, ai: doro_config::AiConfig) -> Self {
@@ -244,8 +250,15 @@ impl AgentConfig {
             vm_console_enabled: config.vm_console_enabled,
             vm_vnc_bind: config.vm_vnc_bind.clone(),
             gpu_metrics_enabled: config.gpu_metrics_enabled,
+            websites: doro_config::WebsiteConfig::default(),
             ai,
         }
+    }
+
+    pub fn from_file_config(config: &doro_config::AgentFileConfig) -> Self {
+        let mut agent = Self::from_config_with_ai(&config.agent, config.ai.clone());
+        agent.websites = config.websites.clone();
+        agent
     }
 }
 
@@ -331,6 +344,7 @@ pub struct Agent {
     config: AgentConfig,
     container_runtime: Option<ContainerRuntime>,
     vm_runtime: Option<VmRuntime>,
+    website_runtime: Option<WebsiteRuntimeHandle>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -383,11 +397,27 @@ impl Agent {
     pub fn new(config: AgentConfig) -> Self {
         let container_runtime = ContainerRuntime::from_config(&config);
         let vm_runtime = VmRuntime::from_config(&config);
+        let website_runtime = config.websites.enabled.then(WebsiteRuntimeHandle::default);
         Self {
             config,
             container_runtime,
             vm_runtime,
+            website_runtime,
         }
+    }
+
+    pub fn start_website_runtime(&self) -> anyhow::Result<Option<std::thread::JoinHandle<()>>> {
+        let Some(handle) = self.website_runtime.clone() else {
+            return Ok(None);
+        };
+        let runtime = WebsiteRuntime::with_handle(
+            WebsiteRuntimeConfig {
+                enabled: self.config.websites.enabled,
+                http_bind: self.config.websites.http_bind.clone(),
+            },
+            handle,
+        );
+        runtime.start().map_err(anyhow::Error::from)
     }
 
     pub fn host(&self) -> Host {
@@ -450,6 +480,13 @@ impl Agent {
                 name: CapabilityName::VirtualMachinesManage,
                 risk: CapabilityRisk::High,
                 description: "Manage QEMU virtual machines after approval".to_string(),
+            });
+        }
+        if self.website_runtime.is_some() {
+            capabilities.push(AgentCapability {
+                name: CapabilityName::NetworkExpose,
+                risk: CapabilityRisk::High,
+                description: "Apply approved website reverse proxy routes with Pingora".to_string(),
             });
         }
         capabilities
@@ -603,6 +640,33 @@ impl Agent {
                 message: output.message,
                 result_json: output.result_json,
                 content: output.content,
+            }),
+        )
+    }
+
+    pub fn website_routes_applied_event(
+        &self,
+        agent_id: Uuid,
+        command_id: String,
+        result: Result<usize, String>,
+        website_ids: Vec<String>,
+    ) -> grpc::AgentEvent {
+        let (status, message, route_count) = match result {
+            Ok(route_count) => (
+                grpc::CommandStatus::Succeeded,
+                "website routes applied".to_string(),
+                route_count as u32,
+            ),
+            Err(message) => (grpc::CommandStatus::Failed, message, 0),
+        };
+        self.grpc_event(
+            agent_id,
+            grpc::agent_event::Event::WebsiteRoutesApplied(grpc::WebsiteRoutesAppliedEvent {
+                command_id,
+                status: status as i32,
+                message,
+                route_count,
+                website_ids,
             }),
         )
     }
@@ -1357,6 +1421,7 @@ fn parse_json_value(value: &str) -> Value {
 pub async fn run(loaded_config: doro_config::LoadedAgentConfig) -> anyhow::Result<()> {
     let mut persisted_config = loaded_config.config;
     let mut agent = Agent::new(AgentConfig::from_file_config(&persisted_config));
+    let _website_runtime_thread = agent.start_website_runtime()?;
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
@@ -1711,6 +1776,105 @@ fn container_observation_from_summary(container: ContainerSummary) -> grpc::Cont
     }
 }
 
+fn apply_website_routes(
+    runtime: &WebsiteRuntimeHandle,
+    routes: Vec<grpc::WebsiteRoute>,
+) -> Result<usize, String> {
+    let websites = routes
+        .into_iter()
+        .map(website_from_grpc_route)
+        .collect::<Result<Vec<_>, _>>()?;
+    runtime.reload(&websites).map_err(|error| error.to_string())
+}
+
+fn website_from_grpc_route(route: grpc::WebsiteRoute) -> Result<Website, String> {
+    let website_id = Uuid::parse_str(&route.website_id)
+        .map_err(|_| "website route website_id must be a uuid".to_string())?;
+    let status = parse_website_status(&route.status)?;
+    let kind = parse_website_kind(&route.kind)?;
+    let protocol = parse_website_protocol(&route.protocol)?;
+    if kind != WebsiteKind::ReverseProxy || protocol != WebsiteProtocol::Http {
+        return Err(
+            "agent website runtime currently supports only HTTP reverse proxy routes".to_string(),
+        );
+    }
+    let listen_port =
+        u16::try_from(route.listen_port).map_err(|_| "website listen port is invalid")?;
+    let config = serde_json::from_str(&route.config_json).unwrap_or_else(|_| {
+        json!({
+            "raw": route.config_json
+        })
+    });
+    Ok(Website {
+        id: website_id,
+        host_id: Some(Uuid::nil()),
+        name: route.primary_domain.clone(),
+        primary_domain: route.primary_domain,
+        aliases: route.aliases,
+        status,
+        kind,
+        protocol,
+        listen_port,
+        upstream: WebsiteProxyTarget {
+            url: route.upstream_url,
+        },
+        app_install_id: None,
+        tls_certificate_id: None,
+        config,
+        notes: None,
+        last_runtime_error: None,
+        last_checked_at: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    })
+}
+
+fn parse_website_status(value: &str) -> Result<WebsiteStatus, String> {
+    match normalize_enum_token(value).as_str() {
+        "running" => Ok(WebsiteStatus::Running),
+        "stopped" => Ok(WebsiteStatus::Stopped),
+        "warning" => Ok(WebsiteStatus::Warning),
+        _ => Err("website route status is invalid".to_string()),
+    }
+}
+
+fn parse_website_kind(value: &str) -> Result<WebsiteKind, String> {
+    match normalize_enum_token(value).as_str() {
+        "reverse_proxy" => Ok(WebsiteKind::ReverseProxy),
+        "static_site" => Ok(WebsiteKind::StaticSite),
+        "tcp_proxy" => Ok(WebsiteKind::TcpProxy),
+        "udp_proxy" => Ok(WebsiteKind::UdpProxy),
+        _ => Err("website route kind is invalid".to_string()),
+    }
+}
+
+fn parse_website_protocol(value: &str) -> Result<WebsiteProtocol, String> {
+    match normalize_enum_token(value).as_str() {
+        "http" => Ok(WebsiteProtocol::Http),
+        "https" => Ok(WebsiteProtocol::Https),
+        "tcp" => Ok(WebsiteProtocol::Tcp),
+        "udp" => Ok(WebsiteProtocol::Udp),
+        _ => Err("website route protocol is invalid".to_string()),
+    }
+}
+
+fn normalize_enum_token(value: &str) -> String {
+    let mut token = String::new();
+    for (index, character) in value.chars().enumerate() {
+        if character == '-' || character == ' ' {
+            token.push('_');
+        } else if character.is_uppercase() {
+            if index > 0 {
+                token.push('_');
+            }
+            token.extend(character.to_lowercase());
+        } else {
+            token.push(character);
+        }
+    }
+    token
+}
+
 fn next_reconnect_delay(current: Duration) -> Duration {
     (current * 2).min(MAX_RECONNECT_DELAY)
 }
@@ -1878,6 +2042,27 @@ async fn handle_command(
             };
             if sender.send(event).await.is_err() {
                 tracing::warn!("failed to enqueue file operation result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::ApplyWebsiteRoutes(route_command)) => {
+            tracing::info!(
+                command_id = %command_id,
+                route_count = route_command.routes.len(),
+                "applying website routes by control-plane request"
+            );
+            let website_ids = route_command
+                .routes
+                .iter()
+                .map(|route| route.website_id.clone())
+                .collect::<Vec<_>>();
+            let result = match &agent.website_runtime {
+                Some(runtime) => apply_website_routes(runtime, route_command.routes),
+                None => Err("website runtime is not enabled".to_string()),
+            };
+            let event =
+                agent.website_routes_applied_event(agent_id, command_id, result, website_ids);
+            if sender.send(event).await.is_err() {
+                tracing::warn!("failed to enqueue website routes applied event");
             }
         }
         Some(grpc::control_plane_command::Command::RunAgentTask(agent_task)) => {
@@ -2253,6 +2438,7 @@ mod tests {
             vm_console_enabled: true,
             vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
+            websites: doro_config::WebsiteConfig::default(),
             ai: doro_config::AiConfig::default(),
         }
     }
@@ -2464,6 +2650,55 @@ mod tests {
         assert!(agent.capabilities().iter().any(|capability| {
             capability.name == CapabilityName::AgentRun && capability.risk == CapabilityRisk::Medium
         }));
+    }
+
+    #[test]
+    fn network_expose_capability_is_omitted_when_website_runtime_disabled() {
+        let base_config = test_agent_config(Uuid::new_v4());
+
+        let agent = Agent::new(AgentConfig {
+            websites: doro_config::WebsiteConfig {
+                enabled: false,
+                ..doro_config::WebsiteConfig::default()
+            },
+            ..base_config
+        });
+
+        assert!(
+            !agent
+                .capabilities()
+                .iter()
+                .any(|capability| capability.name == CapabilityName::NetworkExpose)
+        );
+    }
+
+    #[test]
+    fn invalid_website_routes_do_not_replace_previous_route_table() {
+        let runtime = WebsiteRuntimeHandle::default();
+        let mut route = grpc::WebsiteRoute {
+            website_id: Uuid::new_v4().to_string(),
+            primary_domain: "example.com".to_string(),
+            aliases: Vec::new(),
+            status: "running".to_string(),
+            kind: "reverse_proxy".to_string(),
+            protocol: "http".to_string(),
+            listen_port: 8080,
+            upstream_url: "http://127.0.0.1:8787".to_string(),
+            config_json: "{}".to_string(),
+        };
+
+        let count = apply_website_routes(&runtime, vec![route.clone()])
+            .unwrap_or_else(|error| panic!("valid website route should apply: {error}"));
+        assert_eq!(count, 1);
+        assert_eq!(runtime.route_count(), 1);
+        assert!(runtime.route_for_host("example.com:8080").is_some());
+
+        route.website_id = "not-a-uuid".to_string();
+        let error = apply_website_routes(&runtime, vec![route])
+            .expect_err("invalid website route should fail");
+        assert!(error.contains("website_id"));
+        assert_eq!(runtime.route_count(), 1);
+        assert!(runtime.route_for_host("example.com:8080").is_some());
     }
 
     #[test]

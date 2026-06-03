@@ -17,11 +17,14 @@
 - Agent task dispatch over gRPC streaming.
 - Container, service, log, and metrics integrations.
 - Human approval UI.
+- Agent-side Pingora website runtime with approved HTTP reverse proxy routes.
+- Host-bound website management with visible placeholders for HTTPS, certificates, static sites, upstream pools, rewrite rules, and TCP/UDP proxying.
 
 ## Later
 
 - Rich AI planning with model provider configuration.
 - Policy editor and reusable automation recipes.
 - Application catalog with backup and restore workflows.
+- HTTPS certificate issuance/renewal, static site deployment, multi-upstream health checks, rewrite/redirect rules, TCP/UDP proxying, real IP handling, access control, and password gates for websites.
 - Multi-user roles.
 - Database migration tooling and retention policies for metrics, logs, and audit events.

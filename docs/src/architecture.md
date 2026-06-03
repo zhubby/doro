@@ -8,10 +8,10 @@ flowchart LR
     CLI["doro-cli"] --> CP
     CP --> Store["doro-store / Postgres"]
     CP --> AI["doro-ai"]
-    Internet["HTTP clients"] --> Sites["doro-website / Pingora"]
-    CP --> Sites
-    Sites --> Upstream["local HTTP upstreams"]
-    A1["doro-agent / host-a"] --> CP
+    Internet["HTTP clients"] --> Sites["doro-agent + doro-website / Pingora"]
+    Sites --> Upstream["host-local HTTP upstreams"]
+    CP -->|"ApplyWebsiteRoutesCommand"| A1["doro-agent / host-a"]
+    A1 --> Sites
     A2["doro-agent / host-b"] --> CP
     A3["doro-agent / host-c"] --> CP
 ```
@@ -22,7 +22,7 @@ Agents connect outbound to the control plane over gRPC using the `doro.agent.v1.
 
 The UI uses REST APIs for query and mutation, plus SSE at `/api/v1/events` for realtime browser updates. Agent traffic uses a separate gRPC/Protobuf contract because agents need typed enrollment, heartbeat, event streaming, and command dispatch.
 
-Website traffic is served by an embedded Pingora proxy from `doro-website`. The control plane stores website desired state, creates approvals for network exposure, and hot-reloads Pingora routes after approved changes. Pingora handles runtime HTTP proxying only; it does not bypass the control plane for configuration or persistence.
+Website traffic is served by Pingora inside the target `doro-agent` through `doro-website`. The control plane stores website desired state, creates approvals for network exposure, and sends host-scoped route tables to Agents after approved changes. Pingora handles runtime proxying only; it does not bypass the control plane for configuration, approval, or persistence.
 
 Trust boundaries:
 

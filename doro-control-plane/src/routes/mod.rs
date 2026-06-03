@@ -46,14 +46,7 @@ pub fn app_with_auth_and_streams(
     agent_streams: AgentStreamRegistry,
     logs: LogHub,
 ) -> Router {
-    app_with_auth_streams_and_websites(
-        store,
-        auth,
-        agent_streams,
-        logs,
-        WebsiteRuntimeHandle::default(),
-        WebsiteRuntimeConfig::default().http_port().unwrap_or(8080),
-    )
+    app_with_auth_streams_and_websites(store, auth, agent_streams, logs)
 }
 
 pub fn app_with_auth_streams_and_websites(
@@ -61,8 +54,6 @@ pub fn app_with_auth_streams_and_websites(
     auth: AuthService,
     agent_streams: AgentStreamRegistry,
     logs: LogHub,
-    website_runtime: WebsiteRuntimeHandle,
-    website_http_port: u16,
 ) -> Router {
     let state = AppState {
         store,
@@ -70,8 +61,6 @@ pub fn app_with_auth_streams_and_websites(
         agent_streams,
         logs,
         control_plane_environment: collect_control_plane_environment(),
-        website_runtime,
-        website_http_port,
     };
 
     let protected_routes = Router::new()

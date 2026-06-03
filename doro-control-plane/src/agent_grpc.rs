@@ -4,6 +4,7 @@ use crate::agent_tools::{create_agent_tool_approval, normalize_task_step_status}
 use crate::error::{enrollment_status, store_status};
 use crate::logs::LogHub;
 use crate::prelude::*;
+use crate::routes::websites::sync_running_websites_for_connected_host;
 use crate::server::{shutdown_requested, wait_for_shutdown};
 
 pub struct GrpcAgentService {
@@ -206,6 +207,18 @@ impl AgentControlPlane for GrpcAgentService {
                             {
                                 tracing::warn!(%error, "failed to refresh streamed agent heartbeat");
                             }
+                            if event_type == "connected" {
+                                let sync_store = store.clone();
+                                let sync_streams = agent_streams.clone();
+                                tokio::spawn(async move {
+                                    sync_running_websites_for_connected_host(
+                                        sync_store,
+                                        sync_streams,
+                                        host_id,
+                                    )
+                                    .await;
+                                });
+                            }
                         }
                     }
                     Some(grpc::agent_event::Event::ContainerSnapshot(snapshot)) => {
@@ -267,6 +280,15 @@ impl AgentControlPlane for GrpcAgentService {
                         {
                             let _ = reply_sender
                                 .send(AgentCommandReply::FileCommandResult(result.clone()));
+                        }
+                    }
+                    Some(grpc::agent_event::Event::WebsiteRoutesApplied(result)) => {
+                        if let Some(pending_commands) = &pending_commands
+                            && let Some(reply_sender) =
+                                pending_commands.lock().await.remove(&result.command_id)
+                        {
+                            let _ = reply_sender
+                                .send(AgentCommandReply::WebsiteRoutesApplied(result.clone()));
                         }
                     }
                     Some(grpc::agent_event::Event::AgentTaskProgress(progress)) => {

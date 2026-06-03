@@ -92,6 +92,7 @@ export type { Website } from "./generated/Website";
 export type { WebsiteActionRequest } from "./generated/WebsiteActionRequest";
 export type { WebsiteActionResponse } from "./generated/WebsiteActionResponse";
 export type { WebsiteKind } from "./generated/WebsiteKind";
+export type { WebsitePlannedCapability } from "./generated/WebsitePlannedCapability";
 export type { WebsiteProtocol } from "./generated/WebsiteProtocol";
 export type { WebsiteProxyTarget } from "./generated/WebsiteProxyTarget";
 export type { WebsiteStatus } from "./generated/WebsiteStatus";

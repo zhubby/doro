@@ -301,6 +301,9 @@ pub enum WebsiteStatus {
 #[ts(export_to = "WebsiteKind.ts")]
 pub enum WebsiteKind {
     ReverseProxy,
+    StaticSite,
+    TcpProxy,
+    UdpProxy,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -308,12 +311,31 @@ pub enum WebsiteKind {
 #[ts(export_to = "WebsiteProtocol.ts")]
 pub enum WebsiteProtocol {
     Http,
+    Https,
+    Tcp,
+    Udp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "WebsiteProxyTarget.ts")]
 pub struct WebsiteProxyTarget {
     pub url: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "WebsitePlannedCapability.ts")]
+pub enum WebsitePlannedCapability {
+    Https,
+    CertificateBinding,
+    StaticSite,
+    UpstreamPool,
+    RewriteRules,
+    TcpProxy,
+    UdpProxy,
+    RealIp,
+    AccessControl,
+    PasswordGate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
@@ -342,10 +364,11 @@ pub struct Website {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "CreateWebsiteRequest.ts")]
 pub struct CreateWebsiteRequest {
+    pub host_id: Uuid,
     pub name: String,
     pub primary_domain: String,
     pub aliases: Vec<String>,
-    pub listen_port: Option<u16>,
+    pub listen_port: u16,
     pub upstream_url: String,
     pub notes: Option<String>,
 }
@@ -353,10 +376,11 @@ pub struct CreateWebsiteRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "UpdateWebsiteRequest.ts")]
 pub struct UpdateWebsiteRequest {
+    pub host_id: Uuid,
     pub name: String,
     pub primary_domain: String,
     pub aliases: Vec<String>,
-    pub listen_port: Option<u16>,
+    pub listen_port: u16,
     pub upstream_url: String,
     pub notes: Option<String>,
 }
@@ -1018,6 +1042,7 @@ mod tests {
         assert!(WebsiteKind::export_all(&cfg).is_ok());
         assert!(WebsiteProtocol::export_all(&cfg).is_ok());
         assert!(WebsiteProxyTarget::export_all(&cfg).is_ok());
+        assert!(WebsitePlannedCapability::export_all(&cfg).is_ok());
         assert!(Website::export_all(&cfg).is_ok());
         assert!(CreateWebsiteRequest::export_all(&cfg).is_ok());
         assert!(UpdateWebsiteRequest::export_all(&cfg).is_ok());

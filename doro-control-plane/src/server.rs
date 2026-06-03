@@ -14,17 +14,6 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let auth = AuthService::load_or_create(&store, config.security.jwt_secret.as_deref()).await?;
     let logs = LogHub::default();
     logs.register_control_plane_global();
-    let website_config = WebsiteRuntimeConfig {
-        enabled: config.websites.enabled,
-        http_bind: config.websites.http_bind.clone(),
-    };
-    let website_http_port = website_config.http_port().unwrap_or(8080);
-    let website_runtime = WebsiteRuntime::new(website_config);
-    let website_runtime_handle = website_runtime.handle();
-    let running_websites = store.websites().running().await?;
-    let route_count = website_runtime_handle.reload(&running_websites)?;
-    tracing::info!(route_count, "loaded website proxy routes");
-    let _website_proxy_thread = website_runtime.start()?;
 
     let console_listener = tokio::net::TcpListener::bind(console_addr).await?;
     tracing::info!("doro control-plane console listening on http://{console_addr}");
@@ -42,7 +31,6 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let console_store = store.clone();
     let console_streams = agent_streams.clone();
     let console_logs = logs.clone();
-    let console_website_runtime = website_runtime_handle.clone();
     let agent_store = store.clone();
     let grpc_streams = agent_streams.clone();
     let agent_logs = logs.clone();
@@ -64,14 +52,7 @@ pub async fn run(config: doro_config::ControlPlaneConfig) -> anyhow::Result<()> 
     let console_server = async move {
         axum::serve(
             console_listener,
-            app_with_auth_streams_and_websites(
-                console_store,
-                auth,
-                console_streams,
-                console_logs,
-                console_website_runtime,
-                website_http_port,
-            ),
+            app_with_auth_streams_and_websites(console_store, auth, console_streams, console_logs),
         )
         .with_graceful_shutdown(wait_for_shutdown(console_shutdown))
         .await

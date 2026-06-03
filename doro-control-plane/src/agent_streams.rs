@@ -46,6 +46,7 @@ pub(crate) enum AgentCommandReply {
     VirtualMachineCommandResult,
     TerminalCommandResult(grpc::TerminalCommandResultEvent),
     FileCommandResult(grpc::FileCommandResultEvent),
+    WebsiteRoutesApplied(grpc::WebsiteRoutesAppliedEvent),
     CommandResult(grpc::CommandResultEvent),
     Failed(String),
 }
@@ -160,6 +161,9 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::FileCommandResult(_))) => Err(
                 ContainerRefreshError::AgentFailed("unexpected file response".to_string()),
             ),
+            Ok(Ok(AgentCommandReply::WebsiteRoutesApplied(_))) => Err(
+                ContainerRefreshError::AgentFailed("unexpected website response".to_string()),
+            ),
             Ok(Ok(AgentCommandReply::CommandResult(result))) => {
                 Err(ContainerRefreshError::AgentFailed(result.message))
             }
@@ -218,6 +222,9 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::Failed(message))) => {
                 Err(ContainerRefreshError::AgentFailed(message))
             }
+            Ok(Ok(AgentCommandReply::WebsiteRoutesApplied(_))) => Err(
+                ContainerRefreshError::AgentFailed("unexpected website response".to_string()),
+            ),
             Ok(Ok(_)) => Err(ContainerRefreshError::AgentFailed(
                 "unexpected agent response".to_string(),
             )),
@@ -283,6 +290,9 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::ContainerSnapshot(_))) => Err(
                 TerminalCommandError::AgentFailed("unexpected container response".to_string()),
             ),
+            Ok(Ok(AgentCommandReply::WebsiteRoutesApplied(_))) => Err(
+                TerminalCommandError::AgentFailed("unexpected website response".to_string()),
+            ),
             Ok(Ok(AgentCommandReply::CommandResult(result))) => {
                 Err(TerminalCommandError::AgentFailed(result.message))
             }
@@ -337,6 +347,9 @@ impl AgentStreamRegistry {
             Ok(Ok(AgentCommandReply::Failed(message))) => {
                 Err(AgentTaskCommandError::AgentFailed(message))
             }
+            Ok(Ok(AgentCommandReply::WebsiteRoutesApplied(_))) => Err(
+                AgentTaskCommandError::AgentFailed("unexpected website response".to_string()),
+            ),
             Ok(Ok(_)) => Err(AgentTaskCommandError::AgentFailed(
                 "unexpected agent response".to_string(),
             )),
@@ -372,6 +385,62 @@ impl AgentStreamRegistry {
             .send(Ok(command))
             .await
             .map_err(|_| AgentTaskCommandError::NoStream)
+    }
+
+    pub(crate) async fn apply_website_routes(
+        &self,
+        host_id: Uuid,
+        mut command: grpc::ApplyWebsiteRoutesCommand,
+    ) -> Result<grpc::WebsiteRoutesAppliedEvent, AgentTaskCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(AgentTaskCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        command.command_id = command_id.clone();
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        handle
+            .pending
+            .lock()
+            .await
+            .insert(command_id.clone(), reply_sender);
+
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::ApplyWebsiteRoutes(
+                command,
+            )),
+        };
+
+        if handle.sender.send(Ok(command)).await.is_err() {
+            handle.pending.lock().await.remove(&command_id);
+            return Err(AgentTaskCommandError::NoStream);
+        }
+
+        match tokio::time::timeout(CONTAINER_REFRESH_TIMEOUT, reply_receiver).await {
+            Ok(Ok(AgentCommandReply::WebsiteRoutesApplied(result))) => {
+                if result.status == grpc::CommandStatus::Failed as i32 {
+                    Err(AgentTaskCommandError::AgentFailed(result.message))
+                } else {
+                    Ok(result)
+                }
+            }
+            Ok(Ok(AgentCommandReply::Failed(message))) => {
+                Err(AgentTaskCommandError::AgentFailed(message))
+            }
+            Ok(Ok(_)) => Err(AgentTaskCommandError::AgentFailed(
+                "unexpected agent response".to_string(),
+            )),
+            Ok(Err(_)) => Err(AgentTaskCommandError::NoStream),
+            Err(_) => {
+                handle.pending.lock().await.remove(&command_id);
+                Err(AgentTaskCommandError::Timeout)
+            }
+        }
     }
 
     pub(crate) async fn list_directory(
@@ -886,6 +955,76 @@ mod tests {
             Err(error) => panic!("execute task should complete: {error}"),
         };
         assert_eq!(result.message, "agent core placeholder accepted");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_website_routes_and_receives_apply_result() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let website_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        let pending = registry.register(host_id, agent_id, sender).await;
+
+        let apply = tokio::spawn({
+            let registry = registry.clone();
+            async move {
+                registry
+                    .apply_website_routes(
+                        host_id,
+                        grpc::ApplyWebsiteRoutesCommand {
+                            command_id: String::new(),
+                            routes: vec![grpc::WebsiteRoute {
+                                website_id: website_id.to_string(),
+                                primary_domain: "example.com".to_string(),
+                                aliases: Vec::new(),
+                                status: "running".to_string(),
+                                kind: "reverse_proxy".to_string(),
+                                protocol: "http".to_string(),
+                                listen_port: 8080,
+                                upstream_url: "http://127.0.0.1:8787".to_string(),
+                                config_json: "{}".to_string(),
+                            }],
+                        },
+                    )
+                    .await
+            }
+        });
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send website apply command"),
+        };
+        assert!(matches!(
+            command.command,
+            Some(grpc::control_plane_command::Command::ApplyWebsiteRoutes(_))
+        ));
+        let reply_sender = match pending.lock().await.remove(&command.command_id) {
+            Some(reply_sender) => reply_sender,
+            None => panic!("command should have pending waiter"),
+        };
+        if reply_sender
+            .send(AgentCommandReply::WebsiteRoutesApplied(
+                grpc::WebsiteRoutesAppliedEvent {
+                    command_id: command.command_id,
+                    status: grpc::CommandStatus::Succeeded as i32,
+                    message: "routes applied".to_string(),
+                    route_count: 1,
+                    website_ids: vec![website_id.to_string()],
+                },
+            ))
+            .is_err()
+        {
+            panic!("waiter should receive website apply result");
+        }
+
+        let result = match apply.await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => panic!("website routes should apply: {error:?}"),
+            Err(error) => panic!("apply task should complete: {error}"),
+        };
+        assert_eq!(result.route_count, 1);
+        assert_eq!(result.website_ids, vec![website_id.to_string()]);
     }
 
     #[tokio::test]

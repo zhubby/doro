@@ -134,6 +134,16 @@ pub(crate) fn typed_agent_event_payload(event: &grpc::AgentEvent) -> Option<(Str
                 "content_bytes": result.content.len(),
             }),
         )),
+        grpc::agent_event::Event::WebsiteRoutesApplied(result) => Some((
+            "website.routes_applied".to_string(),
+            serde_json::json!({
+                "command_id": result.command_id,
+                "status": result.status,
+                "message": result.message,
+                "route_count": result.route_count,
+                "website_ids": result.website_ids,
+            }),
+        )),
         grpc::agent_event::Event::AgentTaskProgress(progress) => Some((
             "agent_task.progress".to_string(),
             serde_json::json!({

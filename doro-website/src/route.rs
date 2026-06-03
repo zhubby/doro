@@ -4,6 +4,7 @@ use crate::upstream::normalize_host_header;
 use crate::upstream::parse_upstream;
 use doro_protocol::Website;
 use doro_protocol::WebsiteKind;
+use doro_protocol::WebsiteProtocol;
 use doro_protocol::WebsiteStatus;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -27,6 +28,9 @@ impl WebsiteRoute {
             return Ok(None);
         }
         if website.kind != WebsiteKind::ReverseProxy {
+            return Ok(None);
+        }
+        if website.protocol != WebsiteProtocol::Http {
             return Ok(None);
         }
         if website.listen_port == 0 {

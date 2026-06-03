@@ -1173,6 +1173,7 @@ dependencies = [
  "doro-container",
  "doro-protocol",
  "doro-vm",
+ "doro-website",
  "nvml-wrapper",
  "portable-pty",
  "serde",
@@ -1260,7 +1261,6 @@ dependencies = [
  "doro-config",
  "doro-protocol",
  "doro-store",
- "doro-website",
  "futures-util",
  "jsonwebtoken",
  "prost-types",
@@ -1274,6 +1274,7 @@ dependencies = [
  "tonic",
  "tower-http",
  "tracing",
+ "url",
  "uuid",
 ]
 

@@ -52,6 +52,10 @@ impl WebsiteRuntime {
         }
     }
 
+    pub fn with_handle(config: WebsiteRuntimeConfig, handle: WebsiteRuntimeHandle) -> Self {
+        Self { handle, config }
+    }
+
     pub fn handle(&self) -> WebsiteRuntimeHandle {
         self.handle.clone()
     }

@@ -28,16 +28,18 @@ import {
 import {
   createWebsite,
   deleteWebsite,
+  getHosts,
   getWebsites,
   updateWebsite,
   websiteAction,
 } from "@/lib/control-plane-api";
 import { formatRelativeTime } from "@/lib/datetime";
-import type { CreateWebsiteRequest, Website } from "@/types/api";
+import type { CreateWebsiteRequest, Host, Website } from "@/types/api";
 import type { ResourceColumn, ResourceStatus } from "@/types/dashboard";
 
 type WebsiteFormState = {
   id: string | null;
+  hostId: string;
   name: string;
   primaryDomain: string;
   aliases: string;
@@ -48,6 +50,7 @@ type WebsiteFormState = {
 
 type WebsiteRow = Website & {
   resourceStatus: ResourceStatus;
+  hostLabel: string;
   domainLabel: string;
   typeLabel: string;
   protocolLabel: string;
@@ -57,6 +60,7 @@ type WebsiteRow = Website & {
 
 const emptyForm: WebsiteFormState = {
   id: null,
+  hostId: "",
   name: "",
   primaryDomain: "",
   aliases: "",
@@ -64,6 +68,15 @@ const emptyForm: WebsiteFormState = {
   upstreamUrl: "http://127.0.0.1:8787",
   notes: "",
 };
+
+const plannedCapabilities = [
+  "HTTPS / 证书绑定",
+  "静态站点",
+  "多 upstream",
+  "Rewrite / Redirect",
+  "TCP / UDP 代理",
+  "Real IP / 访问控制",
+];
 
 const statusLabels: Record<Website["status"], ResourceStatus> = {
   running: "running",
@@ -96,8 +109,14 @@ const columns: ResourceColumn<WebsiteRow>[] = [
   {
     key: "upstream",
     label: "代理目标",
-    width: "24%",
+    width: "20%",
     render: (row) => <TruncatedText value={row.upstream.url} />,
+  },
+  {
+    key: "hostLabel",
+    label: "Agent",
+    width: "10rem",
+    render: (row) => <TruncatedText value={row.hostLabel} />,
   },
   {
     key: "resourceStatus",
@@ -133,6 +152,7 @@ const columns: ResourceColumn<WebsiteRow>[] = [
 
 export function WebsitesPage() {
   const [websites, setWebsites] = useState<Website[]>([]);
+  const [hosts, setHosts] = useState<Host[]>([]);
   const [query, setQuery] = useState("");
   const [apiError, setApiError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -141,34 +161,48 @@ export function WebsitesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [form, setForm] = useState<WebsiteFormState>(emptyForm);
 
-  const loadWebsites = async () => {
+  const loadData = async () => {
     setLoading(true);
-    const result = await getWebsites();
-    if (result.data) {
-      setWebsites(result.data.items);
+    const [websitesResult, hostsResult] = await Promise.all([getWebsites(), getHosts()]);
+    if (websitesResult.data && hostsResult.data) {
+      setWebsites(websitesResult.data.items);
+      setHosts(hostsResult.data.items);
       setApiError(null);
     } else {
-      setApiError(result.error);
+      setApiError(websitesResult.error ?? hostsResult.error);
     }
     setLoading(false);
   };
 
   useEffect(() => {
-    void loadWebsites();
+    void loadData();
   }, []);
+
+  const networkExposeHosts = useMemo(
+    () =>
+      hosts.filter(
+        (host) =>
+          host.status === "online" &&
+          host.capabilities.some((capability) => capability.name === "network_expose"),
+      ),
+    [hosts],
+  );
 
   const rows = useMemo(
     () =>
       websites.map((website) => ({
         ...website,
         resourceStatus: statusLabels[website.status],
+        hostLabel:
+          hostLabel(hosts.find((host) => host.id === website.host_id) ?? null) ??
+          "未绑定 Agent",
         domainLabel: [website.primary_domain, ...website.aliases].join(", "),
         typeLabel: "反向代理",
         protocolLabel: website.protocol.toUpperCase(),
         sslLabel: "未启用（v1）",
         updatedLabel: formatRelativeTime(website.updated_at),
       })),
-    [websites],
+    [hosts, websites],
   );
 
   const filteredRows = useMemo(() => {
@@ -187,13 +221,17 @@ export function WebsitesPage() {
   }, [query, rows]);
 
   const openCreateDialog = () => {
-    setForm(emptyForm);
+    setForm({
+      ...emptyForm,
+      hostId: networkExposeHosts[0]?.id ?? "",
+    });
     setDialogOpen(true);
   };
 
   const openEditDialog = (website: Website) => {
     setForm({
       id: website.id,
+      hostId: website.host_id ?? "",
       name: website.name,
       primaryDomain: website.primary_domain,
       aliases: website.aliases.join("\n"),
@@ -215,7 +253,7 @@ export function WebsitesPage() {
     if (result.data) {
       setDialogOpen(false);
       setNotice(form.id ? "网站配置已保存。" : "网站已创建，默认保持停止状态。");
-      await loadWebsites();
+      await loadData();
     } else {
       setApiError(result.error);
     }
@@ -232,11 +270,11 @@ export function WebsitesPage() {
     });
     if (result.data) {
       if (result.data.task) {
-        setNotice("已创建网络暴露审批任务，批准后 Pingora 路由会生效。");
+        setNotice("已创建网络暴露审批任务，批准后目标 Agent 会应用 Pingora 路由。");
       } else {
         setNotice(action === "stop" ? "网站已停止。" : "操作已提交。");
       }
-      await loadWebsites();
+      await loadData();
     } else {
       setApiError(result.error);
     }
@@ -251,7 +289,7 @@ export function WebsitesPage() {
     const result = await deleteWebsite(website.id);
     if (!result.error) {
       setNotice("网站已删除。");
-      await loadWebsites();
+      await loadData();
     } else {
       setApiError(result.error);
     }
@@ -303,7 +341,7 @@ export function WebsitesPage() {
                 size="icon"
                 aria-label="刷新"
                 disabled={loading}
-                onClick={loadWebsites}
+                onClick={loadData}
               >
                 <RefreshCw className="size-4" aria-hidden="true" />
               </Button>
@@ -373,6 +411,7 @@ export function WebsitesPage() {
       <WebsiteDialog
         open={dialogOpen}
         form={form}
+        hosts={networkExposeHosts}
         onOpenChange={setDialogOpen}
         onFormChange={setForm}
         onSubmit={submitWebsite}
@@ -384,17 +423,20 @@ export function WebsitesPage() {
 function WebsiteDialog({
   open,
   form,
+  hosts,
   onOpenChange,
   onFormChange,
   onSubmit,
 }: {
   open: boolean;
   form: WebsiteFormState;
+  hosts: Host[];
   onOpenChange: (open: boolean) => void;
   onFormChange: (form: WebsiteFormState) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   const editing = Boolean(form.id);
+  const noNetworkExposeHosts = hosts.length === 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -408,6 +450,24 @@ function WebsiteDialog({
           </DialogHeader>
 
           <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="目标 Agent">
+              <select
+                required
+                value={form.hostId}
+                disabled={noNetworkExposeHosts}
+                onChange={(event) => onFormChange({ ...form, hostId: event.target.value })}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {noNetworkExposeHosts ? (
+                  <option value="">暂无可用网络暴露 Agent</option>
+                ) : null}
+                {hosts.map((host) => (
+                  <option key={host.id} value={host.id}>
+                    {hostLabel(host)}
+                  </option>
+                ))}
+              </select>
+            </Field>
             <Field label="名称">
               <input
                 required
@@ -470,11 +530,27 @@ function WebsiteDialog({
             />
           </Field>
 
+          <div className="rounded-md border bg-muted/30 p-3">
+            <p className="text-sm font-medium">高级能力</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {plannedCapabilities.map((capability) => (
+                <span
+                  key={capability}
+                  className="rounded border bg-background px-2 py-1 text-xs text-muted-foreground"
+                >
+                  {capability} · 计划中
+                </span>
+              ))}
+            </div>
+          </div>
+
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               取消
             </Button>
-            <Button type="submit">{editing ? "保存" : "创建"}</Button>
+            <Button type="submit" disabled={noNetworkExposeHosts || !form.hostId}>
+              {editing ? "保存" : "创建"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -503,6 +579,7 @@ function websiteRequest(form: WebsiteFormState): CreateWebsiteRequest {
     .map((alias) => alias.trim())
     .filter(Boolean);
   return {
+    host_id: form.hostId,
     name: form.name.trim(),
     primary_domain: form.primaryDomain.trim(),
     aliases,
@@ -510,4 +587,11 @@ function websiteRequest(form: WebsiteFormState): CreateWebsiteRequest {
     upstream_url: form.upstreamUrl.trim(),
     notes: form.notes.trim() || null,
   };
+}
+
+function hostLabel(host: Host | null) {
+  if (!host) {
+    return null;
+  }
+  return host.display_name || host.hostname;
 }
