@@ -49,32 +49,7 @@ RUN apt-get update \
 
 COPY --from=rust-builder /workspace/doro /usr/local/bin/doro
 
-FROM doro-runtime AS doro-agent
-
-RUN { \
-        echo '[agent]'; \
-        echo 'control_plane_url = "http://doro-control-plane:8788"'; \
-        echo 'hostname = "doro-container-agent"'; \
-        echo 'heartbeat_interval_seconds = 30'; \
-        echo 'metrics_enabled = true'; \
-        echo 'metrics_interval_seconds = 10'; \
-        echo 'container_metrics_enabled = true'; \
-        echo 'docker_manage_enabled = false'; \
-        echo 'vm_manage_enabled = false'; \
-        echo ''; \
-        echo '[ai]'; \
-        echo 'provider = "disabled"'; \
-    } > /etc/doro/agent.toml \
-    && chown doro:doro /etc/doro/agent.toml
-
-USER doro
-
-VOLUME ["/var/lib/doro"]
-
-ENTRYPOINT ["doro"]
-CMD ["--config", "/etc/doro/agent.toml", "agent"]
-
-FROM doro-runtime AS doro-control-plane
+FROM doro-runtime AS doro
 
 RUN { \
         echo '[server]'; \
@@ -100,7 +75,21 @@ RUN { \
         echo '[ai]'; \
         echo 'provider = "disabled"'; \
     } > /etc/doro/control-plane.toml \
-    && chown doro:doro /etc/doro/control-plane.toml
+    && { \
+        echo '[agent]'; \
+        echo 'control_plane_url = "http://doro-control-plane:8788"'; \
+        echo 'hostname = "doro-container-agent"'; \
+        echo 'heartbeat_interval_seconds = 30'; \
+        echo 'metrics_enabled = true'; \
+        echo 'metrics_interval_seconds = 10'; \
+        echo 'container_metrics_enabled = true'; \
+        echo 'docker_manage_enabled = false'; \
+        echo 'vm_manage_enabled = false'; \
+        echo ''; \
+        echo '[ai]'; \
+        echo 'provider = "disabled"'; \
+    } > /etc/doro/agent.toml \
+    && chown doro:doro /etc/doro/control-plane.toml /etc/doro/agent.toml
 
 USER doro
 
@@ -109,4 +98,4 @@ VOLUME ["/var/lib/doro"]
 EXPOSE 8787 8788 8080
 
 ENTRYPOINT ["doro"]
-CMD ["--config", "/etc/doro/control-plane.toml", "control-plane"]
+CMD ["--help"]
