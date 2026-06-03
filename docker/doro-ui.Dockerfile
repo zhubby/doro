@@ -13,13 +13,17 @@ COPY doro-ui/package.json doro-ui/bun.lockb ./
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
 
-FROM deps AS builder
+FROM node:${NODE_VERSION}-${DEBIAN_VERSION}-slim AS builder
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_ENV=production
 
+WORKDIR /workspace/doro-ui
+
+COPY --from=deps /workspace/doro-ui/node_modules ./node_modules
 COPY doro-ui ./
 
-RUN bun run build
+RUN node node_modules/next/dist/bin/next build
 
 FROM node:${NODE_VERSION}-${DEBIAN_VERSION}-slim AS runner
 
