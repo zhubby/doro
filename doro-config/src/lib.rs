@@ -50,7 +50,6 @@ pub struct ControlPlaneConfig {
     pub server: ServerConfig,
     pub store: StoreConfig,
     pub security: SecurityConfig,
-    pub websites: WebsiteConfig,
     pub ai: AiConfig,
 }
 
@@ -58,6 +57,7 @@ pub struct ControlPlaneConfig {
 #[serde(default)]
 pub struct AgentFileConfig {
     pub agent: AgentConfig,
+    pub websites: WebsiteConfig,
     pub ai: AiConfig,
 }
 
@@ -139,6 +139,11 @@ impl Default for SecurityConfig {
 pub struct WebsiteConfig {
     pub enabled: bool,
     pub http_bind: String,
+    pub https_bind: Option<String>,
+    pub tcp_bind: Option<String>,
+    pub udp_bind: Option<String>,
+    pub static_root: Option<String>,
+    pub certificate_store: Option<String>,
 }
 
 impl Default for WebsiteConfig {
@@ -146,6 +151,11 @@ impl Default for WebsiteConfig {
         Self {
             enabled: true,
             http_bind: "127.0.0.1:8080".to_string(),
+            https_bind: None,
+            tcp_bind: None,
+            udp_bind: None,
+            static_root: None,
+            certificate_store: None,
         }
     }
 }
@@ -451,6 +461,7 @@ mod tests {
         assert_eq!(loaded.config.ai.agent.max_tool_calls, 32);
         let body = fs::read_to_string(&path)?;
         assert!(body.contains("[agent]"));
+        assert!(body.contains("[websites]"));
         assert!(body.contains("[ai]"));
         assert!(body.contains("[ai.openai]"));
         assert!(body.contains("[ai.agent]"));
@@ -515,6 +526,8 @@ mod tests {
         assert_eq!(loaded.config.agent.hostname, "edge-node");
         assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 15);
         assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
+        assert!(loaded.config.websites.enabled);
+        assert_eq!(loaded.config.websites.http_bind, "127.0.0.1:8080");
 
         Ok(())
     }

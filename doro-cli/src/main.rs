@@ -468,6 +468,7 @@ mod tests {
                     host_id: Some(uuid::Uuid::new_v4()),
                     ..doro_config::AgentConfig::default()
                 },
+                websites: doro_config::WebsiteConfig::default(),
                 ai: doro_config::AiConfig::default(),
             },
             created: false,
@@ -541,6 +542,7 @@ mod tests {
                     host_id: Some(host_id),
                     ..doro_config::AgentConfig::default()
                 },
+                websites: doro_config::WebsiteConfig::default(),
                 ai: doro_config::AiConfig::default(),
             },
             created: false,

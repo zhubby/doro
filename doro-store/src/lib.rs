@@ -220,7 +220,7 @@ pub struct NewVirtualMachineObservation {
 #[derive(Debug, Clone)]
 pub struct NewWebsite {
     pub id: Uuid,
-    pub host_id: Option<Uuid>,
+    pub host_id: Uuid,
     pub name: String,
     pub primary_domain: String,
     pub aliases: Vec<String>,
@@ -238,6 +238,7 @@ pub struct NewWebsite {
 
 #[derive(Debug, Clone)]
 pub struct WebsiteChanges {
+    pub host_id: Uuid,
     pub name: String,
     pub primary_domain: String,
     pub aliases: Vec<String>,
@@ -1583,6 +1584,16 @@ impl WebsiteRepository<'_> {
         Ok(rows.into_iter().map(website_model_to_protocol).collect())
     }
 
+    pub async fn running_by_host(&self, host_id: Uuid) -> Result<Vec<Website>, DbErr> {
+        let rows = entities::websites::Entity::find()
+            .filter(entities::websites::Column::HostId.eq(host_id))
+            .filter(entities::websites::Column::Status.eq("running"))
+            .order_by(entities::websites::Column::PrimaryDomain, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(website_model_to_protocol).collect())
+    }
+
     pub async fn get(&self, website_id: Uuid) -> Result<Option<Website>, DbErr> {
         Ok(entities::websites::Entity::find_by_id(website_id)
             .one(self.store.connection())
@@ -1592,7 +1603,12 @@ impl WebsiteRepository<'_> {
 
     pub async fn create(&self, website: NewWebsite) -> Result<Website, DbErr> {
         if self
-            .domain_listen_exists(None, &website.primary_domain, website.listen_port)
+            .domain_listen_exists(
+                None,
+                website.host_id,
+                &website.primary_domain,
+                website.listen_port,
+            )
             .await?
         {
             return Err(DbErr::Custom(
@@ -1602,7 +1618,7 @@ impl WebsiteRepository<'_> {
 
         let model = entities::websites::ActiveModel {
             id: Set(website.id),
-            host_id: Set(website.host_id),
+            host_id: Set(Some(website.host_id)),
             name: Set(website.name),
             primary_domain: Set(website.primary_domain),
             aliases: Set(serde_json::to_value(website.aliases).unwrap_or_else(|_| json!([]))),
@@ -1637,6 +1653,11 @@ impl WebsiteRepository<'_> {
         else {
             return Ok(None);
         };
+        if model.host_id.is_none() {
+            return Err(DbErr::Custom(
+                "website must be bound to a host before configuration changes".to_string(),
+            ));
+        }
         if parse_website_status(&model.status) != Some(WebsiteStatus::Stopped) {
             return Err(DbErr::Custom(
                 "website must be stopped before configuration changes".to_string(),
@@ -1645,6 +1666,7 @@ impl WebsiteRepository<'_> {
         if self
             .domain_listen_exists(
                 Some(website_id),
+                changes.host_id,
                 &changes.primary_domain,
                 changes.listen_port,
             )
@@ -1656,6 +1678,7 @@ impl WebsiteRepository<'_> {
         }
 
         let mut active: entities::websites::ActiveModel = model.into();
+        active.host_id = Set(Some(changes.host_id));
         active.name = Set(changes.name);
         active.primary_domain = Set(changes.primary_domain);
         active.aliases = Set(serde_json::to_value(changes.aliases).unwrap_or_else(|_| json!([])));
@@ -1702,15 +1725,19 @@ impl WebsiteRepository<'_> {
     async fn domain_listen_exists(
         &self,
         exclude_id: Option<Uuid>,
+        host_id: Uuid,
         primary_domain: &str,
         listen_port: u16,
     ) -> Result<bool, DbErr> {
         let rows = entities::websites::Entity::find()
+            .filter(entities::websites::Column::HostId.eq(host_id))
             .filter(entities::websites::Column::ListenPort.eq(i32::from(listen_port)))
             .all(self.store.connection())
             .await?;
         Ok(rows.into_iter().any(|row| {
-            Some(row.id) != exclude_id && row.primary_domain.eq_ignore_ascii_case(primary_domain)
+            row.host_id == Some(host_id)
+                && Some(row.id) != exclude_id
+                && row.primary_domain.eq_ignore_ascii_case(primary_domain)
         }))
     }
 }
@@ -2619,6 +2646,9 @@ fn parse_website_status(value: &str) -> Option<WebsiteStatus> {
 fn serialize_website_kind(kind: WebsiteKind) -> String {
     match kind {
         WebsiteKind::ReverseProxy => "reverse_proxy",
+        WebsiteKind::StaticSite => "static_site",
+        WebsiteKind::TcpProxy => "tcp_proxy",
+        WebsiteKind::UdpProxy => "udp_proxy",
     }
     .to_string()
 }
@@ -2626,6 +2656,9 @@ fn serialize_website_kind(kind: WebsiteKind) -> String {
 fn parse_website_kind(value: &str) -> Option<WebsiteKind> {
     match normalize_enum_token(value).as_str() {
         "reverse_proxy" => Some(WebsiteKind::ReverseProxy),
+        "static_site" => Some(WebsiteKind::StaticSite),
+        "tcp_proxy" => Some(WebsiteKind::TcpProxy),
+        "udp_proxy" => Some(WebsiteKind::UdpProxy),
         _ => None,
     }
 }
@@ -2633,6 +2666,9 @@ fn parse_website_kind(value: &str) -> Option<WebsiteKind> {
 fn serialize_website_protocol(protocol: WebsiteProtocol) -> String {
     match protocol {
         WebsiteProtocol::Http => "http",
+        WebsiteProtocol::Https => "https",
+        WebsiteProtocol::Tcp => "tcp",
+        WebsiteProtocol::Udp => "udp",
     }
     .to_string()
 }
@@ -2640,6 +2676,9 @@ fn serialize_website_protocol(protocol: WebsiteProtocol) -> String {
 fn parse_website_protocol(value: &str) -> Option<WebsiteProtocol> {
     match normalize_enum_token(value).as_str() {
         "http" => Some(WebsiteProtocol::Http),
+        "https" => Some(WebsiteProtocol::Https),
+        "tcp" => Some(WebsiteProtocol::Tcp),
+        "udp" => Some(WebsiteProtocol::Udp),
         _ => None,
     }
 }
@@ -2996,8 +3035,10 @@ mod tests {
     #[tokio::test]
     async fn creates_website_and_maps_protocol_fields() -> anyhow::Result<()> {
         let id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
         let now = Utc::now();
         let mut inserted = website_model(id, "example.com", WebsiteStatus::Stopped);
+        inserted.host_id = Some(host_id);
         inserted.aliases = json!(["www.example.com"]);
         let connection = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<entities::websites::Model>::new()])
@@ -3009,7 +3050,7 @@ mod tests {
             .websites()
             .create(NewWebsite {
                 id,
-                host_id: None,
+                host_id,
                 name: "example.com".to_string(),
                 primary_domain: "example.com".to_string(),
                 aliases: vec!["www.example.com".to_string()],
@@ -3027,6 +3068,7 @@ mod tests {
             .await?;
 
         assert_eq!(website.id, id);
+        assert_eq!(website.host_id, Some(host_id));
         assert_eq!(website.status, WebsiteStatus::Stopped);
         assert_eq!(website.kind, WebsiteKind::ReverseProxy);
         assert_eq!(website.protocol, WebsiteProtocol::Http);
@@ -3035,13 +3077,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_duplicate_website_domain_and_listen_port() {
+    async fn rejects_duplicate_website_domain_and_listen_port_on_same_host() {
+        let host_id = Uuid::new_v4();
+        let mut existing = website_model(Uuid::new_v4(), "Example.com", WebsiteStatus::Stopped);
+        existing.host_id = Some(host_id);
         let connection = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([[website_model(
-                Uuid::new_v4(),
-                "Example.com",
-                WebsiteStatus::Stopped,
-            )]])
+            .append_query_results([[existing]])
             .into_connection();
         let store = Store::from_connection(connection, DatabaseBackend::Postgres);
 
@@ -3049,7 +3090,7 @@ mod tests {
             .websites()
             .create(NewWebsite {
                 id: Uuid::new_v4(),
-                host_id: None,
+                host_id,
                 name: "example".to_string(),
                 primary_domain: "example.com".to_string(),
                 aliases: Vec::new(),
@@ -3074,10 +3115,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn allows_duplicate_website_domain_and_listen_port_on_different_hosts()
+    -> anyhow::Result<()> {
+        let id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let mut existing = website_model(Uuid::new_v4(), "Example.com", WebsiteStatus::Stopped);
+        existing.host_id = Some(Uuid::new_v4());
+        let mut inserted = website_model(id, "example.com", WebsiteStatus::Stopped);
+        inserted.host_id = Some(host_id);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[existing]])
+            .append_query_results([[inserted]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let website = store
+            .websites()
+            .create(NewWebsite {
+                id,
+                host_id,
+                name: "example".to_string(),
+                primary_domain: "example.com".to_string(),
+                aliases: Vec::new(),
+                status: WebsiteStatus::Stopped,
+                kind: WebsiteKind::ReverseProxy,
+                protocol: WebsiteProtocol::Http,
+                listen_port: 8080,
+                upstream_url: "http://127.0.0.1:8787".to_string(),
+                app_install_id: None,
+                tls_certificate_id: None,
+                config: json!({}),
+                notes: None,
+                created_at: Utc::now(),
+            })
+            .await?;
+
+        assert_eq!(website.host_id, Some(host_id));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn lists_running_websites_by_host() -> anyhow::Result<()> {
+        let host_id = Uuid::new_v4();
+        let mut website = website_model(Uuid::new_v4(), "example.com", WebsiteStatus::Running);
+        website.host_id = Some(host_id);
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[website]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let websites = store.websites().running_by_host(host_id).await?;
+
+        assert_eq!(websites.len(), 1);
+        assert_eq!(websites[0].host_id, Some(host_id));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn running_website_configuration_is_not_updated() {
         let id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let mut website = website_model(id, "example.com", WebsiteStatus::Running);
+        website.host_id = Some(host_id);
         let connection = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_query_results([[website_model(id, "example.com", WebsiteStatus::Running)]])
+            .append_query_results([[website]])
             .into_connection();
         let store = Store::from_connection(connection, DatabaseBackend::Postgres);
 
@@ -3086,6 +3187,7 @@ mod tests {
             .update_stopped(
                 id,
                 WebsiteChanges {
+                    host_id,
                     name: "changed".to_string(),
                     primary_domain: "changed.example".to_string(),
                     aliases: Vec::new(),

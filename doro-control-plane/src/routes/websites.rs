@@ -1,7 +1,9 @@
+use crate::agent_streams::{AgentStreamRegistry, agent_task_error_message};
 use crate::auth::CurrentUser;
 use crate::error::{AppError, normalize_optional_text, website_store_app_error};
 use crate::prelude::*;
 use crate::state::AppState;
+use url::Url;
 
 pub(crate) async fn list_websites(
     State(state): State<AppState>,
@@ -28,11 +30,13 @@ pub(crate) async fn create_website(
     State(state): State<AppState>,
     Json(request): Json<CreateWebsiteRequest>,
 ) -> Result<Json<WebsiteActionResponse>, AppError> {
+    ensure_network_expose_ready(&state, request.host_id).await?;
     let changes = validate_website_request(
+        request.host_id,
         request.name,
         request.primary_domain,
         request.aliases,
-        request.listen_port.unwrap_or(state.website_http_port),
+        request.listen_port,
         request.upstream_url,
         request.notes,
     )?;
@@ -42,7 +46,7 @@ pub(crate) async fn create_website(
         .websites()
         .create(NewWebsite {
             id: Uuid::new_v4(),
-            host_id: None,
+            host_id: changes.host_id,
             name: changes.name,
             primary_domain: changes.primary_domain,
             aliases: changes.aliases,
@@ -71,6 +75,7 @@ pub(crate) async fn update_website(
     AxumPath(website_id): AxumPath<Uuid>,
     Json(request): Json<UpdateWebsiteRequest>,
 ) -> Result<Json<WebsiteActionResponse>, AppError> {
+    ensure_network_expose_ready(&state, request.host_id).await?;
     let existing = state
         .store
         .websites()
@@ -84,10 +89,11 @@ pub(crate) async fn update_website(
         ));
     }
     let changes = validate_website_request(
+        request.host_id,
         request.name,
         request.primary_domain,
         request.aliases,
-        request.listen_port.unwrap_or(state.website_http_port),
+        request.listen_port,
         request.upstream_url,
         request.notes,
     )?;
@@ -128,13 +134,30 @@ pub(crate) async fn stop_website(
     AxumPath(website_id): AxumPath<Uuid>,
     Json(_request): Json<WebsiteActionRequest>,
 ) -> Result<Json<WebsiteActionResponse>, AppError> {
+    let existing = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    let host_id = website_host_id(&existing)?;
     let item = state
         .store
         .websites()
         .set_status(website_id, WebsiteStatus::Stopped, None)
         .await?
         .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
-    reload_website_routes(&state).await?;
+    if let Err(error) = sync_website_routes_for_host(&state, host_id).await {
+        let message = error.0.to_string();
+        let item = state
+            .store
+            .websites()
+            .set_status(website_id, WebsiteStatus::Warning, Some(message))
+            .await?
+            .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+        record_website_event(&state, "website.warning", &item).await?;
+        return Err(error);
+    }
     record_website_event(&state, "website.stopped", &item).await?;
     Ok(Json(WebsiteActionResponse { item, task: None }))
 }
@@ -149,10 +172,28 @@ pub(crate) async fn delete_website(
         .get(website_id)
         .await?
         .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    let host_id = website_host_id(&item)?;
+    if item.status == WebsiteStatus::Running || item.status == WebsiteStatus::Warning {
+        let stopped = state
+            .store
+            .websites()
+            .set_status(website_id, WebsiteStatus::Stopped, None)
+            .await?
+            .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+        if let Err(error) = sync_website_routes_for_host(&state, host_id).await {
+            let message = error.0.to_string();
+            let _ = state
+                .store
+                .websites()
+                .set_status(website_id, WebsiteStatus::Warning, Some(message))
+                .await;
+            record_website_event(&state, "website.warning", &stopped).await?;
+            return Err(error);
+        }
+    }
     if !state.store.websites().delete(website_id).await? {
         return Err(AppError::status(StatusCode::NOT_FOUND, "website not found"));
     }
-    reload_website_routes(&state).await?;
     record_website_event(&state, "website.deleted", &item).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -170,8 +211,11 @@ pub(crate) async fn website_network_expose_task(
         .get(website_id)
         .await?
         .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    let host_id = website_host_id(&item)?;
+    ensure_network_expose_ready(&state, host_id).await?;
     let task = create_website_task(
         &state,
+        host_id,
         current_user.username,
         format!("{action} website {}", item.primary_domain),
         format!("{action} website reverse proxy route"),
@@ -191,6 +235,7 @@ pub(crate) async fn website_network_expose_task(
 
 pub(crate) async fn create_website_task(
     state: &AppState,
+    host_id: Uuid,
     created_by: String,
     title: String,
     summary: impl Into<String>,
@@ -202,7 +247,7 @@ pub(crate) async fn create_website_task(
         .tasks()
         .create_with_steps(NewTask {
             id: Uuid::new_v4(),
-            host_id: None,
+            host_id: Some(host_id),
             title,
             prompt: None,
             status: TaskStatus::WaitingApproval,
@@ -251,42 +296,161 @@ pub(crate) async fn apply_approved_website_task(state: &AppState, task_id: Uuid,
     };
     if let Err(error) = apply_website_route(state, website_id).await {
         tracing::warn!(?error, website_id = %website_id, "failed to apply approved website route");
+        let message = error.0.to_string();
+        let _ = state
+            .store
+            .tasks()
+            .update_step_status(step_id, "failed")
+            .await;
+        let _ = state
+            .store
+            .tasks()
+            .update_status(task.id, TaskStatus::Failed, Some(Utc::now()), Some(message))
+            .await;
+        return;
     }
+    let _ = state
+        .store
+        .tasks()
+        .update_step_status(step_id, "succeeded")
+        .await;
+    let _ = state
+        .store
+        .tasks()
+        .update_status(task.id, TaskStatus::Succeeded, Some(Utc::now()), None)
+        .await;
 }
 
 pub(crate) async fn apply_website_route(
     state: &AppState,
     website_id: Uuid,
 ) -> Result<(), AppError> {
+    let existing = state
+        .store
+        .websites()
+        .get(website_id)
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
+    let host_id = website_host_id(&existing)?;
+    ensure_network_expose_ready(state, host_id).await?;
     let item = state
         .store
         .websites()
         .set_status(website_id, WebsiteStatus::Running, None)
         .await?
         .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "website not found"))?;
-    if let Err(error) = reload_website_routes(state).await {
+    if let Err(error) = sync_website_routes_for_host(state, host_id).await {
         let message = error.0.to_string();
         let _ = state
             .store
             .websites()
             .set_status(website_id, WebsiteStatus::Warning, Some(message))
             .await;
-        let _ = reload_website_routes(state).await;
         return Err(error);
     }
     record_website_event(state, "website.running", &item).await?;
     Ok(())
 }
 
-pub(crate) async fn reload_website_routes(state: &AppState) -> Result<(), AppError> {
-    let websites = state.store.websites().running().await?;
+pub(crate) async fn sync_website_routes_for_host(
+    state: &AppState,
+    host_id: Uuid,
+) -> Result<grpc::WebsiteRoutesAppliedEvent, AppError> {
+    ensure_network_expose_ready(state, host_id).await?;
+    let result = apply_website_routes_for_host(&state.store, &state.agent_streams, host_id).await?;
+    tracing::info!(
+        host_id = %host_id,
+        route_count = result.route_count,
+        "applied website routes on agent"
+    );
+    Ok(result)
+}
+
+pub(crate) async fn sync_running_websites_for_connected_host(
+    store: Store,
+    agent_streams: AgentStreamRegistry,
+    host_id: Uuid,
+) {
+    if let Err(error) = apply_website_routes_for_host(&store, &agent_streams, host_id).await {
+        tracing::warn!(
+            ?error,
+            host_id = %host_id,
+            "failed to sync running website routes for connected agent"
+        );
+    }
+}
+
+pub(crate) async fn apply_website_routes_for_host(
+    store: &Store,
+    agent_streams: &AgentStreamRegistry,
+    host_id: Uuid,
+) -> Result<grpc::WebsiteRoutesAppliedEvent, AppError> {
+    let websites = store.websites().running_by_host(host_id).await?;
+    let routes = websites
+        .iter()
+        .map(website_to_grpc_route)
+        .collect::<Vec<_>>();
+    agent_streams
+        .apply_website_routes(
+            host_id,
+            grpc::ApplyWebsiteRoutesCommand {
+                command_id: String::new(),
+                routes,
+            },
+        )
+        .await
+        .map_err(|error| AppError::status(StatusCode::BAD_GATEWAY, agent_task_error_message(error)))
+}
+
+pub(crate) async fn ensure_network_expose_ready(
+    state: &AppState,
+    host_id: Uuid,
+) -> Result<Uuid, AppError> {
+    let hosts = state.store.hosts().list().await?;
+    let host = hosts
+        .into_iter()
+        .find(|host| host.id == host_id)
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "host not found"))?;
+    if host.status != HostStatus::Online {
+        return Err(AppError::status(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "agent is not online",
+        ));
+    }
+    if !host
+        .capabilities
+        .iter()
+        .any(|capability| capability.name == CapabilityName::NetworkExpose)
+    {
+        return Err(AppError::status(
+            StatusCode::FORBIDDEN,
+            "agent does not declare NetworkExpose capability",
+        ));
+    }
     state
-        .website_runtime
-        .reload(&websites)
-        .map(|route_count| {
-            tracing::info!(route_count, "reloaded website proxy routes");
+        .agent_streams
+        .agent_id_for_host(host_id)
+        .await
+        .ok_or_else(|| {
+            AppError::status(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent stream is not connected",
+            )
         })
-        .map_err(|error| AppError::status(StatusCode::BAD_REQUEST, error.to_string()))
+}
+
+pub(crate) fn website_to_grpc_route(website: &Website) -> grpc::WebsiteRoute {
+    grpc::WebsiteRoute {
+        website_id: website.id.to_string(),
+        primary_domain: website.primary_domain.clone(),
+        aliases: website.aliases.clone(),
+        status: serialize_website_status(website.status).to_string(),
+        kind: serialize_website_kind(website.kind).to_string(),
+        protocol: serialize_website_protocol(website.protocol).to_string(),
+        listen_port: u32::from(website.listen_port),
+        upstream_url: website.upstream.url.clone(),
+        config_json: website.config.to_string(),
+    }
 }
 
 pub(crate) async fn record_website_event(
@@ -313,6 +477,7 @@ pub(crate) async fn record_website_event(
 }
 
 pub(crate) fn validate_website_request(
+    host_id: Uuid,
     name: String,
     primary_domain: String,
     aliases: Vec<String>,
@@ -341,31 +506,9 @@ pub(crate) fn validate_website_request(
         ));
     }
     let upstream_url = upstream_url.trim().to_string();
-    let validation_website = Website {
-        id: Uuid::new_v4(),
-        host_id: None,
-        name: name.clone(),
-        primary_domain: primary_domain.clone(),
-        aliases: aliases.clone(),
-        status: WebsiteStatus::Running,
-        kind: WebsiteKind::ReverseProxy,
-        protocol: WebsiteProtocol::Http,
-        listen_port,
-        upstream: doro_protocol::WebsiteProxyTarget {
-            url: upstream_url.clone(),
-        },
-        app_install_id: None,
-        tls_certificate_id: None,
-        config: serde_json::json!({}),
-        notes: None,
-        last_runtime_error: None,
-        last_checked_at: None,
-        created_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-    doro_website::WebsiteRoute::from_website(&validation_website)
-        .map_err(|error| AppError::status(StatusCode::BAD_REQUEST, error.to_string()))?;
+    validate_http_upstream(&upstream_url)?;
     Ok(WebsiteChanges {
+        host_id,
         name,
         primary_domain,
         aliases,
@@ -373,6 +516,75 @@ pub(crate) fn validate_website_request(
         upstream_url,
         notes: normalize_optional_text(notes),
     })
+}
+
+pub(crate) fn website_host_id(website: &Website) -> Result<Uuid, AppError> {
+    website.host_id.ok_or_else(|| {
+        AppError::status(
+            StatusCode::CONFLICT,
+            "website must be bound to a host before agent route operations",
+        )
+    })
+}
+
+pub(crate) fn validate_http_upstream(upstream_url: &str) -> Result<(), AppError> {
+    if upstream_url.trim().is_empty() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website upstream URL is required",
+        ));
+    }
+    let url = Url::parse(upstream_url).map_err(|_| {
+        AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website upstream URL must be an absolute http or https URL",
+        )
+    })?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website upstream URL must be an absolute http or https URL",
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website upstream URL must include a host",
+        ));
+    }
+    if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+        return Err(AppError::status(
+            StatusCode::BAD_REQUEST,
+            "website upstream URL path, query, and fragment are not supported in v1",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn serialize_website_status(status: WebsiteStatus) -> &'static str {
+    match status {
+        WebsiteStatus::Stopped => "stopped",
+        WebsiteStatus::Running => "running",
+        WebsiteStatus::Warning => "warning",
+    }
+}
+
+pub(crate) fn serialize_website_kind(kind: WebsiteKind) -> &'static str {
+    match kind {
+        WebsiteKind::ReverseProxy => "reverse_proxy",
+        WebsiteKind::StaticSite => "static_site",
+        WebsiteKind::TcpProxy => "tcp_proxy",
+        WebsiteKind::UdpProxy => "udp_proxy",
+    }
+}
+
+pub(crate) fn serialize_website_protocol(protocol: WebsiteProtocol) -> &'static str {
+    match protocol {
+        WebsiteProtocol::Http => "http",
+        WebsiteProtocol::Https => "https",
+        WebsiteProtocol::Tcp => "tcp",
+        WebsiteProtocol::Udp => "udp",
+    }
 }
 
 pub(crate) fn normalize_domain_input(value: &str) -> Option<String> {

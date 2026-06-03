@@ -32,6 +32,10 @@ vm_user_network_enabled = true
 vm_console_enabled = true
 vm_vnc_bind = "127.0.0.1"
 
+[websites]
+enabled = true
+http_bind = "127.0.0.1:8080"
+
 [ai]
 provider = "openai"
 
@@ -70,7 +74,7 @@ The initial service surface is:
 
 The first stream implementation is a long-lived outbound session. The agent sends `connected`, periodic `heartbeat`, runtime log lines, and local observation events. The control plane responds with an `ack` command and persists inbound operational events. During control-plane maintenance or process shutdown, the control plane sends a `shutdown` command so the agent can close the current stream promptly and wait before reconnecting; this is not a request to stop the agent process or mark a task failed. If the connection fails or the stream closes, including after a shutdown command, the agent reconnects automatically with exponential backoff starting at 2 seconds and capped at 30 seconds.
 
-The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
+The stream also carries direct control-plane commands for connected agents. Container refresh uses `CollectContainersCommand`. Virtual machine refresh uses `CollectVirtualMachinesCommand`, and approved virtual machine work uses `RunVirtualMachineCommandCommand` with a JSON command envelope owned by the virtual machine abstraction. File management uses `ListDirectoryCommand`, `ReadFileCommand`, `SearchFilesCommand`, and `RunFileOperationCommand`; the agent performs those operations as its current OS user and replies with `FileCommandResultEvent`. Website route application uses `ApplyWebsiteRoutesCommand`; the control plane sends the target Host's complete running route table to an online Agent that declares `NetworkExpose`, and the Agent replies with `WebsiteRoutesAppliedEvent`. One-shot terminal execution uses `RunTerminalCommandCommand`: the control plane sends a single shell command to an online agent that declares `ShellExecute`, the agent writes it to its local PTY session, and the agent replies with `TerminalCommandResultEvent` containing output, exit code, and start/finish timestamps.
 
 Scheduled task dispatch also uses the Agent stream. Script schedules reuse `RunTerminalCommandCommand` and require an online Agent that declares `ShellExecute`. Agent-run schedules use `RunAgentTaskCommand` and require an online Agent that declares `AgentRun`; the Agent runs the local Doro AI runner, executes approved local tools, emits task progress/result events, and returns a final `CommandResultEvent`.
 
@@ -89,6 +93,7 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `virtual_machine.snapshot`: read-only virtual machine observations from the configured VM provider. The direct QEMU provider is implemented behind `doro-vm` traits; the control plane upserts current rows into `virtual_machines` and keeps full provider payloads in `agent_events`.
 - `virtual_machine.command_result`: result of an approved VM lifecycle, snapshot, or console command. The event is audited even when the command fails.
 - `file.command_result`: result of a file browsing, search, download, upload, create, rename, move, copy, or delete command. File operations are direct and audited; first-version write operations do not create approval requests.
+- `website.routes_applied`: result of applying a host-scoped website route table to the Agent's Pingora runtime. Failure leaves the previous route table in place and is persisted for audit.
 - `agent_task.progress`: progress from the local AI runner, including high-risk tool step status changes.
 - `agent_task.result`: final AI task summary and transcript payload.
 - `agent_tool.approval_requested`: high-risk AI tool request converted by the control plane into a normal approval.
@@ -108,6 +113,7 @@ Agent protocol traffic is persisted by `doro-store`:
 - `metrics.snapshot` payloads are normalized into `metric_snapshots`.
 - `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
 - `virtual_machine.snapshot` payloads update current `virtual_machines` rows by host, provider, and VM reference.
+- `website.routes_applied` payloads are stored as audit events. Website desired state remains in `websites`; route application does not create a separate runtime state table.
 
 Enrollment tokens are represented by `enrollment_tokens`. The store schema only keeps token hashes; plaintext enrollment secrets must not be persisted.
 

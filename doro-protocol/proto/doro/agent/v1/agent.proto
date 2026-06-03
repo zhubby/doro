@@ -57,6 +57,7 @@ message AgentEvent {
     AgentTaskProgressEvent agent_task_progress = 18;
     AgentTaskResultEvent agent_task_result = 19;
     AgentToolApprovalRequestEvent agent_tool_approval_request = 20;
+    WebsiteRoutesAppliedEvent website_routes_applied = 21;
   }
 }
 
@@ -80,6 +81,7 @@ message ControlPlaneCommand {
     RunFileOperationCommand run_file_operation = 16;
     RunAgentTaskCommand run_agent_task = 17;
     AgentToolApprovalDecisionCommand agent_tool_approval_decision = 18;
+    ApplyWebsiteRoutesCommand apply_website_routes = 19;
   }
 }
 
@@ -141,6 +143,23 @@ message AgentToolApprovalDecisionCommand {
   string step_id = 3;
   bool approved = 4;
   string message = 5;
+}
+
+message ApplyWebsiteRoutesCommand {
+  string command_id = 1;
+  repeated WebsiteRoute routes = 2;
+}
+
+message WebsiteRoute {
+  string website_id = 1;
+  string primary_domain = 2;
+  repeated string aliases = 3;
+  string status = 4;
+  string kind = 5;
+  string protocol = 6;
+  uint32 listen_port = 7;
+  string upstream_url = 8;
+  string config_json = 9;
 }
 
 message ShutdownCommand {
@@ -278,6 +297,14 @@ message FileCommandResultEvent {
   string message = 3;
   string result_json = 4;
   bytes content = 5;
+}
+
+message WebsiteRoutesAppliedEvent {
+  string command_id = 1;
+  CommandStatus status = 2;
+  string message = 3;
+  uint32 route_count = 4;
+  repeated string website_ids = 5;
 }
 
 message AgentTaskProgressEvent {
