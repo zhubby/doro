@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   Bot,
+  Check,
   CheckCircle2,
   Clock,
   History,
@@ -14,6 +15,7 @@ import {
   ShieldCheck,
   Sparkles,
   Wrench,
+  X,
 } from "lucide-react";
 import {
   type FormEvent,
@@ -37,11 +39,12 @@ import {
 } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { useToastMessage } from "@/components/ui/use-toast-message";
-import { Link } from "@/i18n/navigation";
 import {
   aiChatStreamUrl,
+  approveApproval,
   createAiChatTurn,
   createAiConversation,
+  denyApproval,
   getAiConversation,
   getAiConversations,
   getAiModelProviders,
@@ -55,10 +58,20 @@ import type {
   AiChatStreamEvent,
   AiConversation,
   AiModelProvider,
+  ApprovalRequest,
   Host,
 } from "@/types/api";
 
 type DisplayMap = Record<string, string>;
+type ApprovalDecision = "approve" | "deny";
+type MarkdownBlock =
+  | { kind: "paragraph"; text: string }
+  | { kind: "heading"; depth: number; text: string }
+  | { kind: "hr" }
+  | { kind: "table"; headers: string[]; rows: string[][] }
+  | { kind: "code"; language: string | null; code: string }
+  | { kind: "list"; ordered: boolean; items: string[] }
+  | { kind: "quote"; lines: string[] };
 
 const promptSuggestions = [
   "检查当前主机的 CPU、内存、磁盘和网络状态，列出需要关注的异常。",
@@ -135,23 +148,235 @@ function streamEventToChatEvent(event: AiChatStreamEvent): AiChatEvent {
 }
 
 function jsonStringField(value: unknown, key: string) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return null;
   }
-  const field = (value as Record<string, unknown>)[key];
+  const field = value[key];
   return typeof field === "string" ? field : null;
 }
 
-function eventApprovalId(event: AiChatEvent) {
-  if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload)) {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function eventApproval(event: AiChatEvent): ApprovalRequest | null {
+  if (!isRecord(event.payload)) {
     return null;
   }
-  const approval = (event.payload as Record<string, unknown>).approval;
-  if (!approval || typeof approval !== "object" || Array.isArray(approval)) {
+  const approval = event.payload.approval;
+  if (!isRecord(approval)) {
     return null;
   }
-  const id = (approval as Record<string, unknown>).id;
-  return typeof id === "string" ? id : null;
+  return typeof approval.id === "string" ? (approval as ApprovalRequest) : null;
+}
+
+function eventWithApproval(event: AiChatEvent, approval: ApprovalRequest): AiChatEvent {
+  if (!isRecord(event.payload)) {
+    return event;
+  }
+  return {
+    ...event,
+    payload: {
+      ...event.payload,
+      approval,
+    } as AiChatEvent["payload"],
+  };
+}
+
+function approvalStatusLabel(status: ApprovalRequest["status"]) {
+  if (status === "pending") {
+    return "待审批";
+  }
+  if (status === "approved") {
+    return "已批准";
+  }
+  if (status === "denied") {
+    return "已拒绝";
+  }
+  return "已过期";
+}
+
+function splitMarkdownTableRow(line: string) {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+function isMarkdownTableSeparator(line: string) {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function parseMarkdownBlocks(content: string): MarkdownBlock[] {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks: MarkdownBlock[] = [];
+  let paragraphLines: string[] = [];
+
+  function flushParagraph() {
+    if (!paragraphLines.length) {
+      return;
+    }
+    blocks.push({ kind: "paragraph", text: paragraphLines.join("\n") });
+    paragraphLines = [];
+  }
+
+  for (let index = 0; index < lines.length; ) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    const codeFence = /^```([\w-]+)?\s*$/.exec(trimmed);
+    if (codeFence) {
+      flushParagraph();
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push({
+        kind: "code",
+        language: codeFence[1] ?? null,
+        code: codeLines.join("\n"),
+      });
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      flushParagraph();
+      blocks.push({ kind: "hr" });
+      index += 1;
+      continue;
+    }
+
+    const heading = /^(#{1,4})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      blocks.push({
+        kind: "heading",
+        depth: heading[1].length,
+        text: heading[2].trim(),
+      });
+      index += 1;
+      continue;
+    }
+
+    if (
+      line.includes("|") &&
+      index + 1 < lines.length &&
+      isMarkdownTableSeparator(lines[index + 1])
+    ) {
+      flushParagraph();
+      const headers = splitMarkdownTableRow(line);
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes("|")) {
+        rows.push(splitMarkdownTableRow(lines[index]));
+        index += 1;
+      }
+      blocks.push({ kind: "table", headers, rows });
+      continue;
+    }
+
+    const unordered = /^\s*[-*]\s+(.+)$/.exec(line);
+    const ordered = /^\s*\d+[.)]\s+(.+)$/.exec(line);
+    if (unordered || ordered) {
+      flushParagraph();
+      const orderedList = Boolean(ordered);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const item = orderedList
+          ? /^\s*\d+[.)]\s+(.+)$/.exec(lines[index])
+          : /^\s*[-*]\s+(.+)$/.exec(lines[index]);
+        if (!item) {
+          break;
+        }
+        items.push(item[1].trim());
+        index += 1;
+      }
+      blocks.push({ kind: "list", ordered: orderedList, items });
+      continue;
+    }
+
+    const quote = /^\s*>\s?(.*)$/.exec(line);
+    if (quote) {
+      flushParagraph();
+      const quoteLines: string[] = [];
+      while (index < lines.length) {
+        const current = /^\s*>\s?(.*)$/.exec(lines[index]);
+        if (!current) {
+          break;
+        }
+        quoteLines.push(current[1]);
+        index += 1;
+      }
+      blocks.push({ kind: "quote", lines: quoteLines });
+      continue;
+    }
+
+    paragraphLines.push(line.trimEnd());
+    index += 1;
+  }
+
+  flushParagraph();
+  return blocks;
+}
+
+function renderInlineMarkdown(text: string) {
+  const nodes: ReactNode[] = [];
+  const pattern = /(\*\*[^*]+?\*\*|`[^`]+?`|\[[^\]]+?\]\((?:https?:\/\/|mailto:)[^)]+?\))/g;
+  let lastIndex = 0;
+
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > lastIndex) {
+      nodes.push(text.slice(lastIndex, match.index));
+    }
+
+    const token = match[0];
+    if (token.startsWith("**")) {
+      nodes.push(
+        <strong key={`strong-${match.index}`} className="font-semibold text-foreground">
+          {token.slice(2, -2)}
+        </strong>,
+      );
+    } else if (token.startsWith("`")) {
+      nodes.push(
+        <code
+          key={`code-${match.index}`}
+          className="rounded bg-muted px-1 py-0.5 font-mono text-[0.92em] text-foreground"
+        >
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else {
+      const link = /^\[([^\]]+?)\]\((.+)\)$/.exec(token);
+      nodes.push(
+        <a
+          key={`link-${match.index}`}
+          href={link?.[2] ?? "#"}
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-primary underline-offset-4 hover:underline"
+        >
+          {link?.[1] ?? token}
+        </a>,
+      );
+    }
+
+    lastIndex = match.index + token.length;
+  }
+
+  if (lastIndex < text.length) {
+    nodes.push(text.slice(lastIndex));
+  }
+
+  return nodes;
 }
 
 export function AiPage() {
@@ -172,6 +397,9 @@ export function AiPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [streamingMessageId, setStreamingMessageId] = useState<string | null>(null);
+  const [approvalActionPending, setApprovalActionPending] = useState<string | null>(
+    null,
+  );
   const [apiError, setApiError] = useState<string | null>(null);
   const queuesRef = useRef<Record<string, string>>({});
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -229,6 +457,9 @@ export function AiPage() {
   const eventsByMessage = useMemo(() => {
     const grouped: Record<string, AiChatEvent[]> = {};
     for (const event of events) {
+      if (event.kind === "done") {
+        continue;
+      }
       grouped[event.message_id] = [...(grouped[event.message_id] ?? []), event];
     }
     return grouped;
@@ -425,6 +656,17 @@ export function AiPage() {
 
       setEvents((current) => [...current, streamEventToChatEvent(streamEvent)]);
       if (streamEvent.kind === "done" || streamEvent.kind === "error") {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? {
+                  ...message,
+                  status: streamEvent.kind === "done" ? "succeeded" : "failed",
+                  updated_at: streamEvent.created_at,
+                }
+              : message,
+          ),
+        );
         const queued = queuesRef.current[messageId] ?? "";
         queuesRef.current[messageId] = "";
         setStreamingMessageId(null);
@@ -474,6 +716,49 @@ export function AiPage() {
       setApiError(result.error ?? "发送失败");
     }
     setSending(false);
+  }
+
+  async function handleResolveApproval(
+    eventId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ) {
+    const pendingKey = `${approvalId}:${decision}`;
+    setApprovalActionPending(pendingKey);
+    setApiError(null);
+
+    const result =
+      decision === "approve"
+        ? await approveApproval(approvalId)
+        : await denyApproval(approvalId);
+
+    const resolvedApproval = result.data?.item;
+    if (resolvedApproval) {
+      const eventMessageId =
+        events.find((event) => event.id === eventId)?.message_id ?? null;
+      setEvents((current) =>
+        current.map((event) =>
+          event.id === eventId ? eventWithApproval(event, resolvedApproval) : event,
+        ),
+      );
+      if (eventMessageId) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === eventMessageId
+              ? {
+                  ...message,
+                  status: decision === "approve" ? "running" : "failed",
+                  updated_at: resolvedApproval.resolved_at ?? message.updated_at,
+                }
+              : message,
+          ),
+        );
+      }
+    } else {
+      setApiError(result.error ?? "审批处理失败");
+    }
+
+    setApprovalActionPending(null);
   }
 
   return (
@@ -580,6 +865,8 @@ export function AiPage() {
                 }
                 events={eventsByMessage[message.id] ?? []}
                 streaming={message.id === streamingMessageId}
+                approvalActionPending={approvalActionPending}
+                onResolveApproval={handleResolveApproval}
               />
             ))}
             <div ref={messagesEndRef} aria-hidden="true" />
@@ -974,11 +1261,19 @@ function ChatMessageCard({
   content,
   events,
   streaming,
+  approvalActionPending,
+  onResolveApproval,
 }: {
   message: AiChatMessage;
   content: string;
   events: AiChatEvent[];
   streaming: boolean;
+  approvalActionPending: string | null;
+  onResolveApproval: (
+    eventId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ) => void;
 }) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -1013,12 +1308,7 @@ function ChatMessageCard({
             </Badge>
           ) : null}
         </div>
-        <p className="whitespace-pre-wrap break-words text-sm leading-7 [overflow-wrap:anywhere]">
-          {content}
-          {streaming ? (
-            <span className="ml-1 inline-block h-4 w-1 animate-pulse rounded-full bg-current align-[-2px]" />
-          ) : null}
-        </p>
+        <MarkdownMessage content={content} streaming={streaming} />
         {events.length ? (
           <div className="mt-4 min-w-0 max-w-full border-t pt-3">
             <p className="mb-2 text-[11px] font-medium text-muted-foreground">
@@ -1026,7 +1316,12 @@ function ChatMessageCard({
             </p>
             <div className="grid min-w-0 gap-2">
               {events.map((event) => (
-                <ChatEventLine key={event.id} event={event} />
+                <ChatEventLine
+                  key={event.id}
+                  event={event}
+                  approvalActionPending={approvalActionPending}
+                  onResolveApproval={onResolveApproval}
+                />
               ))}
             </div>
           </div>
@@ -1034,6 +1329,144 @@ function ChatMessageCard({
       </div>
       {isUser ? <MessageAvatar role={message.role} /> : null}
     </article>
+  );
+}
+
+function MarkdownMessage({
+  content,
+  streaming,
+}: {
+  content: string;
+  streaming: boolean;
+}) {
+  const blocks = useMemo(() => parseMarkdownBlocks(content), [content]);
+
+  return (
+    <div className="min-w-0 max-w-full text-sm leading-7">
+      {blocks.length ? (
+        <div className="space-y-3">
+          {blocks.map((block, index) => (
+            <MarkdownBlockView key={`${block.kind}-${index}`} block={block} />
+          ))}
+        </div>
+      ) : null}
+      {streaming ? (
+        <span
+          className={cn(
+            "inline-block h-4 w-1 animate-pulse rounded-full bg-current align-[-2px]",
+            blocks.length && "mt-1",
+          )}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+function MarkdownBlockView({ block }: { block: MarkdownBlock }) {
+  if (block.kind === "paragraph") {
+    return (
+      <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+        {renderInlineMarkdown(block.text)}
+      </p>
+    );
+  }
+
+  if (block.kind === "heading") {
+    return (
+      <div
+        className={cn(
+          "break-words font-semibold text-foreground [overflow-wrap:anywhere]",
+          block.depth <= 2 ? "pt-1 text-base leading-7" : "text-sm leading-6",
+        )}
+        role="heading"
+        aria-level={Math.min(block.depth, 6)}
+      >
+        {renderInlineMarkdown(block.text)}
+      </div>
+    );
+  }
+
+  if (block.kind === "hr") {
+    return <div className="h-px w-full bg-border" aria-hidden="true" />;
+  }
+
+  if (block.kind === "code") {
+    return (
+      <pre className="max-w-full overflow-hidden whitespace-pre-wrap break-words rounded-md border bg-muted/65 p-3 font-mono text-xs leading-5 text-foreground [overflow-wrap:anywhere]">
+        <code>{block.code}</code>
+      </pre>
+    );
+  }
+
+  if (block.kind === "table") {
+    const columnCount = Math.max(
+      block.headers.length,
+      ...block.rows.map((row) => row.length),
+      1,
+    );
+    const columns = Array.from({ length: columnCount }, (_, index) => index);
+
+    return (
+      <div className="max-w-full overflow-hidden rounded-md border bg-background/70">
+        <table className="w-full table-fixed border-collapse text-left text-xs leading-5">
+          <thead className="bg-muted/70 text-muted-foreground">
+            <tr>
+              {columns.map((column) => (
+                <th
+                  key={column}
+                  className="border-b px-2.5 py-2 align-top font-medium break-words [overflow-wrap:anywhere]"
+                >
+                  {renderInlineMarkdown(block.headers[column] ?? "")}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="border-t first:border-t-0">
+                {columns.map((column) => (
+                  <td
+                    key={column}
+                    className="px-2.5 py-2 align-top break-words [overflow-wrap:anywhere]"
+                  >
+                    {renderInlineMarkdown(row[column] ?? "")}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  if (block.kind === "list") {
+    const List = block.ordered ? "ol" : "ul";
+    return (
+      <List
+        className={cn(
+          "grid gap-1 pl-5 break-words [overflow-wrap:anywhere]",
+          block.ordered ? "list-decimal" : "list-disc",
+        )}
+      >
+        {block.items.map((item, index) => (
+          <li key={index}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </List>
+    );
+  }
+
+  return (
+    <blockquote className="border-l-2 border-primary/35 pl-3 text-muted-foreground">
+      {block.lines.map((line, index) => (
+        <p
+          key={index}
+          className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]"
+        >
+          {renderInlineMarkdown(line)}
+        </p>
+      ))}
+    </blockquote>
   );
 }
 
@@ -1055,8 +1488,25 @@ function MessageAvatar({ role }: { role: AiChatMessage["role"] }) {
   );
 }
 
-function ChatEventLine({ event }: { event: AiChatEvent }) {
-  const approvalId = event.kind === "approval_required" ? eventApprovalId(event) : null;
+function ChatEventLine({
+  event,
+  approvalActionPending,
+  onResolveApproval,
+}: {
+  event: AiChatEvent;
+  approvalActionPending: string | null;
+  onResolveApproval: (
+    eventId: string,
+    approvalId: string,
+    decision: ApprovalDecision,
+  ) => void;
+}) {
+  const approval = event.kind === "approval_required" ? eventApproval(event) : null;
+  const approvalPending = approval
+    ? approvalActionPending?.startsWith(`${approval.id}:`) ?? false
+    : false;
+  const approvePending = approvalActionPending === `${approval?.id}:approve`;
+  const denyPending = approvalActionPending === `${approval?.id}:deny`;
   const icon =
     event.kind === "approval_required" ? (
       <ShieldCheck className="size-4" aria-hidden="true" />
@@ -1069,7 +1519,9 @@ function ChatEventLine({ event }: { event: AiChatEvent }) {
     );
   const label =
     event.kind === "approval_required"
-      ? "等待审批"
+      ? approval
+        ? approvalStatusLabel(approval.status)
+        : "等待审批"
       : event.kind === "tool_result"
         ? "工具结果"
         : event.kind === "done"
@@ -1080,7 +1532,11 @@ function ChatEventLine({ event }: { event: AiChatEvent }) {
 
   const tone =
     event.kind === "approval_required"
-      ? "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+      ? approval?.status === "approved"
+        ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+        : approval?.status === "denied"
+          ? "border-destructive/30 bg-destructive/10 text-destructive"
+          : "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300"
       : event.kind === "error"
         ? "border-destructive/30 bg-destructive/10 text-destructive"
         : "border-border bg-muted/45 text-muted-foreground";
@@ -1094,17 +1550,52 @@ function ChatEventLine({ event }: { event: AiChatEvent }) {
     >
       <span className="mt-0.5 shrink-0">{icon}</span>
       <div className="min-w-0 flex-1">
-        <p className="font-medium text-foreground">{label}</p>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <p className="font-medium text-foreground">{label}</p>
+          {approval?.resolved_at ? (
+            <span className="text-[11px] text-muted-foreground">
+              {formatRelativeTime(approval.resolved_at)}
+            </span>
+          ) : null}
+        </div>
         <p
           className="whitespace-pre-wrap break-words leading-5 [overflow-wrap:anywhere]"
           title={event.content ?? ""}
         >
           {event.content ?? jsonStringField(event.payload, "tool_name") ?? event.created_at}
         </p>
-        {approvalId ? (
-          <Button asChild variant="link" className="mt-1 h-auto p-0 text-xs">
-            <Link href="/approvals">打开审批</Link>
-          </Button>
+        {approval?.status === "pending" ? (
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              disabled={approvalPending}
+              onClick={() => onResolveApproval(event.id, approval.id, "approve")}
+            >
+              {approvePending ? (
+                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <Check className="size-3.5" aria-hidden="true" />
+              )}
+              批准
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              disabled={approvalPending}
+              onClick={() => onResolveApproval(event.id, approval.id, "deny")}
+            >
+              {denyPending ? (
+                <RefreshCw className="size-3.5 animate-spin" aria-hidden="true" />
+              ) : (
+                <X className="size-3.5" aria-hidden="true" />
+              )}
+              拒绝
+            </Button>
+          </div>
         ) : null}
       </div>
     </div>
