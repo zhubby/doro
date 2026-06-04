@@ -120,12 +120,16 @@ pub(crate) async fn create_ai_conversation(
             (!title.is_empty()).then_some(title)
         })
         .unwrap_or_else(|| "新 AI 对话".to_string());
+    ensure_agent_run_ready(&state, request.host_id).await?;
+    let _ = load_chat_provider(&state, request.ai_provider_id).await?;
     let item = state
         .store
         .ai_chats()
         .create_conversation(NewAiConversation {
             id: Uuid::new_v4(),
             title,
+            host_id: request.host_id,
+            ai_provider_id: request.ai_provider_id,
             created_by: current_user.username,
             created_at: now,
         })
@@ -170,20 +174,31 @@ pub(crate) async fn create_ai_chat_turn(
     AxumPath(conversation_id): AxumPath<Uuid>,
     Json(request): Json<CreateAiChatTurnRequest>,
 ) -> Result<Json<CreateAiChatTurnResponse>, AppError> {
-    if state
+    let conversation = state
         .store
         .ai_chats()
         .get_conversation(conversation_id)
         .await?
-        .is_none()
-    {
-        return Err(AppError::status(
-            StatusCode::NOT_FOUND,
-            "ai conversation not found",
-        ));
-    }
-    ensure_agent_run_ready(&state, request.host_id).await?;
-    let provider = load_chat_provider(&state, request.ai_provider_id).await?;
+        .ok_or_else(|| {
+            AppError::status(
+                StatusCode::NOT_FOUND,
+                "ai conversation not found",
+            )
+        })?;
+    let host_id = conversation.host_id.ok_or_else(|| {
+        AppError::status(
+            StatusCode::CONFLICT,
+            "ai conversation is not bound to an agent",
+        )
+    })?;
+    let ai_provider_id = conversation.ai_provider_id.ok_or_else(|| {
+        AppError::status(
+            StatusCode::CONFLICT,
+            "ai conversation is not bound to an ai provider",
+        )
+    })?;
+    ensure_agent_run_ready(&state, host_id).await?;
+    let provider = load_chat_provider(&state, ai_provider_id).await?;
     let model = required_text(request.model, "model is required")?;
     let content = required_text(request.content, "chat message content is required")?;
     let now = Utc::now();
@@ -198,8 +213,8 @@ pub(crate) async fn create_ai_chat_turn(
             status: AiChatMessageStatus::Succeeded,
             content: content.clone(),
             task_id: None,
-            host_id: Some(request.host_id),
-            ai_provider_id: Some(request.ai_provider_id),
+            host_id: Some(host_id),
+            ai_provider_id: Some(ai_provider_id),
             model: Some(model.clone()),
             metadata: serde_json::json!({}),
             created_at: now,
@@ -212,7 +227,7 @@ pub(crate) async fn create_ai_chat_turn(
         .tasks()
         .create_with_steps(NewTask {
             id: Uuid::new_v4(),
-            host_id: Some(request.host_id),
+            host_id: Some(host_id),
             title: chat_task_title(&content),
             prompt: Some(content.clone()),
             status: TaskStatus::Queued,
@@ -251,8 +266,8 @@ pub(crate) async fn create_ai_chat_turn(
             status: AiChatMessageStatus::Pending,
             content: String::new(),
             task_id: Some(task.id),
-            host_id: Some(request.host_id),
-            ai_provider_id: Some(request.ai_provider_id),
+            host_id: Some(host_id),
+            ai_provider_id: Some(ai_provider_id),
             model: Some(model.clone()),
             metadata: serde_json::json!({
                 "user_message_id": user_message.id,
@@ -275,7 +290,7 @@ pub(crate) async fn create_ai_chat_turn(
     tokio::spawn(async move {
         dispatch_ai_chat_turn(
             dispatch_state,
-            request.host_id,
+            host_id,
             step_id,
             dispatch_task_id,
             conversation_id,

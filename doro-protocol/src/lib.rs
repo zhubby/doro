@@ -780,6 +780,8 @@ pub struct ListAiModelProvidersResponse {
 pub struct AiConversation {
     pub id: Uuid,
     pub title: String,
+    pub host_id: Option<Uuid>,
+    pub ai_provider_id: Option<Uuid>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -850,13 +852,13 @@ pub struct AiChatEvent {
 #[ts(export_to = "CreateAiConversationRequest.ts")]
 pub struct CreateAiConversationRequest {
     pub title: Option<String>,
+    pub host_id: Uuid,
+    pub ai_provider_id: Uuid,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "CreateAiChatTurnRequest.ts")]
 pub struct CreateAiChatTurnRequest {
-    pub host_id: Uuid,
-    pub ai_provider_id: Uuid,
     pub model: String,
     pub content: String,
 }

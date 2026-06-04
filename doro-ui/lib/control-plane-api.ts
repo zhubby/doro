@@ -429,7 +429,7 @@ export async function getAiConversations() {
 }
 
 export async function createAiConversation(
-  request: CreateAiConversationRequest = { title: null },
+  request: CreateAiConversationRequest,
 ) {
   return authedRequest<AiConversationResponse>("/api/v1/ai/conversations", {
     method: "POST",

@@ -13,6 +13,10 @@
     "settings": "设置",
     "logout": "退出登录"
   },
+  "groupToggle": {
+    "expand": "展开 {label} 菜单",
+    "collapse": "收起 {label} 菜单"
+  },
   "items": {
     "overview": {
       "label": "概览",

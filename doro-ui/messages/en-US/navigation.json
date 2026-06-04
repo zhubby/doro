@@ -13,6 +13,10 @@
     "settings": "Settings",
     "logout": "Log out"
   },
+  "groupToggle": {
+    "expand": "Expand {label} menu",
+    "collapse": "Collapse {label} menu"
+  },
   "items": {
     "overview": {
       "label": "Overview",

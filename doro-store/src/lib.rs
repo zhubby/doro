@@ -180,6 +180,8 @@ pub struct StoredAiModelProviderSecret {
 pub struct NewAiConversation {
     pub id: Uuid,
     pub title: String,
+    pub host_id: Uuid,
+    pub ai_provider_id: Uuid,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
 }
@@ -1715,6 +1717,8 @@ impl AiChatRepository<'_> {
         let model = entities::ai_conversations::ActiveModel {
             id: Set(conversation.id),
             title: Set(title),
+            host_id: Set(Some(conversation.host_id)),
+            ai_provider_id: Set(Some(conversation.ai_provider_id)),
             created_by: Set(created_by),
             created_at: Set(conversation.created_at.into()),
             updated_at: Set(conversation.created_at.into()),
@@ -1894,6 +1898,8 @@ fn ai_conversation_model_to_protocol(
     AiConversation {
         id: conversation.id,
         title: conversation.title,
+        host_id: conversation.host_id,
+        ai_provider_id: conversation.ai_provider_id,
         created_by: conversation.created_by,
         created_at: conversation.created_at.into(),
         updated_at: conversation.updated_at.into(),
@@ -4027,16 +4033,46 @@ mod tests {
         let event_at = appended_at + chrono::Duration::seconds(1);
         let secret = "sk-never-persist";
 
-        let conversation =
-            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
-        let conversation_after_user =
-            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
-        let conversation_after_assistant =
-            ai_conversation_model(conversation_id, "Storage check", "admin", created_at);
-        let conversation_after_append =
-            ai_conversation_model(conversation_id, "Storage check", "admin", appended_at);
-        let conversation_after_event =
-            ai_conversation_model(conversation_id, "Storage check", "admin", event_at);
+        let conversation = ai_conversation_model(
+            conversation_id,
+            "Storage check",
+            host_id,
+            provider_id,
+            "admin",
+            created_at,
+        );
+        let conversation_after_user = ai_conversation_model(
+            conversation_id,
+            "Storage check",
+            host_id,
+            provider_id,
+            "admin",
+            created_at,
+        );
+        let conversation_after_assistant = ai_conversation_model(
+            conversation_id,
+            "Storage check",
+            host_id,
+            provider_id,
+            "admin",
+            created_at,
+        );
+        let conversation_after_append = ai_conversation_model(
+            conversation_id,
+            "Storage check",
+            host_id,
+            provider_id,
+            "admin",
+            appended_at,
+        );
+        let conversation_after_event = ai_conversation_model(
+            conversation_id,
+            "Storage check",
+            host_id,
+            provider_id,
+            "admin",
+            event_at,
+        );
         let user_message = ai_chat_message_model(
             user_message_id,
             conversation_id,
@@ -4101,6 +4137,8 @@ mod tests {
             .create_conversation(NewAiConversation {
                 id: conversation_id,
                 title: " Storage check ".to_string(),
+                host_id,
+                ai_provider_id: provider_id,
                 created_by: "admin".to_string(),
                 created_at,
             })
@@ -4568,12 +4606,16 @@ mod tests {
     fn ai_conversation_model(
         id: Uuid,
         title: &str,
+        host_id: Uuid,
+        ai_provider_id: Uuid,
         created_by: &str,
         updated_at: DateTime<Utc>,
     ) -> entities::ai_conversations::Model {
         entities::ai_conversations::Model {
             id,
             title: title.to_string(),
+            host_id: Some(host_id),
+            ai_provider_id: Some(ai_provider_id),
             created_by: created_by.to_string(),
             created_at: updated_at.into(),
             updated_at: updated_at.into(),

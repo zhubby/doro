@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ChevronDown,
   ChevronUp,
   LogOut,
   Settings,
@@ -31,6 +32,8 @@ import type { UserSummary } from "@/types/api";
 
 type AccountDialogTab = "profile" | "password" | "preferences";
 
+const collapsibleNavigationItemIds = new Set(["virtualMachines", "docker"]);
+
 export function Sidebar({
   pathname,
   user,
@@ -46,12 +49,29 @@ export function Sidebar({
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [accountDialogTab, setAccountDialogTab] =
     useState<AccountDialogTab>("profile");
+  const [collapsedItems, setCollapsedItems] = useState<Set<string>>(
+    () => new Set(),
+  );
   const displayName = user.display_name || user.username;
   const initials = displayName.trim().slice(0, 1).toUpperCase();
 
   function openAccountDialog(tab: AccountDialogTab) {
     setAccountDialogTab(tab);
     setAccountDialogOpen(true);
+  }
+
+  function toggleCollapsedItem(itemId: string) {
+    setCollapsedItems((current) => {
+      const next = new Set(current);
+
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+
+      return next;
+    });
   }
 
   async function handleLogout() {
@@ -89,29 +109,75 @@ export function Sidebar({
               const childActive = item.children?.some((child) =>
                 navigationItemActive(child.href, pathname),
               );
+              const canCollapse =
+                Boolean(item.children?.length) &&
+                collapsibleNavigationItemIds.has(item.id);
+              const isCollapsed = canCollapse && collapsedItems.has(item.id);
+              const submenuId = `sidebar-subnav-${item.id}`;
+              const label = tNav(`items.${item.id}.label`);
 
               return (
                 <div key={item.href} className="grid gap-1">
-                  <Button
-                    asChild
-                    variant={isActive || childActive ? "secondary" : "ghost"}
-                    className={cn(
-                      "justify-start",
-                      (isActive || childActive) && "font-semibold",
-                    )}
-                  >
-                    <Link href={item.href}>
+                  {canCollapse ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full justify-start"
+                      aria-controls={submenuId}
+                      aria-expanded={!isCollapsed}
+                      aria-label={tNav(
+                        isCollapsed
+                          ? "groupToggle.expand"
+                          : "groupToggle.collapse",
+                        { label },
+                      )}
+                      onClick={() => toggleCollapsedItem(item.id)}
+                    >
                       <Icon className="size-4" aria-hidden="true" />
-                      <span>{tNav(`items.${item.id}.label`)}</span>
+                      <span className="truncate">{label}</span>
                       {item.count ? (
                         <Badge variant="outline" className="ml-auto">
                           {item.count}
                         </Badge>
                       ) : null}
-                    </Link>
-                  </Button>
+                      <ChevronDown
+                        className={cn(
+                          "ml-auto size-4 text-muted-foreground transition-transform",
+                          item.count && "ml-0",
+                          isCollapsed && "-rotate-90",
+                        )}
+                        aria-hidden="true"
+                      />
+                    </Button>
+                  ) : (
+                    <Button
+                      asChild
+                      variant={isActive || childActive ? "secondary" : "ghost"}
+                      className={cn(
+                        "justify-start",
+                        (isActive || childActive) && "font-semibold",
+                      )}
+                    >
+                      <Link href={item.href}>
+                        <Icon className="size-4" aria-hidden="true" />
+                        <span className="truncate">{label}</span>
+                        {item.count ? (
+                          <Badge variant="outline" className="ml-auto">
+                            {item.count}
+                          </Badge>
+                        ) : null}
+                      </Link>
+                    </Button>
+                  )}
                   {item.children?.length ? (
-                    <div className="ml-4 grid gap-1 border-l pl-2">
+                    <div
+                      id={submenuId}
+                      className={cn(
+                        "ml-4 gap-1 border-l pl-2",
+                        isCollapsed ? "hidden" : "grid",
+                      )}
+                      aria-hidden={isCollapsed}
+                    >
                       {item.children.map((child) => {
                         const ChildIcon = child.icon;
                         const isChildActive = navigationItemActive(
