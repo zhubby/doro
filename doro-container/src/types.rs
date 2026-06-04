@@ -67,9 +67,83 @@ pub struct ContainerDetail {
 pub struct CreateContainerRequest {
     pub name: String,
     pub image: String,
+    pub platform: Option<String>,
+    pub hostname: Option<String>,
+    pub domainname: Option<String>,
+    pub user: Option<String>,
+    pub working_dir: Option<String>,
+    pub entrypoint: Vec<String>,
     pub command: Vec<String>,
     pub env: Vec<String>,
     pub labels: HashMap<String, String>,
+    pub network_mode: Option<String>,
+    pub network_name: Option<String>,
+    pub aliases: Vec<String>,
+    pub ipv4_address: Option<String>,
+    pub mac_address: Option<String>,
+    pub ports: Vec<ContainerPortBinding>,
+    pub dns: Vec<String>,
+    pub dns_search: Vec<String>,
+    pub extra_hosts: Vec<String>,
+    pub binds: Vec<String>,
+    pub volumes: Vec<String>,
+    pub tmpfs: Vec<String>,
+    pub shm_size: Option<String>,
+    pub restart_policy: Option<ContainerRestartPolicyName>,
+    pub restart_max_retries: Option<i64>,
+    pub auto_remove: bool,
+    pub privileged: bool,
+    pub init: bool,
+    pub tty: bool,
+    pub open_stdin: bool,
+    pub read_only_rootfs: bool,
+    pub cap_add: Vec<String>,
+    pub cap_drop: Vec<String>,
+    pub devices: Vec<ContainerDevice>,
+    pub memory: Option<String>,
+    pub memory_swap: Option<String>,
+    pub cpus: Option<String>,
+    pub cpu_shares: Option<i64>,
+    pub cpuset_cpus: Option<String>,
+    pub pids_limit: Option<i64>,
+    pub healthcheck: Option<ContainerHealthcheck>,
+    pub log_driver: Option<String>,
+    pub log_options: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ContainerRestartPolicyName {
+    No,
+    Always,
+    UnlessStopped,
+    OnFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerPortBinding {
+    pub container_port: String,
+    pub protocol: Option<String>,
+    pub host_ip: Option<String>,
+    pub host_port: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerDevice {
+    pub host_path: String,
+    pub container_path: Option<String>,
+    pub permissions: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerHealthcheck {
+    pub disabled: bool,
+    pub command: Option<String>,
+    pub interval_seconds: Option<i64>,
+    pub timeout_seconds: Option<i64>,
+    pub retries: Option<i64>,
+    pub start_period_seconds: Option<i64>,
+    pub start_interval_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

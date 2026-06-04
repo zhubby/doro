@@ -133,7 +133,7 @@ One-shot terminal commands use the configured cancellation grace period. The Age
 
 Before write-oriented work, the Agent performs preflight checks when `[reliability].preflight_enabled` is true. File operations reuse the same home-directory scope checks as execution, reject traversal and targets outside the Agent user's home, enforce transfer limits, reject directory upload targets, and perform a best-effort available-disk check. Docker, virtual machine, website, and AI operations also fail before execution when their configured runtime/provider is not enabled or ready.
 
-Preflight is a runtime guard, not an authorization replacement. The control plane still validates capability and risk before dispatch, and high-risk work still requires approval before it is sent to the Agent.
+Preflight is a runtime guard, not an authorization replacement. The control plane still validates capability and risk before dispatch. High-risk work normally waits for approval before it is sent to the Agent, except for explicitly selected audited direct-execution paths such as terminal commands and Docker container creation.
 
 ### Event Spool
 
@@ -188,7 +188,7 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
-Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. Docker management requires an online Agent stream and a declared high-risk `ContainersManage` capability. Control-plane write operations create normal waiting-approval tasks; only approval resolution dispatches the `RunDockerCommandCommand`.
+Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. Docker management requires an online Agent stream and a declared high-risk `ContainersManage` capability. Container creation can be submitted as an audited direct task: the control plane records the task, step, run, and eventual Docker command event, then dispatches `RunDockerCommandCommand` without creating an approval request. Operators can choose the approval mode for container creation, and other Docker write operations create normal waiting-approval tasks; only approval resolution dispatches those commands.
 
 Compose management is included in Docker management but remains Agent-owned. When `docker_compose_enabled` is true, the Agent stores managed projects under `docker_compose_root` or `~/.doro/compose` by default. Project names must be conservative slugs, and the Agent rejects traversal, symlink escape, and paths outside the canonical root. Each project contains `compose.yaml` and optional `.env`. Compose actions run `docker compose -f compose.yaml --project-name <project>` through `std::process::Command` because Compose is a Docker CLI plugin rather than an Engine API. A missing CLI or non-zero exit code returns a failed Docker command result. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
 

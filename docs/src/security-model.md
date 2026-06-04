@@ -18,7 +18,7 @@ Security requirements:
 
 - Agents declare capabilities before receiving tasks.
 - The control plane validates capability and risk before dispatch.
-- Approval requests are recorded before high-risk execution.
+- Approval requests are recorded before high-risk execution unless an explicit audited direct-execution path is selected by an operator.
 - Agent preflight checks reject invalid paths, oversized file transfers, insufficient local readiness, and unavailable runtimes before local execution starts.
 - Long-running Agent commands can be cancelled by `command_id`; cancelled work records `COMMAND_STATUS_CANCELLED` rather than being hidden as a generic failure.
 - Agent events are recorded for auditability.
@@ -27,6 +27,8 @@ Security requirements:
 - Production deployments require TLS and durable secret storage.
 
 The terminal UI is an explicit administrative direct-execution path for agents that declare `ShellExecute`. Terminal commands and interactive sessions are still validated by the control plane, routed only over the established agent stream, and recorded in `agent_events` at session open/close and command completion boundaries. Deployments that require stricter change control should gate this route behind per-command or per-session approval before enabling it for operators.
+
+Docker container creation is also an explicit operator-selected direct-execution path. Direct creation still creates a task, task step, task run, and Docker command event before dispatching over the enrolled Agent stream, and it still requires an online Agent that declares `ContainersManage`. Operators can switch the create request to the approval path when local change-control policy requires a pending approval before dispatch. Other Docker lifecycle, image, network, volume, and Compose write operations continue to use the approval workflow by default.
 
 AI AgentRun tasks are not an authorization path. The Agent may use AI to choose tools and arguments, but shell execution and file mutation pause at a control-plane approval request before the local operation starts. Approval decisions are sent back over the enrolled Agent stream and task progress remains auditable through `task_steps`, `task_runs`, and `agent_events`.
 

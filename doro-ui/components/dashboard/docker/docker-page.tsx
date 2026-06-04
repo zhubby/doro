@@ -2,6 +2,9 @@
 
 import {
   Cable,
+  Check,
+  ChevronLeft,
+  ChevronRight,
   FilePenLine,
   Filter,
   Link2,
@@ -46,6 +49,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   createDockerComposeProject,
@@ -71,6 +76,7 @@ import {
 import type {
   DockerActionResponse,
   DockerComposeProject,
+  DockerContainerRestartPolicyName,
   DockerContainerSummary,
   DockerImageSummary,
   DockerNetworkSummary,
@@ -123,12 +129,57 @@ type DockerFormState = {
   hostId: string;
   name: string;
   image: string;
+  requiresApproval: boolean;
   reference: string;
   tag: string;
   platform: string;
+  hostname: string;
+  domainname: string;
+  user: string;
+  workingDir: string;
+  entrypoint: string;
   command: string;
   env: string;
   labels: string;
+  networkMode: string;
+  networkName: string;
+  aliases: string;
+  ipv4Address: string;
+  macAddress: string;
+  ports: string;
+  dns: string;
+  dnsSearch: string;
+  extraHosts: string;
+  binds: string;
+  volumes: string;
+  tmpfs: string;
+  shmSize: string;
+  restartPolicy: string;
+  restartMaxRetries: string;
+  autoRemove: boolean;
+  privileged: boolean;
+  init: boolean;
+  tty: boolean;
+  openStdin: boolean;
+  readOnlyRootfs: boolean;
+  capAdd: string;
+  capDrop: string;
+  devices: string;
+  memory: string;
+  memorySwap: string;
+  cpus: string;
+  cpuShares: string;
+  cpusetCpus: string;
+  pidsLimit: string;
+  healthcheckMode: string;
+  healthcheckCommand: string;
+  healthcheckInterval: string;
+  healthcheckTimeout: string;
+  healthcheckRetries: string;
+  healthcheckStartPeriod: string;
+  healthcheckStartInterval: string;
+  logDriver: string;
+  logOptions: string;
   driver: string;
   internal: boolean;
   attachable: boolean;
@@ -147,12 +198,57 @@ const emptyForm: DockerFormState = {
   hostId: "",
   name: "",
   image: "",
+  requiresApproval: false,
   reference: "",
   tag: "",
   platform: "",
+  hostname: "",
+  domainname: "",
+  user: "",
+  workingDir: "",
+  entrypoint: "",
   command: "",
   env: "",
   labels: "",
+  networkMode: "bridge",
+  networkName: "",
+  aliases: "",
+  ipv4Address: "",
+  macAddress: "",
+  ports: "",
+  dns: "",
+  dnsSearch: "",
+  extraHosts: "",
+  binds: "",
+  volumes: "",
+  tmpfs: "",
+  shmSize: "",
+  restartPolicy: "default",
+  restartMaxRetries: "",
+  autoRemove: false,
+  privileged: false,
+  init: false,
+  tty: false,
+  openStdin: false,
+  readOnlyRootfs: false,
+  capAdd: "",
+  capDrop: "",
+  devices: "",
+  memory: "",
+  memorySwap: "",
+  cpus: "",
+  cpuShares: "",
+  cpusetCpus: "",
+  pidsLimit: "",
+  healthcheckMode: "inherit",
+  healthcheckCommand: "",
+  healthcheckInterval: "",
+  healthcheckTimeout: "",
+  healthcheckRetries: "",
+  healthcheckStartPeriod: "",
+  healthcheckStartInterval: "",
+  logDriver: "",
+  logOptions: "",
   driver: "",
   internal: false,
   attachable: false,
@@ -165,13 +261,22 @@ const emptyForm: DockerFormState = {
   reason: "",
 };
 
+type ContainerCreateStep = "basic" | "network" | "storage" | "features";
+
+const containerCreateSteps: Array<{ value: ContainerCreateStep; label: string }> = [
+  { value: "basic", label: "基本信息" },
+  { value: "network", label: "网络" },
+  { value: "storage", label: "存储" },
+  { value: "features", label: "特性" },
+];
+
 const kindMeta: Record<
   DockerKind,
   { title: string; description: string; createLabel: string }
 > = {
   containers: {
     title: "容器",
-    description: "实时查询 Docker 容器，并通过审批任务执行生命周期操作。",
+    description: "实时查询 Docker 容器，创建可直接执行并保留审计，也可按需提交审批。",
     createLabel: "创建容器",
   },
   images: {
@@ -371,7 +476,11 @@ export function DockerPage({ kind }: DockerPageProps) {
     setBusyId(activeDialog.row?.id ?? activeDialog.kind);
     setNotice(null);
     const result = await runDialogSubmit(activeDialog, form);
-    handleActionResult(result, "已创建 Docker 审批任务，批准后 Agent 会执行该操作。");
+    const message =
+      activeDialog.kind === "container-create" && !form.requiresApproval
+        ? "已创建 Docker 容器任务，Agent 正在执行该操作。"
+        : "已创建 Docker 审批任务，批准后 Agent 会执行该操作。";
+    handleActionResult(result, message);
     if (result.data) {
       setActiveDialog(null);
       await loadData();
@@ -737,17 +846,53 @@ function DockerDialog({
   const kind = dialog?.kind;
   const title = dialogTitle(kind);
   const description = dialogDescription(kind);
+  const isContainerCreate = kind === "container-create";
+  const [containerStep, setContainerStep] = useState<ContainerCreateStep>("basic");
+  const currentStepIndex = containerCreateSteps.findIndex(
+    (step) => step.value === containerStep,
+  );
+
+  useEffect(() => {
+    if (open && isContainerCreate) {
+      setContainerStep("basic");
+    }
+  }, [open, isContainerCreate]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={kind === "compose-edit" ? "max-w-4xl" : "max-w-2xl"}>
-        <form onSubmit={onSubmit} className="space-y-5">
+      <DialogContent
+        className={
+          isContainerCreate
+            ? "max-h-[90vh] max-w-5xl overflow-hidden"
+            : kind === "compose-edit"
+              ? "max-w-4xl"
+              : "max-w-2xl"
+        }
+      >
+        <form
+          onSubmit={onSubmit}
+          className={
+            isContainerCreate
+              ? "flex max-h-[calc(90vh-3rem)] min-h-0 flex-col gap-5"
+              : "space-y-5"
+          }
+        >
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
 
-          {kind ? (
+          {kind ? isContainerCreate ? (
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+              <ContainerCreateFields
+                form={form}
+                hosts={hosts}
+                step={containerStep}
+                onStepChange={setContainerStep}
+                onFormChange={onFormChange}
+              />
+            </div>
+          ) : (
             <DialogFields
               kind={kind}
               form={form}
@@ -757,22 +902,34 @@ function DockerDialog({
             />
           ) : null}
 
-          <Field label="审批原因">
+          {!isContainerCreate ? (
+            <Field label="审批原因">
             <textarea
               value={form.reason}
               onChange={(event) => onFormChange({ ...form, reason: event.target.value })}
               className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
             />
-          </Field>
+            </Field>
+          ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              取消
-            </Button>
-            <Button type="submit" disabled={!form.hostId || hosts.length === 0}>
-              提交审批
-            </Button>
-          </DialogFooter>
+          {isContainerCreate ? (
+            <ContainerCreateFooter
+              form={form}
+              stepIndex={Math.max(currentStepIndex, 0)}
+              hosts={hosts}
+              onOpenChange={onOpenChange}
+              onStepChange={setContainerStep}
+            />
+          ) : (
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                取消
+              </Button>
+              <Button type="submit" disabled={!form.hostId || hosts.length === 0}>
+                提交审批
+              </Button>
+            </DialogFooter>
+          )}
         </form>
       </DialogContent>
     </Dialog>
@@ -807,35 +964,6 @@ function DialogFields({
       />
     </Field>
   );
-
-  if (kind === "container-create") {
-    return (
-      <>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {hostSelector}
-          <TextField label="容器名称" value={form.name} onChange={(name) => onFormChange({ ...form, name })} required />
-          <TextField label="镜像" value={form.image} onChange={(image) => onFormChange({ ...form, image })} required placeholder="nginx:1.27" />
-          <TextField label="启动命令" value={form.command} onChange={(command) => onFormChange({ ...form, command })} placeholder="nginx -g daemon off;" />
-        </div>
-        <Field label="环境变量">
-          <textarea
-            value={form.env}
-            onChange={(event) => onFormChange({ ...form, env: event.target.value })}
-            placeholder="KEY=value，每行一个"
-            className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </Field>
-        <Field label="标签">
-          <textarea
-            value={form.labels}
-            onChange={(event) => onFormChange({ ...form, labels: event.target.value })}
-            placeholder="key=value，每行一个"
-            className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </Field>
-      </>
-    );
-  }
 
   if (kind === "image-pull") {
     return (
@@ -960,6 +1088,580 @@ function DialogFields({
         />
       </Field>
     </>
+  );
+}
+
+function ContainerCreateFields({
+  form,
+  hosts,
+  step,
+  onStepChange,
+  onFormChange,
+}: {
+  form: DockerFormState;
+  hosts: Host[];
+  step: ContainerCreateStep;
+  onStepChange: (step: ContainerCreateStep) => void;
+  onFormChange: (form: DockerFormState) => void;
+}) {
+  const hostSelector = (
+    <Field label="目标 Agent">
+      <Select
+        required
+        value={form.hostId}
+        disabled={hosts.length === 0}
+        onValueChange={(value) => onFormChange({ ...form, hostId: value })}
+        options={
+          hosts.length === 0
+            ? [{ value: "", label: "暂无在线 Docker Agent" }]
+            : hosts.map((host) => ({ value: host.id, label: hostLabel(host) }))
+        }
+      />
+    </Field>
+  );
+
+  return (
+    <div className="space-y-5">
+      <Tabs value={step} onValueChange={(value) => onStepChange(value as ContainerCreateStep)}>
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:grid-cols-4">
+          {containerCreateSteps.map((item) => (
+            <TabsTrigger key={item.value} value={item.value} className="px-2">
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+
+      {step === "basic" ? (
+        <ContainerBasicFields
+          form={form}
+          hostSelector={hostSelector}
+          onFormChange={onFormChange}
+        />
+      ) : null}
+      {step === "network" ? (
+        <ContainerNetworkFields form={form} onFormChange={onFormChange} />
+      ) : null}
+      {step === "storage" ? (
+        <ContainerStorageFields form={form} onFormChange={onFormChange} />
+      ) : null}
+      {step === "features" ? (
+        <ContainerFeatureFields form={form} onFormChange={onFormChange} />
+      ) : null}
+    </div>
+  );
+}
+
+function ContainerBasicFields({
+  form,
+  hostSelector,
+  onFormChange,
+}: {
+  form: DockerFormState;
+  hostSelector: ReactNode;
+  onFormChange: (form: DockerFormState) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        {hostSelector}
+        <TextField
+          label="容器名称"
+          value={form.name}
+          onChange={(name) => onFormChange({ ...form, name })}
+          required
+          placeholder="web"
+        />
+        <TextField
+          label="镜像"
+          value={form.image}
+          onChange={(image) => onFormChange({ ...form, image })}
+          required
+          placeholder="nginx:1.27"
+        />
+        <TextField
+          label="平台"
+          value={form.platform}
+          onChange={(platform) => onFormChange({ ...form, platform })}
+          placeholder="linux/amd64"
+        />
+        <TextField
+          label="Entrypoint"
+          value={form.entrypoint}
+          onChange={(entrypoint) => onFormChange({ ...form, entrypoint })}
+          placeholder="/docker-entrypoint.sh"
+        />
+        <TextField
+          label="启动命令"
+          value={form.command}
+          onChange={(command) => onFormChange({ ...form, command })}
+          placeholder="nginx -g daemon off;"
+        />
+        <TextField
+          label="主机名"
+          value={form.hostname}
+          onChange={(hostname) => onFormChange({ ...form, hostname })}
+          placeholder="web-01"
+        />
+        <TextField
+          label="域名"
+          value={form.domainname}
+          onChange={(domainname) => onFormChange({ ...form, domainname })}
+          placeholder="home.arpa"
+        />
+        <TextField
+          label="用户"
+          value={form.user}
+          onChange={(user) => onFormChange({ ...form, user })}
+          placeholder="1000:1000"
+        />
+        <TextField
+          label="工作目录"
+          value={form.workingDir}
+          onChange={(workingDir) => onFormChange({ ...form, workingDir })}
+          placeholder="/app"
+        />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TextareaField
+          label="环境变量"
+          value={form.env}
+          onChange={(env) => onFormChange({ ...form, env })}
+          placeholder="KEY=value，每行一个"
+          minHeight="min-h-28"
+        />
+        <TextareaField
+          label="标签"
+          value={form.labels}
+          onChange={(labels) => onFormChange({ ...form, labels })}
+          placeholder="key=value，每行一个"
+          minHeight="min-h-28"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ContainerNetworkFields({
+  form,
+  onFormChange,
+}: {
+  form: DockerFormState;
+  onFormChange: (form: DockerFormState) => void;
+}) {
+  const networkNameLabel =
+    form.networkMode === "container" ? "目标容器 ID 或名称" : "网络名称";
+  const showNetworkName = form.networkMode === "custom" || form.networkMode === "container";
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="网络模式">
+          <Select
+            value={form.networkMode}
+            onValueChange={(networkMode) => onFormChange({ ...form, networkMode })}
+            options={[
+              { value: "default", label: "默认" },
+              { value: "bridge", label: "bridge" },
+              { value: "host", label: "host" },
+              { value: "none", label: "none" },
+              { value: "custom", label: "自定义网络" },
+              { value: "container", label: "container:<id>" },
+            ]}
+          />
+        </Field>
+        {showNetworkName ? (
+          <TextField
+            label={networkNameLabel}
+            value={form.networkName}
+            onChange={(networkName) => onFormChange({ ...form, networkName })}
+            placeholder={form.networkMode === "container" ? "nginx" : "frontend"}
+          />
+        ) : (
+          <TextField
+            label="网络名称"
+            value={form.networkName}
+            onChange={(networkName) => onFormChange({ ...form, networkName })}
+            placeholder="仅自定义网络需要"
+            disabled
+          />
+        )}
+        <TextField
+          label="IPv4 地址"
+          value={form.ipv4Address}
+          onChange={(ipv4Address) => onFormChange({ ...form, ipv4Address })}
+          placeholder="172.20.0.10"
+        />
+        <TextField
+          label="MAC 地址"
+          value={form.macAddress}
+          onChange={(macAddress) => onFormChange({ ...form, macAddress })}
+          placeholder="02:42:ac:14:00:0a"
+        />
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TextareaField
+          label="端口映射"
+          value={form.ports}
+          onChange={(ports) => onFormChange({ ...form, ports })}
+          placeholder={"8080:80/tcp\n127.0.0.1:8443:443/tcp"}
+          minHeight="min-h-28"
+        />
+        <TextareaField
+          label="网络别名"
+          value={form.aliases}
+          onChange={(aliases) => onFormChange({ ...form, aliases })}
+          placeholder="web，每行一个"
+          minHeight="min-h-28"
+        />
+        <TextareaField
+          label="DNS"
+          value={form.dns}
+          onChange={(dns) => onFormChange({ ...form, dns })}
+          placeholder="1.1.1.1，每行一个"
+          minHeight="min-h-24"
+        />
+        <TextareaField
+          label="DNS Search"
+          value={form.dnsSearch}
+          onChange={(dnsSearch) => onFormChange({ ...form, dnsSearch })}
+          placeholder="home.arpa，每行一个"
+          minHeight="min-h-24"
+        />
+      </div>
+      <TextareaField
+        label="Extra Hosts"
+        value={form.extraHosts}
+        onChange={(extraHosts) => onFormChange({ ...form, extraHosts })}
+        placeholder="host.docker.internal:host-gateway，每行一个"
+        minHeight="min-h-24"
+      />
+    </div>
+  );
+}
+
+function ContainerStorageFields({
+  form,
+  onFormChange,
+}: {
+  form: DockerFormState;
+  onFormChange: (form: DockerFormState) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TextareaField
+          label="Bind / 命名卷"
+          value={form.binds}
+          onChange={(binds) => onFormChange({ ...form, binds })}
+          placeholder={"/srv/www:/usr/share/nginx/html:ro\napp-data:/data"}
+          minHeight="min-h-32"
+        />
+        <TextareaField
+          label="匿名卷"
+          value={form.volumes}
+          onChange={(volumes) => onFormChange({ ...form, volumes })}
+          placeholder="/cache，每行一个容器内路径"
+          minHeight="min-h-32"
+        />
+        <TextareaField
+          label="tmpfs"
+          value={form.tmpfs}
+          onChange={(tmpfs) => onFormChange({ ...form, tmpfs })}
+          placeholder="/run:rw,size=64m，每行一个"
+          minHeight="min-h-28"
+        />
+        <TextField
+          label="/dev/shm 大小"
+          value={form.shmSize}
+          onChange={(shmSize) => onFormChange({ ...form, shmSize })}
+          placeholder="64m"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ContainerFeatureFields({
+  form,
+  onFormChange,
+}: {
+  form: DockerFormState;
+  onFormChange: (form: DockerFormState) => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <Field label="重启策略">
+          <Select
+            value={form.restartPolicy}
+            onValueChange={(restartPolicy) => onFormChange({ ...form, restartPolicy })}
+            options={[
+              { value: "default", label: "不设置" },
+              { value: "no", label: "no" },
+              { value: "always", label: "always" },
+              { value: "unless-stopped", label: "unless-stopped" },
+              { value: "on-failure", label: "on-failure" },
+            ]}
+          />
+        </Field>
+        <TextField
+          label="最大重试次数"
+          value={form.restartMaxRetries}
+          onChange={(restartMaxRetries) => onFormChange({ ...form, restartMaxRetries })}
+          placeholder="3"
+          disabled={form.restartPolicy !== "on-failure"}
+        />
+        <TextField
+          label="内存限制"
+          value={form.memory}
+          onChange={(memory) => onFormChange({ ...form, memory })}
+          placeholder="512m"
+        />
+        <TextField
+          label="Swap 限制"
+          value={form.memorySwap}
+          onChange={(memorySwap) => onFormChange({ ...form, memorySwap })}
+          placeholder="1g 或 -1"
+        />
+        <TextField
+          label="CPU"
+          value={form.cpus}
+          onChange={(cpus) => onFormChange({ ...form, cpus })}
+          placeholder="0.5"
+        />
+        <TextField
+          label="CPU Shares"
+          value={form.cpuShares}
+          onChange={(cpuShares) => onFormChange({ ...form, cpuShares })}
+          placeholder="1024"
+        />
+        <TextField
+          label="CPU Set"
+          value={form.cpusetCpus}
+          onChange={(cpusetCpus) => onFormChange({ ...form, cpusetCpus })}
+          placeholder="0-3"
+        />
+        <TextField
+          label="PID 限制"
+          value={form.pidsLimit}
+          onChange={(pidsLimit) => onFormChange({ ...form, pidsLimit })}
+          placeholder="256"
+        />
+        <TextField
+          label="日志驱动"
+          value={form.logDriver}
+          onChange={(logDriver) => onFormChange({ ...form, logDriver })}
+          placeholder="json-file"
+        />
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <SwitchField label="自动删除" checked={form.autoRemove} onChange={(autoRemove) => onFormChange({ ...form, autoRemove })} />
+        <SwitchField label="Privileged" checked={form.privileged} onChange={(privileged) => onFormChange({ ...form, privileged })} />
+        <SwitchField label="Init" checked={form.init} onChange={(init) => onFormChange({ ...form, init })} />
+        <SwitchField label="TTY" checked={form.tty} onChange={(tty) => onFormChange({ ...form, tty })} />
+        <SwitchField label="Open stdin" checked={form.openStdin} onChange={(openStdin) => onFormChange({ ...form, openStdin })} />
+        <SwitchField label="只读根文件系统" checked={form.readOnlyRootfs} onChange={(readOnlyRootfs) => onFormChange({ ...form, readOnlyRootfs })} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <TextareaField
+          label="Cap Add"
+          value={form.capAdd}
+          onChange={(capAdd) => onFormChange({ ...form, capAdd })}
+          placeholder="NET_ADMIN，每行一个"
+          minHeight="min-h-24"
+        />
+        <TextareaField
+          label="Cap Drop"
+          value={form.capDrop}
+          onChange={(capDrop) => onFormChange({ ...form, capDrop })}
+          placeholder="ALL，每行一个"
+          minHeight="min-h-24"
+        />
+        <TextareaField
+          label="设备"
+          value={form.devices}
+          onChange={(devices) => onFormChange({ ...form, devices })}
+          placeholder="/dev/fuse:/dev/fuse:rwm，每行一个"
+          minHeight="min-h-24"
+        />
+        <TextareaField
+          label="日志选项"
+          value={form.logOptions}
+          onChange={(logOptions) => onFormChange({ ...form, logOptions })}
+          placeholder="max-size=10m，每行一个"
+          minHeight="min-h-24"
+        />
+      </div>
+
+      <div className="space-y-4 rounded-md border bg-muted/20 p-4">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="健康检查">
+            <Select
+              value={form.healthcheckMode}
+              onValueChange={(healthcheckMode) => onFormChange({ ...form, healthcheckMode })}
+              options={[
+                { value: "inherit", label: "继承镜像" },
+                { value: "command", label: "自定义命令" },
+                { value: "disable", label: "禁用" },
+              ]}
+            />
+          </Field>
+          <TextField
+            label="Interval 秒"
+            value={form.healthcheckInterval}
+            onChange={(healthcheckInterval) => onFormChange({ ...form, healthcheckInterval })}
+            placeholder="30"
+          />
+          <TextField
+            label="Timeout 秒"
+            value={form.healthcheckTimeout}
+            onChange={(healthcheckTimeout) => onFormChange({ ...form, healthcheckTimeout })}
+            placeholder="5"
+          />
+          <TextField
+            label="Retries"
+            value={form.healthcheckRetries}
+            onChange={(healthcheckRetries) => onFormChange({ ...form, healthcheckRetries })}
+            placeholder="3"
+          />
+          <TextField
+            label="Start Period 秒"
+            value={form.healthcheckStartPeriod}
+            onChange={(healthcheckStartPeriod) => onFormChange({ ...form, healthcheckStartPeriod })}
+            placeholder="10"
+          />
+          <TextField
+            label="Start Interval 秒"
+            value={form.healthcheckStartInterval}
+            onChange={(healthcheckStartInterval) => onFormChange({ ...form, healthcheckStartInterval })}
+            placeholder="5"
+          />
+        </div>
+        {form.healthcheckMode === "command" ? (
+          <TextField
+            label="健康检查命令"
+            value={form.healthcheckCommand}
+            onChange={(healthcheckCommand) => onFormChange({ ...form, healthcheckCommand })}
+            placeholder="curl -f http://localhost/ || exit 1"
+          />
+        ) : null}
+      </div>
+
+      <div className="space-y-4 rounded-md border bg-muted/20 p-4">
+        <SwitchField
+          label="提交审批"
+          checked={form.requiresApproval}
+          onChange={(requiresApproval) => onFormChange({ ...form, requiresApproval })}
+        />
+        {form.requiresApproval ? (
+          <TextareaField
+            label="审批原因"
+            value={form.reason}
+            onChange={(reason) => onFormChange({ ...form, reason })}
+            minHeight="min-h-20"
+          />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ContainerCreateFooter({
+  form,
+  stepIndex,
+  hosts,
+  onOpenChange,
+  onStepChange,
+}: {
+  form: DockerFormState;
+  stepIndex: number;
+  hosts: Host[];
+  onOpenChange: (open: boolean) => void;
+  onStepChange: (step: ContainerCreateStep) => void;
+}) {
+  const isFirstStep = stepIndex === 0;
+  const isLastStep = stepIndex === containerCreateSteps.length - 1;
+  const canSubmit = containerCreateCanSubmit(form, hosts);
+  const nextStep = containerCreateSteps[Math.min(stepIndex + 1, containerCreateSteps.length - 1)];
+  const previousStep = containerCreateSteps[Math.max(stepIndex - 1, 0)];
+
+  return (
+    <DialogFooter className="border-t pt-4 sm:items-center sm:justify-between sm:space-x-0">
+      <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+        取消
+      </Button>
+      <div className="flex flex-col-reverse gap-2 sm:flex-row">
+        <Button
+          type="button"
+          variant="outline"
+          disabled={isFirstStep}
+          onClick={() => onStepChange(previousStep.value)}
+        >
+          <ChevronLeft className="size-4" aria-hidden="true" />
+          上一步
+        </Button>
+        {isLastStep ? (
+          <Button type="submit" disabled={!canSubmit}>
+            <Check className="size-4" aria-hidden="true" />
+            {form.requiresApproval ? "提交审批" : "直接创建"}
+          </Button>
+        ) : (
+          <Button
+            type="button"
+            disabled={stepIndex === 0 && !canSubmit}
+            onClick={() => onStepChange(nextStep.value)}
+          >
+            下一步
+            <ChevronRight className="size-4" aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+    </DialogFooter>
+  );
+}
+
+function TextareaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  minHeight = "min-h-20",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  minHeight?: string;
+}) {
+  return (
+    <Field label={label}>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={`${minHeight} w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring`}
+      />
+    </Field>
+  );
+}
+
+function SwitchField({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex h-10 items-center justify-between gap-3 rounded-md border bg-background px-3 text-sm">
+      <span className="font-medium">{label}</span>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </label>
   );
 }
 
@@ -1144,12 +1846,52 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
   if (dialog.kind === "container-create") {
     return createDockerContainer({
       host_id: form.hostId,
+      execution_mode: form.requiresApproval ? "approval" : "direct",
       name: form.name.trim(),
       image: form.image.trim(),
+      platform: optionalText(form.platform),
+      hostname: optionalText(form.hostname),
+      domainname: optionalText(form.domainname),
+      user: optionalText(form.user),
+      working_dir: optionalText(form.workingDir),
+      entrypoint: splitWords(form.entrypoint),
       command: splitWords(form.command),
       env: splitLines(form.env),
       labels: keyValueObject(form.labels),
-      reason,
+      network_mode: containerNetworkMode(form),
+      network_name: form.networkMode === "custom" ? optionalText(form.networkName) : null,
+      aliases: splitLines(form.aliases),
+      ipv4_address: optionalText(form.ipv4Address),
+      mac_address: optionalText(form.macAddress),
+      ports: parsePortLines(form.ports),
+      dns: splitLines(form.dns),
+      dns_search: splitLines(form.dnsSearch),
+      extra_hosts: splitLines(form.extraHosts),
+      binds: splitLines(form.binds),
+      volumes: splitLines(form.volumes),
+      tmpfs: splitLines(form.tmpfs),
+      shm_size: optionalText(form.shmSize),
+      restart_policy: containerRestartPolicy(form.restartPolicy),
+      restart_max_retries: optionalInteger(form.restartMaxRetries),
+      auto_remove: form.autoRemove,
+      privileged: form.privileged,
+      init: form.init,
+      tty: form.tty,
+      open_stdin: form.openStdin,
+      read_only_rootfs: form.readOnlyRootfs,
+      cap_add: splitLines(form.capAdd),
+      cap_drop: splitLines(form.capDrop),
+      devices: parseDeviceLines(form.devices),
+      memory: optionalText(form.memory),
+      memory_swap: optionalText(form.memorySwap),
+      cpus: optionalText(form.cpus),
+      cpu_shares: optionalInteger(form.cpuShares),
+      cpuset_cpus: optionalText(form.cpusetCpus),
+      pids_limit: optionalInteger(form.pidsLimit),
+      healthcheck: containerHealthcheck(form),
+      log_driver: optionalText(form.logDriver),
+      log_options: keyValueObject(form.logOptions),
+      reason: form.requiresApproval ? reason : null,
     });
   }
   if (dialog.kind === "image-pull") {
@@ -1266,6 +2008,9 @@ function dialogTitle(kind?: DialogKind) {
 }
 
 function dialogDescription(kind?: DialogKind) {
+  if (kind === "container-create") {
+    return "默认直接创建并记录任务审计；需要人工确认时可在特性阶段打开提交审批。";
+  }
   if (kind === "compose-edit") {
     return "Compose 文件只会写入 Agent 配置的受控目录，部署动作仍需要审批。";
   }
@@ -1316,6 +2061,103 @@ function keyValueObject(value: string) {
       return [[line.slice(0, index).trim(), line.slice(index + 1).trim()]];
     }),
   );
+}
+
+function containerCreateCanSubmit(form: DockerFormState, hosts: Host[]) {
+  return Boolean(
+    form.hostId &&
+      hosts.length > 0 &&
+      form.name.trim() &&
+      form.image.trim(),
+  );
+}
+
+function containerNetworkMode(form: DockerFormState) {
+  if (form.networkMode === "default") {
+    return null;
+  }
+  if (form.networkMode === "custom") {
+    return optionalText(form.networkName);
+  }
+  if (form.networkMode === "container") {
+    const target = optionalText(form.networkName);
+    return target ? `container:${target}` : null;
+  }
+  return form.networkMode;
+}
+
+function containerRestartPolicy(value: string): DockerContainerRestartPolicyName | null {
+  if (
+    value === "no" ||
+    value === "always" ||
+    value === "unless-stopped" ||
+    value === "on-failure"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function containerHealthcheck(form: DockerFormState) {
+  if (form.healthcheckMode === "inherit") {
+    return null;
+  }
+  return {
+    disabled: form.healthcheckMode === "disable",
+    command:
+      form.healthcheckMode === "command"
+        ? optionalText(form.healthcheckCommand)
+        : null,
+    interval_seconds: optionalInteger(form.healthcheckInterval),
+    timeout_seconds: optionalInteger(form.healthcheckTimeout),
+    retries: optionalInteger(form.healthcheckRetries),
+    start_period_seconds: optionalInteger(form.healthcheckStartPeriod),
+    start_interval_seconds: optionalInteger(form.healthcheckStartInterval),
+  };
+}
+
+function parsePortLines(value: string) {
+  return splitLines(value).map((line) => {
+    const parts = line.split(":");
+    let hostIp: string | null = null;
+    let hostPort: string | null = null;
+    let target = line;
+    if (parts.length === 2) {
+      hostPort = optionalText(parts[0]);
+      target = parts[1];
+    } else if (parts.length >= 3) {
+      hostIp = optionalText(parts[0]);
+      hostPort = optionalText(parts[1]);
+      target = parts.slice(2).join(":");
+    }
+    const [containerPort, protocol] = target.split("/", 2);
+    return {
+      container_port: containerPort.trim(),
+      protocol: optionalText(protocol ?? ""),
+      host_ip: hostIp,
+      host_port: hostPort,
+    };
+  });
+}
+
+function parseDeviceLines(value: string) {
+  return splitLines(value).map((line) => {
+    const [hostPath, containerPath, permissions] = line.split(":", 3);
+    return {
+      host_path: hostPath.trim(),
+      container_path: optionalText(containerPath ?? ""),
+      permissions: optionalText(permissions ?? ""),
+    };
+  });
+}
+
+function optionalInteger(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const numberValue = Number.parseInt(trimmed, 10);
+  return Number.isFinite(numberValue) ? numberValue : null;
 }
 
 function formatUnixTime(value: bigint | number) {

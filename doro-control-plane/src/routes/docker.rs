@@ -4,7 +4,8 @@ use crate::error::AppError;
 use crate::prelude::*;
 use crate::state::AppState;
 use doro_container::{
-    ContainerCommand, ContainerComposeCommand, ContainerListFilter, ContainerNetworkCommand,
+    ContainerCommand, ContainerComposeCommand, ContainerDevice, ContainerHealthcheck,
+    ContainerListFilter, ContainerNetworkCommand, ContainerPortBinding, ContainerRestartPolicyName,
     ContainerRuntimeCommand, ContainerRuntimeCommandEnvelope, ContainerVolumeCommand,
     CreateContainerRequest, CreateNetworkRequest, CreateVolumeRequest, PullImageRequest,
     RemoveContainerRequest, RemoveImageRequest, RemoveVolumeRequest, RestartContainerRequest,
@@ -12,12 +13,12 @@ use doro_container::{
 };
 use doro_protocol::{
     DockerActionRequest, DockerActionResponse, DockerComposeProject, DockerComposeProjectRequest,
-    DockerComposeProjectResponse, DockerContainerCreateRequest, DockerContainerSummary,
-    DockerImagePullRequest, DockerImageRemoveRequest, DockerImageSummary,
-    DockerNetworkContainerRequest, DockerNetworkCreateRequest, DockerNetworkSummary,
-    DockerVolumeCreateRequest, DockerVolumeSummary, ListDockerComposeProjectsResponse,
-    ListDockerContainersResponse, ListDockerImagesResponse, ListDockerNetworksResponse,
-    ListDockerVolumesResponse,
+    DockerComposeProjectResponse, DockerContainerCreateExecutionMode, DockerContainerCreateRequest,
+    DockerContainerRestartPolicyName, DockerContainerSummary, DockerImagePullRequest,
+    DockerImageRemoveRequest, DockerImageSummary, DockerNetworkContainerRequest,
+    DockerNetworkCreateRequest, DockerNetworkSummary, DockerVolumeCreateRequest,
+    DockerVolumeSummary, ListDockerComposeProjectsResponse, ListDockerContainersResponse,
+    ListDockerImagesResponse, ListDockerNetworksResponse, ListDockerVolumesResponse,
 };
 use serde_json::json;
 
@@ -66,22 +67,18 @@ pub(crate) async fn create_docker_container(
     Extension(current_user): Extension<CurrentUser>,
     Json(request): Json<DockerContainerCreateRequest>,
 ) -> Result<Json<DockerActionResponse>, AppError> {
-    let labels = string_map_from_value(request.labels, "labels")?;
-    let command =
-        ContainerRuntimeCommand::Container(ContainerCommand::Create(CreateContainerRequest {
-            name: required_text(request.name, "container name is required")?,
-            image: required_text(request.image, "container image is required")?,
-            command: request.command,
-            env: request.env,
-            labels,
-        }));
-    docker_task_response(
+    let host_id = request.host_id;
+    let reason = request.reason.clone();
+    let dispatch_mode = docker_dispatch_mode(request.execution_mode);
+    let command = create_container_command(request)?;
+    docker_task_response_with_mode(
         &state,
         current_user.username,
-        request.host_id,
+        host_id,
         "create Docker container",
-        request.reason,
+        reason,
         command,
+        dispatch_mode,
     )
     .await
 }
@@ -667,9 +664,56 @@ async fn docker_task_response(
     reason: Option<String>,
     command: ContainerRuntimeCommand,
 ) -> Result<Json<DockerActionResponse>, AppError> {
+    docker_task_response_with_mode(
+        state,
+        created_by,
+        host_id,
+        title,
+        reason,
+        command,
+        DockerTaskDispatchMode::Approval,
+    )
+    .await
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DockerTaskDispatchMode {
+    Direct,
+    Approval,
+}
+
+fn docker_dispatch_mode(
+    execution_mode: DockerContainerCreateExecutionMode,
+) -> DockerTaskDispatchMode {
+    match execution_mode {
+        DockerContainerCreateExecutionMode::Direct => DockerTaskDispatchMode::Direct,
+        DockerContainerCreateExecutionMode::Approval => DockerTaskDispatchMode::Approval,
+    }
+}
+
+async fn docker_task_response_with_mode(
+    state: &AppState,
+    created_by: String,
+    host_id: Uuid,
+    title: impl Into<String>,
+    reason: Option<String>,
+    command: ContainerRuntimeCommand,
+    dispatch_mode: DockerTaskDispatchMode,
+) -> Result<Json<DockerActionResponse>, AppError> {
     ensure_docker_ready(state, host_id).await?;
-    let task =
-        create_docker_task(state, created_by, host_id, title.into(), reason, command).await?;
+    let task = create_docker_task(
+        state,
+        created_by,
+        host_id,
+        title.into(),
+        reason,
+        command,
+        dispatch_mode,
+    )
+    .await?;
+    if dispatch_mode == DockerTaskDispatchMode::Direct {
+        dispatch_direct_docker_task(state.clone(), task.clone(), host_id);
+    }
     Ok(Json(DockerActionResponse { task }))
 }
 
@@ -680,6 +724,7 @@ async fn create_docker_task(
     title: String,
     reason: Option<String>,
     command: ContainerRuntimeCommand,
+    dispatch_mode: DockerTaskDispatchMode,
 ) -> Result<Task, AppError> {
     let step_id = Uuid::new_v4();
     let command_id = Uuid::new_v4();
@@ -694,6 +739,10 @@ async fn create_docker_task(
         "reason": reason,
         "command": envelope,
     });
+    let (status, create_step_approvals, execution_mode) = match dispatch_mode {
+        DockerTaskDispatchMode::Direct => (TaskStatus::Queued, false, "direct"),
+        DockerTaskDispatchMode::Approval => (TaskStatus::WaitingApproval, true, "approval"),
+    };
     Ok(state
         .store
         .tasks()
@@ -702,11 +751,11 @@ async fn create_docker_task(
             host_id: Some(host_id),
             title,
             prompt: None,
-            status: TaskStatus::WaitingApproval,
+            status,
             created_by,
             created_at: Utc::now(),
-            metadata: json!({ "resource": "docker" }),
-            create_step_approvals: true,
+            metadata: json!({ "resource": "docker", "execution_mode": execution_mode }),
+            create_step_approvals,
             steps: vec![TaskStep {
                 id: step_id,
                 capability: CapabilityName::ContainersManage,
@@ -717,6 +766,24 @@ async fn create_docker_task(
             }],
         })
         .await?)
+}
+
+fn dispatch_direct_docker_task(state: AppState, task: Task, host_id: Uuid) {
+    let Some(step) = task.steps.first().cloned() else {
+        return;
+    };
+    tokio::spawn(async move {
+        if let Err(error) =
+            dispatch_docker_task(&state, task.id, step.id, host_id, step.payload).await
+        {
+            tracing::warn!(
+                ?error,
+                task_id = %task.id,
+                "failed to dispatch direct Docker task"
+            );
+            mark_docker_task_failed(&state, task.id, step.id, &error.0.to_string()).await;
+        }
+    });
 }
 
 async fn dispatch_docker_task(
@@ -981,6 +1048,97 @@ async fn docker_hosts(
     Ok(hosts)
 }
 
+fn create_container_command(
+    request: DockerContainerCreateRequest,
+) -> Result<ContainerRuntimeCommand, AppError> {
+    let labels = string_map_from_value(request.labels, "labels")?;
+    let log_options = string_map_from_value(request.log_options, "log_options")?;
+    Ok(ContainerRuntimeCommand::Container(
+        ContainerCommand::Create(CreateContainerRequest {
+            name: required_text(request.name, "container name is required")?,
+            image: required_text(request.image, "container image is required")?,
+            platform: request.platform,
+            hostname: request.hostname,
+            domainname: request.domainname,
+            user: request.user,
+            working_dir: request.working_dir,
+            entrypoint: request.entrypoint,
+            command: request.command,
+            env: request.env,
+            labels,
+            network_mode: request.network_mode,
+            network_name: request.network_name,
+            aliases: request.aliases,
+            ipv4_address: request.ipv4_address,
+            mac_address: request.mac_address,
+            ports: request
+                .ports
+                .into_iter()
+                .map(|port| ContainerPortBinding {
+                    container_port: port.container_port,
+                    protocol: port.protocol,
+                    host_ip: port.host_ip,
+                    host_port: port.host_port,
+                })
+                .collect(),
+            dns: request.dns,
+            dns_search: request.dns_search,
+            extra_hosts: request.extra_hosts,
+            binds: request.binds,
+            volumes: request.volumes,
+            tmpfs: request.tmpfs,
+            shm_size: request.shm_size,
+            restart_policy: request.restart_policy.map(map_restart_policy),
+            restart_max_retries: request.restart_max_retries.map(i64::from),
+            auto_remove: request.auto_remove,
+            privileged: request.privileged,
+            init: request.init,
+            tty: request.tty,
+            open_stdin: request.open_stdin,
+            read_only_rootfs: request.read_only_rootfs,
+            cap_add: request.cap_add,
+            cap_drop: request.cap_drop,
+            devices: request
+                .devices
+                .into_iter()
+                .map(|device| ContainerDevice {
+                    host_path: device.host_path,
+                    container_path: device.container_path,
+                    permissions: device.permissions,
+                })
+                .collect(),
+            memory: request.memory,
+            memory_swap: request.memory_swap,
+            cpus: request.cpus,
+            cpu_shares: request.cpu_shares.map(i64::from),
+            cpuset_cpus: request.cpuset_cpus,
+            pids_limit: request.pids_limit.map(i64::from),
+            healthcheck: request.healthcheck.map(|healthcheck| ContainerHealthcheck {
+                disabled: healthcheck.disabled,
+                command: healthcheck.command,
+                interval_seconds: healthcheck.interval_seconds.map(i64::from),
+                timeout_seconds: healthcheck.timeout_seconds.map(i64::from),
+                retries: healthcheck.retries.map(i64::from),
+                start_period_seconds: healthcheck.start_period_seconds.map(i64::from),
+                start_interval_seconds: healthcheck.start_interval_seconds.map(i64::from),
+            }),
+            log_driver: request.log_driver,
+            log_options,
+        }),
+    ))
+}
+
+fn map_restart_policy(policy: DockerContainerRestartPolicyName) -> ContainerRestartPolicyName {
+    match policy {
+        DockerContainerRestartPolicyName::No => ContainerRestartPolicyName::No,
+        DockerContainerRestartPolicyName::Always => ContainerRestartPolicyName::Always,
+        DockerContainerRestartPolicyName::UnlessStopped => {
+            ContainerRestartPolicyName::UnlessStopped
+        }
+        DockerContainerRestartPolicyName::OnFailure => ContainerRestartPolicyName::OnFailure,
+    }
+}
+
 fn require_host_id(host_id: Option<Uuid>) -> Result<Uuid, AppError> {
     host_id.ok_or_else(|| AppError::status(StatusCode::BAD_REQUEST, "host_id is required"))
 }
@@ -1043,6 +1201,128 @@ impl ComposeProjectPayload {
             services: self.services,
             compose_yaml: self.compose_yaml,
             env_file: self.env_file,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docker_container_create_direct_mode_maps_to_direct_dispatch() {
+        assert_eq!(
+            docker_dispatch_mode(DockerContainerCreateExecutionMode::Direct),
+            DockerTaskDispatchMode::Direct,
+        );
+        assert_eq!(
+            docker_dispatch_mode(DockerContainerCreateExecutionMode::Approval),
+            DockerTaskDispatchMode::Approval,
+        );
+    }
+
+    #[test]
+    fn create_container_command_maps_expanded_protocol_request() {
+        let mut request = minimal_container_create_request();
+        request.platform = Some("linux/amd64".to_string());
+        request.network_name = Some("frontend".to_string());
+        request.ports = vec![doro_protocol::DockerContainerPortBinding {
+            container_port: "80".to_string(),
+            protocol: Some("tcp".to_string()),
+            host_ip: Some("127.0.0.1".to_string()),
+            host_port: Some("8080".to_string()),
+        }];
+        request.restart_policy = Some(DockerContainerRestartPolicyName::OnFailure);
+        request.restart_max_retries = Some(3);
+        request.memory = Some("512m".to_string());
+        request.healthcheck = Some(doro_protocol::DockerContainerHealthcheck {
+            disabled: false,
+            command: Some("curl -f http://localhost/ || exit 1".to_string()),
+            interval_seconds: Some(30),
+            timeout_seconds: Some(5),
+            retries: Some(2),
+            start_period_seconds: None,
+            start_interval_seconds: None,
+        });
+        request.labels = json!({ "app": "web" });
+        request.log_driver = Some("json-file".to_string());
+        request.log_options = json!({ "max-size": "10m" });
+
+        let command = match create_container_command(request) {
+            Ok(command) => command,
+            Err(error) => panic!("container command should build: {}", error.0),
+        };
+
+        let ContainerRuntimeCommand::Container(ContainerCommand::Create(request)) = command else {
+            panic!("expected container create command");
+        };
+        assert_eq!(request.platform.as_deref(), Some("linux/amd64"));
+        assert_eq!(request.network_name.as_deref(), Some("frontend"));
+        assert_eq!(request.ports.len(), 1);
+        assert_eq!(
+            request.restart_policy,
+            Some(ContainerRestartPolicyName::OnFailure)
+        );
+        assert_eq!(request.restart_max_retries, Some(3));
+        assert_eq!(request.memory.as_deref(), Some("512m"));
+        assert_eq!(request.labels.get("app").map(String::as_str), Some("web"));
+        assert_eq!(request.log_driver.as_deref(), Some("json-file"));
+        assert_eq!(
+            request.log_options.get("max-size").map(String::as_str),
+            Some("10m"),
+        );
+        assert!(request.healthcheck.is_some());
+    }
+
+    fn minimal_container_create_request() -> DockerContainerCreateRequest {
+        DockerContainerCreateRequest {
+            host_id: Uuid::new_v4(),
+            execution_mode: DockerContainerCreateExecutionMode::Direct,
+            name: "web".to_string(),
+            image: "nginx:1.27".to_string(),
+            platform: None,
+            hostname: None,
+            domainname: None,
+            user: None,
+            working_dir: None,
+            entrypoint: Vec::new(),
+            command: Vec::new(),
+            env: Vec::new(),
+            labels: json!({}),
+            network_mode: None,
+            network_name: None,
+            aliases: Vec::new(),
+            ipv4_address: None,
+            mac_address: None,
+            ports: Vec::new(),
+            dns: Vec::new(),
+            dns_search: Vec::new(),
+            extra_hosts: Vec::new(),
+            binds: Vec::new(),
+            volumes: Vec::new(),
+            tmpfs: Vec::new(),
+            shm_size: None,
+            restart_policy: None,
+            restart_max_retries: None,
+            auto_remove: false,
+            privileged: false,
+            init: false,
+            tty: false,
+            open_stdin: false,
+            read_only_rootfs: false,
+            cap_add: Vec::new(),
+            cap_drop: Vec::new(),
+            devices: Vec::new(),
+            memory: None,
+            memory_swap: None,
+            cpus: None,
+            cpu_shares: None,
+            cpuset_cpus: None,
+            pids_limit: None,
+            healthcheck: None,
+            log_driver: None,
+            log_options: json!({}),
+            reason: None,
         }
     }
 }

@@ -364,12 +364,99 @@ pub struct DockerActionRequest {
 #[ts(export_to = "DockerContainerCreateRequest.ts")]
 pub struct DockerContainerCreateRequest {
     pub host_id: Uuid,
+    pub execution_mode: DockerContainerCreateExecutionMode,
     pub name: String,
     pub image: String,
+    pub platform: Option<String>,
+    pub hostname: Option<String>,
+    pub domainname: Option<String>,
+    pub user: Option<String>,
+    pub working_dir: Option<String>,
+    pub entrypoint: Vec<String>,
     pub command: Vec<String>,
     pub env: Vec<String>,
     pub labels: Value,
+    pub network_mode: Option<String>,
+    pub network_name: Option<String>,
+    pub aliases: Vec<String>,
+    pub ipv4_address: Option<String>,
+    pub mac_address: Option<String>,
+    pub ports: Vec<DockerContainerPortBinding>,
+    pub dns: Vec<String>,
+    pub dns_search: Vec<String>,
+    pub extra_hosts: Vec<String>,
+    pub binds: Vec<String>,
+    pub volumes: Vec<String>,
+    pub tmpfs: Vec<String>,
+    pub shm_size: Option<String>,
+    pub restart_policy: Option<DockerContainerRestartPolicyName>,
+    pub restart_max_retries: Option<i32>,
+    pub auto_remove: bool,
+    pub privileged: bool,
+    pub init: bool,
+    pub tty: bool,
+    pub open_stdin: bool,
+    pub read_only_rootfs: bool,
+    pub cap_add: Vec<String>,
+    pub cap_drop: Vec<String>,
+    pub devices: Vec<DockerContainerDevice>,
+    pub memory: Option<String>,
+    pub memory_swap: Option<String>,
+    pub cpus: Option<String>,
+    pub cpu_shares: Option<i32>,
+    pub cpuset_cpus: Option<String>,
+    pub pids_limit: Option<i32>,
+    pub healthcheck: Option<DockerContainerHealthcheck>,
+    pub log_driver: Option<String>,
+    pub log_options: Value,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "DockerContainerCreateExecutionMode.ts")]
+pub enum DockerContainerCreateExecutionMode {
+    Direct,
+    Approval,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "kebab-case")]
+#[ts(export_to = "DockerContainerRestartPolicyName.ts")]
+pub enum DockerContainerRestartPolicyName {
+    No,
+    Always,
+    UnlessStopped,
+    OnFailure,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerContainerPortBinding.ts")]
+pub struct DockerContainerPortBinding {
+    pub container_port: String,
+    pub protocol: Option<String>,
+    pub host_ip: Option<String>,
+    pub host_port: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerContainerDevice.ts")]
+pub struct DockerContainerDevice {
+    pub host_path: String,
+    pub container_path: Option<String>,
+    pub permissions: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerContainerHealthcheck.ts")]
+pub struct DockerContainerHealthcheck {
+    pub disabled: bool,
+    pub command: Option<String>,
+    pub interval_seconds: Option<i32>,
+    pub timeout_seconds: Option<i32>,
+    pub retries: Option<i32>,
+    pub start_period_seconds: Option<i32>,
+    pub start_interval_seconds: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -1395,6 +1482,11 @@ mod tests {
         assert!(DockerVolumeSummary::export_all(&cfg).is_ok());
         assert!(DockerComposeProject::export_all(&cfg).is_ok());
         assert!(DockerActionRequest::export_all(&cfg).is_ok());
+        assert!(DockerContainerCreateExecutionMode::export_all(&cfg).is_ok());
+        assert!(DockerContainerRestartPolicyName::export_all(&cfg).is_ok());
+        assert!(DockerContainerPortBinding::export_all(&cfg).is_ok());
+        assert!(DockerContainerDevice::export_all(&cfg).is_ok());
+        assert!(DockerContainerHealthcheck::export_all(&cfg).is_ok());
         assert!(DockerContainerCreateRequest::export_all(&cfg).is_ok());
         assert!(DockerImagePullRequest::export_all(&cfg).is_ok());
         assert!(DockerImageRemoveRequest::export_all(&cfg).is_ok());
