@@ -33,6 +33,7 @@ import type { UserSummary } from "@/types/api";
 type AccountDialogTab = "profile" | "password" | "preferences";
 
 const collapsibleNavigationItemIds = new Set(["virtualMachines", "docker"]);
+const defaultCollapsedNavigationItemIds = new Set(collapsibleNavigationItemIds);
 
 export function Sidebar({
   pathname,
@@ -50,7 +51,7 @@ export function Sidebar({
   const [accountDialogTab, setAccountDialogTab] =
     useState<AccountDialogTab>("profile");
   const [collapsedItems, setCollapsedItems] = useState<Set<string>>(
-    () => new Set(),
+    () => new Set(defaultCollapsedNavigationItemIds),
   );
   const displayName = user.display_name || user.username;
   const initials = displayName.trim().slice(0, 1).toUpperCase();
@@ -121,8 +122,11 @@ export function Sidebar({
                   {canCollapse ? (
                     <Button
                       type="button"
-                      variant="ghost"
-                      className="w-full justify-start"
+                      variant={isActive || childActive ? "secondary" : "ghost"}
+                      className={cn(
+                        "w-full justify-start",
+                        (isActive || childActive) && "font-semibold",
+                      )}
                       aria-controls={submenuId}
                       aria-expanded={!isCollapsed}
                       aria-label={tNav(

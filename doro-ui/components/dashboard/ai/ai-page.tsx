@@ -47,6 +47,7 @@ import {
   denyApproval,
   getAiConversation,
   getAiConversations,
+  getApprovals,
   getAiModelProviders,
   getHosts,
 } from "@/lib/control-plane-api";
@@ -188,12 +189,24 @@ function approvalStatusLabel(status: ApprovalRequest["status"]) {
     return "待审批";
   }
   if (status === "approved") {
-    return "已批准";
+    return "已审批";
   }
   if (status === "denied") {
     return "已拒绝";
   }
   return "已过期";
+}
+
+function reconcileApprovalEvents(
+  events: AiChatEvent[],
+  approvals: ApprovalRequest[],
+) {
+  const approvalsById = new Map(approvals.map((approval) => [approval.id, approval]));
+  return events.map((event) => {
+    const approval = event.kind === "approval_required" ? eventApproval(event) : null;
+    const latestApproval = approval ? approvalsById.get(approval.id) : null;
+    return latestApproval ? eventWithApproval(event, latestApproval) : event;
+  });
 }
 
 function splitMarkdownTableRow(line: string) {
@@ -508,16 +521,22 @@ export function AiPage() {
       setModel("");
       return;
     }
-    const result = await getAiConversation(conversationId);
+    const [result, approvalsResult] = await Promise.all([
+      getAiConversation(conversationId),
+      getApprovals(),
+    ]);
     if (result.data) {
       const response = result.data;
+      const reconciledEvents = approvalsResult.data
+        ? reconcileApprovalEvents(response.events, approvalsResult.data.items)
+        : response.events;
       setConversations((current) =>
         current.map((conversation) =>
           conversation.id === response.item.id ? response.item : conversation,
         ),
       );
       setMessages(response.messages);
-      setEvents(response.events);
+      setEvents(reconciledEvents);
       setDisplayedContent(
         Object.fromEntries(
           response.messages.map((message) => [message.id, message.content]),
@@ -528,6 +547,9 @@ export function AiPage() {
       setModel(latestModel);
     } else {
       setApiError(result.error ?? "无法加载 AI 对话");
+    }
+    if (result.data && approvalsResult.error) {
+      setApiError(approvalsResult.error);
     }
   }
 
@@ -655,7 +677,11 @@ export function AiPage() {
       }
 
       setEvents((current) => [...current, streamEventToChatEvent(streamEvent)]);
+      if (streamEvent.kind === "tool_result") {
+        void syncApprovalEvents(false);
+      }
       if (streamEvent.kind === "done" || streamEvent.kind === "error") {
+        void syncApprovalEvents(false);
         setMessages((current) =>
           current.map((message) =>
             message.id === messageId
@@ -718,6 +744,19 @@ export function AiPage() {
     setSending(false);
   }
 
+  async function syncApprovalEvents(showError: boolean) {
+    const result = await getApprovals();
+    const approvals = result.data?.items;
+    if (approvals) {
+      setEvents((current) => reconcileApprovalEvents(current, approvals));
+      return true;
+    }
+    if (showError) {
+      setApiError(result.error ?? "无法同步审批状态");
+    }
+    return false;
+  }
+
   async function handleResolveApproval(
     eventId: string,
     approvalId: string,
@@ -754,6 +793,8 @@ export function AiPage() {
           ),
         );
       }
+    } else if (result.status === 409) {
+      await syncApprovalEvents(false);
     } else {
       setApiError(result.error ?? "审批处理失败");
     }
@@ -1584,7 +1625,7 @@ function ChatEventLine({
               type="button"
               size="sm"
               variant="outline"
-              className="h-7 border-destructive/40 px-2 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+              className="h-7 border-red-500/55 px-2 text-xs text-red-600 hover:bg-red-500/10 hover:text-red-700 dark:border-red-400/75 dark:text-red-300 dark:hover:bg-red-500/15 dark:hover:text-red-200"
               disabled={approvalPending}
               onClick={() => onResolveApproval(event.id, approval.id, "deny")}
             >
