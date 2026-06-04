@@ -826,6 +826,7 @@ async fn dispatch_docker_task(
         .record(NewAgentEvent {
             agent_id: Some(agent_id),
             host_id: Some(host_id),
+            external_event_id: None,
             event_type: "docker.command".to_string(),
             event_json: json!({
                 "task_id": task_id,

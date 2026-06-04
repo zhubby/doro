@@ -27,6 +27,7 @@ pub struct AgentConfig {
     pub vm_vnc_bind: String,
     pub gpu_metrics_enabled: bool,
     pub websites: doro_config::WebsiteConfig,
+    pub reliability: doro_config::AgentReliabilityConfig,
     pub ai: doro_config::AiConfig,
 }
 
@@ -61,6 +62,7 @@ impl AgentConfig {
             vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
             websites: doro_config::WebsiteConfig::default(),
+            reliability: doro_config::AgentReliabilityConfig::default(),
             ai: doro_config::AiConfig::default(),
         }
     }
@@ -95,6 +97,7 @@ impl AgentConfig {
             vm_vnc_bind: config.vm_vnc_bind.clone(),
             gpu_metrics_enabled: config.gpu_metrics_enabled,
             websites: doro_config::WebsiteConfig::default(),
+            reliability: doro_config::AgentReliabilityConfig::default(),
             ai,
         }
     }
@@ -102,6 +105,7 @@ impl AgentConfig {
     pub fn from_file_config(config: &doro_config::AgentFileConfig) -> Self {
         let mut agent = Self::from_config_with_ai(&config.agent, config.ai.clone());
         agent.websites = config.websites.clone();
+        agent.reliability = config.reliability.clone();
         agent
     }
 }

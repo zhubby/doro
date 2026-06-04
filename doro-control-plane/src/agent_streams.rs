@@ -426,6 +426,39 @@ impl AgentStreamRegistry {
             .map_err(|_| AgentTaskCommandError::NoStream)
     }
 
+    pub async fn cancel_command(
+        &self,
+        host_id: Uuid,
+        target_command_id: String,
+        reason: String,
+    ) -> Result<String, AgentTaskCommandError> {
+        let handle = self
+            .streams
+            .lock()
+            .await
+            .get(&host_id)
+            .cloned()
+            .ok_or(AgentTaskCommandError::NoStream)?;
+        let command_id = Uuid::new_v4().to_string();
+        let command = grpc::ControlPlaneCommand {
+            command_id: command_id.clone(),
+            issued_at: Some(protobuf_timestamp_now()),
+            command: Some(grpc::control_plane_command::Command::CancelCommand(
+                grpc::CancelCommand {
+                    command_id: command_id.clone(),
+                    target_command_id,
+                    reason,
+                },
+            )),
+        };
+        handle
+            .sender
+            .send(Ok(command))
+            .await
+            .map_err(|_| AgentTaskCommandError::NoStream)?;
+        Ok(command_id)
+    }
+
     pub(crate) async fn apply_website_routes(
         &self,
         host_id: Uuid,
@@ -856,7 +889,7 @@ pub(crate) enum FileCommandError {
 }
 
 #[derive(Debug)]
-pub(crate) enum AgentTaskCommandError {
+pub enum AgentTaskCommandError {
     NoStream,
     Timeout,
     AgentFailed(String),
@@ -1005,6 +1038,8 @@ pub(crate) fn file_command_app_error(error: FileCommandError) -> AppError {
 pub(crate) fn command_status_label(status: i32) -> &'static str {
     if status == grpc::CommandStatus::Succeeded as i32 {
         "succeeded"
+    } else if status == grpc::CommandStatus::Cancelled as i32 {
+        "cancelled"
     } else {
         "failed"
     }
@@ -1284,6 +1319,57 @@ mod tests {
             Err(error) => panic!("execute task should complete: {error}"),
         };
         assert_eq!(result.message, "agent core placeholder accepted");
+    }
+
+    #[tokio::test]
+    async fn stream_registry_dispatches_cancel_command_when_agent_online() {
+        let registry = AgentStreamRegistry::default();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let (sender, mut receiver) = mpsc::channel(1);
+        registry.register(host_id, agent_id, sender).await;
+
+        let cancel_id = match registry
+            .cancel_command(
+                host_id,
+                "target-command".to_string(),
+                "operator requested".to_string(),
+            )
+            .await
+        {
+            Ok(cancel_id) => cancel_id,
+            Err(error) => panic!("cancel should dispatch: {error:?}"),
+        };
+        let command = match receiver.recv().await {
+            Some(Ok(command)) => command,
+            Some(Err(error)) => panic!("command stream item should be ok: {error}"),
+            None => panic!("registry should send cancel command"),
+        };
+
+        assert_eq!(command.command_id, cancel_id);
+        match command.command {
+            Some(grpc::control_plane_command::Command::CancelCommand(cancel)) => {
+                assert_eq!(cancel.command_id, cancel_id);
+                assert_eq!(cancel.target_command_id, "target-command");
+                assert_eq!(cancel.reason, "operator requested");
+            }
+            other => panic!("expected cancel command, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_registry_cancel_command_fails_without_stream() {
+        let registry = AgentStreamRegistry::default();
+
+        let result = registry
+            .cancel_command(
+                Uuid::new_v4(),
+                "target-command".to_string(),
+                "operator requested".to_string(),
+            )
+            .await;
+
+        assert!(matches!(result, Err(AgentTaskCommandError::NoStream)));
     }
 
     #[tokio::test]

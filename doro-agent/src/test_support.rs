@@ -29,5 +29,6 @@ pub(crate) fn test_agent_config(agent_id: Uuid) -> AgentConfig {
         gpu_metrics_enabled: false,
         websites: doro_config::WebsiteConfig::default(),
         ai: doro_config::AiConfig::default(),
+        reliability: doro_config::AgentReliabilityConfig::default(),
     }
 }

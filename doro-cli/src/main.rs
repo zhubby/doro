@@ -469,6 +469,7 @@ mod tests {
                     ..doro_config::AgentConfig::default()
                 },
                 websites: doro_config::WebsiteConfig::default(),
+                reliability: doro_config::AgentReliabilityConfig::default(),
                 ai: doro_config::AiConfig::default(),
             },
             created: false,
@@ -543,6 +544,7 @@ mod tests {
                     ..doro_config::AgentConfig::default()
                 },
                 websites: doro_config::WebsiteConfig::default(),
+                reliability: doro_config::AgentReliabilityConfig::default(),
                 ai: doro_config::AiConfig::default(),
             },
             created: false,

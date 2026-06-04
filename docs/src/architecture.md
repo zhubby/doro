@@ -20,6 +20,8 @@ The control plane is authoritative for desired state, task lifecycle, approvals,
 
 Agents connect outbound to the control plane over gRPC using the `doro.agent.v1.AgentControlPlane` service. This keeps the model compatible with NAT and home networks where inbound access to every host is undesirable.
 
+The Agent stream is also the reliability boundary for host work. Control-plane commands carry a `command_id`, long-running Agent work is tracked locally, and cancellation uses the same gRPC stream instead of a side channel. If the stream is unavailable, the Agent spools audit-relevant events locally and replays them after reconnect; the control plane stores the original `AgentEvent.event_id` so replay does not duplicate audit rows.
+
 The UI uses REST APIs for query and mutation, plus SSE at `/api/v1/events` for realtime browser updates. Agent traffic uses a separate gRPC/Protobuf contract because agents need typed enrollment, heartbeat, event streaming, and command dispatch.
 
 Website traffic is served by Pingora inside the target `doro-agent` through `doro-website`. The control plane stores website desired state, creates approvals for network exposure, and sends host-scoped route tables to Agents after approved changes. Pingora handles runtime proxying only; it does not bypass the control plane for configuration, approval, or persistence.

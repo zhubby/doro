@@ -7,6 +7,7 @@ use crate::runtime::Agent;
 use crate::startup::print_agent_startup_summary;
 use crate::terminal::TerminalManager;
 use crate::tools::AgentCommandState;
+use doro_protocol::grpc;
 use doro_protocol::grpc::agent_control_plane_client::AgentControlPlaneClient;
 use std::path::Path;
 use std::time::Duration;
@@ -160,12 +161,14 @@ async fn open_agent_stream(
         "opening agent stream"
     );
     sender.send(agent.connected_event(agent_id)).await?;
+    for event in agent.event_spool.lock().await.drain(128) {
+        send_agent_event(&agent, &sender, event).await?;
+    }
     tracing::debug!(agent_id = %agent_id, "queued agent connected event");
 
     if let Some(mut runtime_logs) = runtime_log_subscription() {
         for log in runtime_logs.snapshot {
-            if sender
-                .send(agent.log_line_event(agent_id, log))
+            if send_agent_event(&agent, &sender, agent.log_line_event(agent_id, log))
                 .await
                 .is_err()
             {
@@ -188,10 +191,13 @@ async fn open_agent_stream(
                     }
                     () = wait_for_shutdown(log_shutdown.clone()) => return,
                 };
-                if log_sender
-                    .send(log_agent.log_line_event(agent_id, log))
-                    .await
-                    .is_err()
+                if send_agent_event(
+                    &log_agent,
+                    &log_sender,
+                    log_agent.log_line_event(agent_id, log),
+                )
+                .await
+                .is_err()
                 {
                     return;
                 }
@@ -209,7 +215,10 @@ async fn open_agent_stream(
                 () = wait_for_shutdown(heartbeat_shutdown.clone()) => break,
             }
             let event = heartbeat_agent.heartbeat_event(agent_id);
-            if heartbeat_sender.send(event).await.is_err() {
+            if send_agent_event(&heartbeat_agent, &heartbeat_sender, event)
+                .await
+                .is_err()
+            {
                 break;
             }
             tracing::debug!(agent_id = %agent_id, "queued heartbeat event");
@@ -249,7 +258,10 @@ async fn open_agent_stream(
                         host_id = %metrics_agent.config.host_id,
                         "queued telemetry event"
                     );
-                    if metrics_sender.send(event).await.is_err() {
+                    if send_agent_event(&metrics_agent, &metrics_sender, event)
+                        .await
+                        .is_err()
+                    {
                         return;
                     }
                 }
@@ -285,6 +297,20 @@ async fn open_agent_stream(
                 }
             }
             () = wait_for_shutdown(shutdown_rx.clone()) => return Ok(()),
+        }
+    }
+}
+
+pub(crate) async fn send_agent_event(
+    agent: &Agent,
+    sender: &mpsc::Sender<grpc::AgentEvent>,
+    event: grpc::AgentEvent,
+) -> Result<(), mpsc::error::SendError<grpc::AgentEvent>> {
+    match sender.send(event.clone()).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            agent.event_spool.lock().await.spool(&event);
+            Err(error)
         }
     }
 }

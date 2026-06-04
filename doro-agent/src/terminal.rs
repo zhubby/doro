@@ -1,3 +1,4 @@
+use crate::command_registry::CommandCancellationSignal;
 use chrono::DateTime;
 use chrono::Utc;
 use portable_pty::Child;
@@ -32,6 +33,8 @@ pub struct TerminalCommand {
     pub cols: u16,
     pub rows: u16,
     pub timeout: Duration,
+    pub cancel_signal: Option<CommandCancellationSignal>,
+    pub cancel_grace: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +42,7 @@ pub struct TerminalCommandOutput {
     pub output: String,
     pub exit_code: Option<i32>,
     pub timed_out: bool,
+    pub cancelled: bool,
     pub started_at: DateTime<Utc>,
     pub finished_at: DateTime<Utc>,
 }
@@ -90,7 +94,10 @@ impl TerminalManager {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("terminal session lock poisoned"))?;
             let result = session.execute(command);
-            if result.as_ref().is_ok_and(|output| output.timed_out) {
+            if result
+                .as_ref()
+                .is_ok_and(|output| output.timed_out || output.cancelled)
+            {
                 *session = TerminalSession::spawn(DEFAULT_COLS, DEFAULT_ROWS)?;
             }
             result
@@ -234,18 +241,32 @@ impl TerminalSession {
         let mut output = Vec::new();
         let mut exit_code = None;
         let mut timed_out = false;
+        let mut cancelled = false;
 
         loop {
+            if command
+                .cancel_signal
+                .as_ref()
+                .is_some_and(CommandCancellationSignal::is_cancelled)
+            {
+                cancelled = true;
+                let _ = self.writer.write_all(b"\x03");
+                let _ = self.writer.flush();
+                std::thread::sleep(command.cancel_grace);
+                break;
+            }
+
             let now = Instant::now();
             if now >= deadline {
                 timed_out = true;
                 break;
             }
 
-            match self
-                .output_rx
-                .recv_timeout(deadline.saturating_duration_since(now))
-            {
+            match self.output_rx.recv_timeout(
+                deadline
+                    .saturating_duration_since(now)
+                    .min(Duration::from_millis(100)),
+            ) {
                 Ok(chunk) => {
                     output.extend_from_slice(&chunk);
                     if output.len() > OUTPUT_LIMIT_BYTES {
@@ -259,8 +280,10 @@ impl TerminalSession {
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
-                    timed_out = true;
-                    break;
+                    if Instant::now() >= deadline {
+                        timed_out = true;
+                        break;
+                    }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
                     timed_out = true;
@@ -279,6 +302,7 @@ impl TerminalSession {
             output,
             exit_code,
             timed_out,
+            cancelled,
             started_at,
             finished_at,
         })
@@ -412,6 +436,8 @@ mod tests {
                 cols: DEFAULT_COLS,
                 rows: DEFAULT_ROWS,
                 timeout: Duration::from_secs(5),
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(1),
             })
             .await
         {
@@ -437,6 +463,8 @@ mod tests {
                 cols: DEFAULT_COLS,
                 rows: DEFAULT_ROWS,
                 timeout: Duration::from_secs(5),
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(1),
             })
             .await
         {
@@ -461,6 +489,8 @@ mod tests {
                 cols: DEFAULT_COLS,
                 rows: DEFAULT_ROWS,
                 timeout: Duration::from_millis(100),
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(1),
             })
             .await
         {
@@ -478,11 +508,61 @@ mod tests {
                 cols: DEFAULT_COLS,
                 rows: DEFAULT_ROWS,
                 timeout: Duration::from_secs(5),
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(1),
             })
             .await
         {
             Ok(output) => output,
             Err(error) => panic!("terminal should recover after timeout: {error}"),
+        };
+
+        assert!(recovered.output.contains("recovered"));
+        assert_eq!(recovered.exit_code, Some(0), "{recovered:?}");
+    }
+
+    #[tokio::test]
+    async fn terminal_command_cancellation_resets_session() {
+        let terminal = match TerminalManager::new() {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("terminal should start: {error}"),
+        };
+        let cancel_signal = CommandCancellationSignal::new();
+        cancel_signal.cancel();
+
+        let cancelled = match terminal
+            .execute(TerminalCommand {
+                command_id: "test-cancelled".to_string(),
+                input: "sleep 1".to_string(),
+                cols: DEFAULT_COLS,
+                rows: DEFAULT_ROWS,
+                timeout: Duration::from_secs(5),
+                cancel_signal: Some(cancel_signal),
+                cancel_grace: Duration::from_millis(10),
+            })
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => panic!("command should return cancellation output: {error}"),
+        };
+
+        assert!(cancelled.cancelled);
+        assert_eq!(cancelled.exit_code, None);
+
+        let recovered = match terminal
+            .execute(TerminalCommand {
+                command_id: "test-cancel-recovered".to_string(),
+                input: "printf recovered".to_string(),
+                cols: DEFAULT_COLS,
+                rows: DEFAULT_ROWS,
+                timeout: Duration::from_secs(5),
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(1),
+            })
+            .await
+        {
+            Ok(output) => output,
+            Err(error) => panic!("terminal should recover after cancellation: {error}"),
         };
 
         assert!(recovered.output.contains("recovered"));

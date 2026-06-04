@@ -88,6 +88,7 @@ message ControlPlaneCommand {
     ApplyWebsiteRoutesCommand apply_website_routes = 19;
     RunAgentChatTurnCommand run_agent_chat_turn = 20;
     RunDockerCommandCommand run_docker_command = 21;
+    CancelCommand cancel_command = 22;
   }
 }
 
@@ -174,6 +175,12 @@ message AgentToolApprovalDecisionCommand {
   string step_id = 3;
   bool approved = 4;
   string message = 5;
+}
+
+message CancelCommand {
+  string command_id = 1;
+  string target_command_id = 2;
+  string reason = 3;
 }
 
 message ApplyWebsiteRoutesCommand {
@@ -298,6 +305,7 @@ enum CommandStatus {
   COMMAND_STATUS_UNSPECIFIED = 0;
   COMMAND_STATUS_SUCCEEDED = 1;
   COMMAND_STATUS_FAILED = 2;
+  COMMAND_STATUS_CANCELLED = 3;
 }
 
 message CommandResultEvent {

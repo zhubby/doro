@@ -105,6 +105,7 @@ impl AgentControlPlane for GrpcAgentService {
             .record(NewAgentEvent {
                 agent_id: Some(agent_id),
                 host_id: Some(host_id),
+                external_event_id: None,
                 event_type: "heartbeat".to_string(),
                 event_json: serde_json::json!({
                     "agent_id": agent_id,
@@ -405,6 +406,7 @@ impl AgentControlPlane for GrpcAgentService {
                         .record(NewAgentEvent {
                             agent_id,
                             host_id,
+                            external_event_id: Some(event.event_id.clone()),
                             event_type: event_type.clone(),
                             event_json: serde_json::json!({
                                 "event_id": event.event_id,
@@ -442,6 +444,7 @@ impl AgentControlPlane for GrpcAgentService {
                     .record(NewAgentEvent {
                         agent_id: Some(agent_id),
                         host_id: Some(host_id),
+                        external_event_id: None,
                         event_type: "agent_disconnected".to_string(),
                         event_json: serde_json::json!({
                             "agent_id": agent_id,

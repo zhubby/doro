@@ -523,6 +523,7 @@ async fn dispatch_virtual_machine_task(
         .record(NewAgentEvent {
             agent_id: Some(agent_id),
             host_id: Some(host_id),
+            external_event_id: None,
             event_type: "virtual_machine.command".to_string(),
             event_json: json!({
                 "task_id": task_id,

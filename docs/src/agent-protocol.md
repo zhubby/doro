@@ -34,6 +34,14 @@ vm_user_network_enabled = true
 vm_console_enabled = true
 vm_vnc_bind = "127.0.0.1"
 
+[reliability]
+event_spool_enabled = true
+event_spool_path = "/home/doro/.doro/agent-event-spool"
+event_spool_max_files = 256
+event_spool_max_bytes = 67108864
+command_cancel_grace_seconds = 5
+preflight_enabled = true
+
 [websites]
 enabled = true
 http_bind = "127.0.0.1:8080"
@@ -88,6 +96,75 @@ AI tool approval is carried over the same stream. When the Agent runner needs a 
 
 Interactive terminal sessions use the same agent stream plus a browser WebSocket bridge. The UI connects to `/api/v1/terminal/:host_id/ws`, the control plane sends `OpenTerminalSessionCommand`, browser keypresses become `TerminalInputCommand`, terminal resizes become `ResizeTerminalSessionCommand`, and agent PTY output returns as `TerminalOutputEvent`. Closing the browser socket sends `CloseTerminalSessionCommand`, and the agent confirms with `TerminalSessionClosedEvent`.
 
+## Reliable Command Execution
+
+Long-running control-plane commands share a command lifecycle keyed by `command_id`. The Agent tracks terminal commands, AI tasks, AI chat turns, Docker commands, virtual machine commands, file operations, website route application, and refresh commands in a local command registry. A command stays registered until it emits a final event or is cancelled.
+
+### Cancellation
+
+The control plane may send `CancelCommand` through `ControlPlaneCommand.cancel_command`:
+
+```protobuf
+message CancelCommand {
+  string command_id = 1;
+  string target_command_id = 2;
+  string reason = 3;
+}
+```
+
+`CancelCommand.command_id` identifies the cancellation request itself and should match the enclosing `ControlPlaneCommand.command_id`. `target_command_id` identifies the running command to stop. `reason` is operator or scheduler context for audit messages.
+
+When the target is running, the Agent cancels the target work and emits a `CommandResultEvent` for the target command with `COMMAND_STATUS_CANCELLED`, then emits a second `CommandResultEvent` for the cancel command with `COMMAND_STATUS_SUCCEEDED`. If the target is not running, the cancel command emits `COMMAND_STATUS_FAILED`. The protocol enum value for cancelled work is:
+
+```protobuf
+enum CommandStatus {
+  COMMAND_STATUS_UNSPECIFIED = 0;
+  COMMAND_STATUS_SUCCEEDED = 1;
+  COMMAND_STATUS_FAILED = 2;
+  COMMAND_STATUS_CANCELLED = 3;
+}
+```
+
+One-shot terminal commands use the configured cancellation grace period. The Agent signals the running PTY command, waits `[reliability].command_cancel_grace_seconds`, then resets the PTY session if the command has not exited. Other tracked async work is aborted through the local command registry and still reports a standard final result for the target command.
+
+`AgentStreamRegistry::cancel_command` is the first control-plane dispatch surface. REST/UI cancellation can call that registry method later without adding a second Agent protocol.
+
+### Preflight
+
+Before write-oriented work, the Agent performs preflight checks when `[reliability].preflight_enabled` is true. File operations reuse the same home-directory scope checks as execution, reject traversal and targets outside the Agent user's home, enforce transfer limits, reject directory upload targets, and perform a best-effort available-disk check. Docker, virtual machine, website, and AI operations also fail before execution when their configured runtime/provider is not enabled or ready.
+
+Preflight is a runtime guard, not an authorization replacement. The control plane still validates capability and risk before dispatch, and high-risk work still requires approval before it is sent to the Agent.
+
+### Event Spool
+
+The Agent also keeps an event spool for stream interruptions. When the outbound stream sender is closed, non-log and non-text-delta events are encoded as protobuf files under `[reliability].event_spool_path` or `~/.doro/agent-event-spool`. The spool is bounded by `[reliability].event_spool_max_files` and `[reliability].event_spool_max_bytes`; excess or unwriteable events increment dropped counters. On reconnect, the Agent sends `connected`, drains a bounded batch of spooled events, and then resumes normal heartbeat, metrics, and command/event traffic. Corrupt spool files are skipped and counted rather than blocking reconnect.
+
+`log.line` and `agent_chat.text_delta` are intentionally excluded from the spool. They are high-volume, transient events; dropping them during a broken stream must not block replay of final command results, approval requests, snapshots, or other audit-relevant events.
+
+### Runtime Metrics
+
+Runtime health is reported inside `metrics.snapshot.extra_json.agent_runtime`. The payload includes `pending_commands`, `cancel_count`, and `event_spool` counters:
+
+```json
+{
+  "agent_runtime": {
+    "pending_commands": 2,
+    "cancel_count": 1,
+    "event_spool": {
+      "pending_files": 3,
+      "pending_bytes": 4096,
+      "spooled_events": 8,
+      "drained_events": 5,
+      "dropped_events": 0,
+      "corrupt_events": 0,
+      "last_drain_status": "drained"
+    }
+  }
+}
+```
+
+If the spool lock is busy while metrics are assembled, `event_spool` may be reported as `{ "status": "busy" }` for that snapshot.
+
 ## Local Observation Events
 
 Local system collection is a one-way agent-to-control-plane flow over `OpenAgentStream`. It does not introduce MQTT, WebSocket, or direct UI-to-agent access.
@@ -121,7 +198,7 @@ Agent protocol traffic is persisted by `doro-store`:
 
 - Enrollment validates and consumes an active enrollment token, creates or updates `hosts`, `agents`, and `agent_capabilities`, then appends an `agent_events` record.
 - Heartbeats update agent and host `last_seen_at`, replace declared capabilities for that agent, and append a heartbeat event.
-- Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data.
+- Streamed agent events are appended to `agent_events` with the original payload stored as JSONB so protocol additions do not discard audit data. The control plane stores `AgentEvent.event_id` as `agent_events.external_event_id` and checks `(agent_id, host_id, external_event_id)` before insert so replayed spooled events do not create duplicate audit records. The backing unique index is created on `(recorded_at, agent_id, host_id, external_event_id)` for non-null external IDs so it remains compatible with a TimescaleDB hypertable, while the application-level check preserves the intended replay idempotency.
 - `metrics.snapshot` payloads are normalized into `metric_snapshots`.
 - `container.snapshot` payloads update current `containers` rows by host, runtime, and container reference.
 - Docker image, network, volume, and Compose inventory is queried live through the Agent stream. The control plane persists task, approval, run, and event audit data for Docker actions, but does not create separate inventory tables for those resources.

@@ -14,13 +14,25 @@ Doro is not a Codex CLI fork. The previous Codex-derived files were removed from
 
 - `doro-protocol` - shared versioned protocol types for the UI, control plane, and agents.
 - `doro-control-plane` - console API, event stream, and agent connection surface.
-- `doro-agent` - host daemon skeleton for registration, heartbeat, metrics, and task execution.
+- `doro-agent` - host daemon for enrollment, heartbeat, metrics, cancellable command execution, and host-local task work.
 - `doro-store` - Postgres persistence boundary using SeaORM.
 - `doro-config` - TOML configuration loading and defaults for `~/.doro/control-plane.toml` and `~/.doro/agent.toml`.
 - `doro-ai` - AI planning/provider abstraction that never bypasses policy or approval.
 - `doro-cli` - Doro operations CLI.
 - `doro-ui` - Next.js frontend.
 - `docs` - mdBook product and architecture documentation.
+
+## Agent Reliability
+
+Doro keeps one Agent protocol: outbound gRPC from each enrolled Agent to the control plane. Long-running Agent work is keyed by `command_id`, tracked locally, and can be cancelled by the control plane with `CancelCommand`. Cancelled work reports `COMMAND_STATUS_CANCELLED` so task, audit, and UI code can distinguish operator cancellation from failure.
+
+The Agent also includes reliability settings in `~/.doro/agent.toml` under `[reliability]`:
+
+- `event_spool_enabled`, `event_spool_path`, `event_spool_max_files`, and `event_spool_max_bytes` bound local event buffering while the stream is unavailable.
+- `command_cancel_grace_seconds` controls graceful terminal cancellation before the PTY is reset.
+- `preflight_enabled` enables execution-time checks for file scope, transfer size, disk space, runtime readiness, and provider configuration.
+
+Runtime health is exposed in `metrics.snapshot.extra_json.agent_runtime`, including pending command count, cancel count, and event spool counters.
 
 ## Development
 
@@ -39,7 +51,7 @@ cargo run -p doro-cli -- control-plane
 
 The control plane listens on `127.0.0.1:8787` for the console and `127.0.0.1:8788` for agents.
 
-Run the agent skeleton:
+Run the agent:
 
 ```bash
 cargo run -p doro-cli -- agent

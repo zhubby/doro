@@ -84,6 +84,7 @@ pub(crate) async fn handle_terminal_socket(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: Some(host_id),
+            external_event_id: None,
             event_type: "terminal.session_opened".to_string(),
             event_json: serde_json::json!({
                 "session_id": session_id,
@@ -148,6 +149,7 @@ pub(crate) async fn handle_terminal_socket(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: Some(host_id),
+            external_event_id: None,
             event_type: "terminal.session_closed".to_string(),
             event_json: serde_json::json!({
                 "session_id": session_id,
@@ -212,6 +214,7 @@ pub(crate) async fn run_terminal_command(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: Some(request.host_id),
+            external_event_id: None,
             event_type: "terminal.command_requested".to_string(),
             event_json: serde_json::json!({
                 "host_id": request.host_id,
@@ -251,6 +254,7 @@ pub(crate) async fn run_terminal_command(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: Some(request.host_id),
+            external_event_id: None,
             event_type: "terminal.command_completed".to_string(),
             event_json: serde_json::json!({
                 "command_id": result.command_id,

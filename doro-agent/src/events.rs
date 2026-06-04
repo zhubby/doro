@@ -42,8 +42,20 @@ impl Agent {
     pub fn metrics_snapshot_event(
         &self,
         agent_id: Uuid,
-        metrics: MetricsCapture,
+        mut metrics: MetricsCapture,
     ) -> grpc::AgentEvent {
+        if let Some(extra) = metrics.extra.as_object_mut() {
+            let command_metrics = self.command_registry_metrics_snapshot();
+            let spool_metrics = self.event_spool_metrics_snapshot();
+            extra.insert(
+                "agent_runtime".to_string(),
+                serde_json::json!({
+                    "pending_commands": command_metrics.pending_commands,
+                    "cancel_count": command_metrics.cancel_count,
+                    "event_spool": spool_metrics,
+                }),
+            );
+        }
         self.grpc_event(
             agent_id,
             grpc::agent_event::Event::MetricsSnapshot(grpc::MetricsSnapshotEvent {
@@ -56,6 +68,30 @@ impl Agent {
                 extra_json: metrics.extra.to_string(),
             }),
         )
+    }
+
+    fn command_registry_metrics_snapshot(&self) -> crate::command_registry::CommandRegistryMetrics {
+        self.command_registry.try_metrics().unwrap_or_default()
+    }
+
+    fn event_spool_metrics_snapshot(&self) -> serde_json::Value {
+        match self.event_spool.try_lock() {
+            Ok(spool) => {
+                let metrics = spool.metrics();
+                serde_json::json!({
+                    "pending_files": metrics.pending_files,
+                    "pending_bytes": metrics.pending_bytes,
+                    "spooled_events": metrics.spooled_events,
+                    "drained_events": metrics.drained_events,
+                    "dropped_events": metrics.dropped_events,
+                    "corrupt_events": metrics.corrupt_events,
+                    "last_drain_status": metrics.last_drain_status,
+                })
+            }
+            Err(_) => serde_json::json!({
+                "status": "busy"
+            }),
+        }
     }
 
     pub fn container_snapshot_event(
@@ -299,7 +335,9 @@ impl Agent {
         command_id: String,
         output: terminal::TerminalCommandOutput,
     ) -> grpc::AgentEvent {
-        let status = if output.exit_code == Some(0) && !output.timed_out {
+        let status = if output.cancelled {
+            grpc::CommandStatus::Cancelled
+        } else if output.exit_code == Some(0) && !output.timed_out {
             grpc::CommandStatus::Succeeded
         } else {
             grpc::CommandStatus::Failed

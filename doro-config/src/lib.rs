@@ -58,6 +58,7 @@ pub struct ControlPlaneConfig {
 pub struct AgentFileConfig {
     pub agent: AgentConfig,
     pub websites: WebsiteConfig,
+    pub reliability: AgentReliabilityConfig,
     pub ai: AiConfig,
 }
 
@@ -214,6 +215,30 @@ impl Default for AgentConfig {
             vm_console_enabled: true,
             vm_vnc_bind: "127.0.0.1".to_string(),
             gpu_metrics_enabled: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AgentReliabilityConfig {
+    pub event_spool_enabled: bool,
+    pub event_spool_path: Option<String>,
+    pub event_spool_max_files: u32,
+    pub event_spool_max_bytes: u64,
+    pub command_cancel_grace_seconds: u64,
+    pub preflight_enabled: bool,
+}
+
+impl Default for AgentReliabilityConfig {
+    fn default() -> Self {
+        Self {
+            event_spool_enabled: true,
+            event_spool_path: None,
+            event_spool_max_files: 256,
+            event_spool_max_bytes: 64 * 1024 * 1024,
+            command_cancel_grace_seconds: 5,
+            preflight_enabled: true,
         }
     }
 }

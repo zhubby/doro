@@ -1,6 +1,7 @@
 use crate::constants::MAX_FILE_TRANSFER_BYTES;
 use crate::filesystem;
 use crate::runtime::{Agent, VmRuntime};
+use crate::session::send_agent_event;
 use crate::terminal::{TerminalCommand, TerminalManager};
 use crate::tools::{AgentCommandState, LocalAgentToolExecutor, parse_json_value};
 use crate::website_routes::apply_website_routes;
@@ -13,6 +14,7 @@ use doro_protocol::grpc;
 use doro_vm::{VmCommand, VmCommandEnvelope, VmCommandStatus, VmProviderError};
 use serde::Deserialize;
 use serde_json::json;
+use std::future::Future;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -21,6 +23,27 @@ use uuid::Uuid;
 pub(crate) enum AgentCommandAction {
     Continue,
     Reconnect,
+}
+
+async fn track_event_command<F>(
+    agent: &Agent,
+    command_id: String,
+    kind: &'static str,
+    sender: mpsc::Sender<grpc::AgentEvent>,
+    future: F,
+) where
+    F: Future<Output = grpc::AgentEvent> + Send + 'static,
+{
+    let task_agent = agent.clone();
+    agent
+        .command_registry
+        .track_spawn(command_id, kind, async move {
+            let event = future.await;
+            if send_agent_event(&task_agent, &sender, event).await.is_err() {
+                tracing::warn!("failed to enqueue tracked command event");
+            }
+        })
+        .await;
 }
 
 pub(crate) async fn handle_command(
@@ -38,179 +61,266 @@ pub(crate) async fn handle_command(
         }
         Some(grpc::control_plane_command::Command::CollectContainers(_)) => {
             tracing::info!(command_id = %command_id, "collecting containers by control-plane request");
-            let event = match &agent.container_runtime {
-                Some(runtime) => match runtime.snapshot().await {
-                    Ok(snapshot) => agent.container_snapshot_event(agent_id, command_id, snapshot),
-                    Err(error) => agent.command_result_event(
-                        agent_id,
-                        command_id,
-                        grpc::CommandStatus::Failed,
-                        error.to_string(),
-                    ),
-                },
-                None => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    "container provider is not enabled",
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue command result event");
-            }
-        }
-        Some(grpc::control_plane_command::Command::CollectVirtualMachines(_)) => {
-            tracing::info!(command_id = %command_id, "collecting virtual machines by control-plane request");
-            let event = match &agent.vm_runtime {
-                Some(runtime) => match runtime.provider.list().await {
-                    Ok(states) => {
-                        agent.virtual_machine_snapshot_event(agent_id, command_id, states)
-                    }
-                    Err(error) => agent.command_result_event(
-                        agent_id,
-                        command_id,
-                        grpc::CommandStatus::Failed,
-                        error.to_string(),
-                    ),
-                },
-                None => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    "virtual machine provider is not enabled",
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue virtual machine snapshot event");
-            }
-        }
-        Some(grpc::control_plane_command::Command::RunVirtualMachineCommand(vm_command)) => {
-            tracing::info!(command_id = %command_id, "executing virtual machine command by control-plane request");
-            let event = match &agent.vm_runtime {
-                Some(runtime) => {
-                    match serde_json::from_str::<VmCommandEnvelope>(&vm_command.command_json) {
-                        Ok(envelope) => match execute_vm_command(runtime, envelope).await {
-                            Ok(result) => agent
-                                .virtual_machine_command_result_event(agent_id, command_id, result),
-                            Err(error) => agent.command_result_event(
+            let task_agent = agent.clone();
+            let runtime = agent.container_runtime.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "container_collect",
+                sender.clone(),
+                async move {
+                    match runtime {
+                        Some(runtime) => match runtime.snapshot().await {
+                            Ok(snapshot) => {
+                                task_agent.container_snapshot_event(agent_id, command_id, snapshot)
+                            }
+                            Err(error) => task_agent.command_result_event(
                                 agent_id,
                                 command_id,
                                 grpc::CommandStatus::Failed,
                                 error.to_string(),
                             ),
                         },
-                        Err(error) => agent.command_result_event(
+                        None => task_agent.command_result_event(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            format!("invalid virtual machine command payload: {error}"),
+                            "container provider is not enabled",
                         ),
                     }
-                }
-                None => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    "virtual machine provider is not enabled",
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue virtual machine command result event");
-            }
+                },
+            )
+            .await;
+        }
+        Some(grpc::control_plane_command::Command::CollectVirtualMachines(_)) => {
+            tracing::info!(command_id = %command_id, "collecting virtual machines by control-plane request");
+            let task_agent = agent.clone();
+            let runtime = agent.vm_runtime.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "virtual_machine_collect",
+                sender.clone(),
+                async move {
+                    match runtime {
+                        Some(runtime) => match runtime.provider.list().await {
+                            Ok(states) => task_agent
+                                .virtual_machine_snapshot_event(agent_id, command_id, states),
+                            Err(error) => task_agent.command_result_event(
+                                agent_id,
+                                command_id,
+                                grpc::CommandStatus::Failed,
+                                error.to_string(),
+                            ),
+                        },
+                        None => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            "virtual machine provider is not enabled",
+                        ),
+                    }
+                },
+            )
+            .await;
+        }
+        Some(grpc::control_plane_command::Command::RunVirtualMachineCommand(vm_command)) => {
+            tracing::info!(command_id = %command_id, "executing virtual machine command by control-plane request");
+            let task_agent = agent.clone();
+            let runtime = agent.vm_runtime.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "virtual_machine_command",
+                sender.clone(),
+                async move {
+                    match runtime {
+                        Some(runtime) => {
+                            match serde_json::from_str::<VmCommandEnvelope>(
+                                &vm_command.command_json,
+                            ) {
+                                Ok(envelope) => {
+                                    match execute_vm_command(&runtime, envelope).await {
+                                        Ok(result) => task_agent
+                                            .virtual_machine_command_result_event(
+                                                agent_id, command_id, result,
+                                            ),
+                                        Err(error) => task_agent.command_result_event(
+                                            agent_id,
+                                            command_id,
+                                            grpc::CommandStatus::Failed,
+                                            error.to_string(),
+                                        ),
+                                    }
+                                }
+                                Err(error) => task_agent.command_result_event(
+                                    agent_id,
+                                    command_id,
+                                    grpc::CommandStatus::Failed,
+                                    format!("invalid virtual machine command payload: {error}"),
+                                ),
+                            }
+                        }
+                        None => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            "virtual machine provider is not enabled",
+                        ),
+                    }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::RunDockerCommand(docker_command)) => {
             tracing::info!(command_id = %command_id, "executing Docker command by control-plane request");
-            let event = match &agent.container_runtime {
-                Some(runtime) => {
-                    match serde_json::from_str::<ContainerRuntimeCommandEnvelope>(
-                        &docker_command.command_json,
-                    ) {
-                        Ok(envelope) => {
-                            let result = runtime.execute(envelope).await;
-                            agent.docker_command_result_event(agent_id, command_id, result)
+            let task_agent = agent.clone();
+            let runtime = agent.container_runtime.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "docker_command",
+                sender.clone(),
+                async move {
+                    match runtime {
+                        Some(runtime) => {
+                            match serde_json::from_str::<ContainerRuntimeCommandEnvelope>(
+                                &docker_command.command_json,
+                            ) {
+                                Ok(envelope) => {
+                                    let result = runtime.execute(envelope).await;
+                                    task_agent
+                                        .docker_command_result_event(agent_id, command_id, result)
+                                }
+                                Err(error) => task_agent.command_result_event(
+                                    agent_id,
+                                    command_id,
+                                    grpc::CommandStatus::Failed,
+                                    format!("invalid Docker command payload: {error}"),
+                                ),
+                            }
                         }
-                        Err(error) => agent.command_result_event(
+                        None => task_agent.command_result_event(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            format!("invalid Docker command payload: {error}"),
+                            "container provider is not enabled",
                         ),
                     }
-                }
-                None => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    "container provider is not enabled",
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue Docker command result event");
-            }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::ListDirectory(list_command)) => {
             tracing::info!(command_id = %command_id, path = list_command.path, "listing directory by control-plane request");
-            let event = match filesystem::list_directory(&list_command.path) {
-                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
-                Err(error) => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    error.to_string(),
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue file list result event");
-            }
+            let task_agent = agent.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "file_list",
+                sender.clone(),
+                async move {
+                    match filesystem::list_directory(&list_command.path) {
+                        Ok(output) => {
+                            task_agent.file_command_result_event(agent_id, command_id, output)
+                        }
+                        Err(error) => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            error.to_string(),
+                        ),
+                    }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::ReadFile(read_command)) => {
             tracing::info!(command_id = %command_id, path = read_command.path, "reading file by control-plane request");
-            let event = match filesystem::read_file(&read_command.path, MAX_FILE_TRANSFER_BYTES) {
-                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
-                Err(error) => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    error.to_string(),
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue file read result event");
-            }
+            let task_agent = agent.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "file_read",
+                sender.clone(),
+                async move {
+                    match filesystem::read_file(&read_command.path, MAX_FILE_TRANSFER_BYTES) {
+                        Ok(output) => {
+                            task_agent.file_command_result_event(agent_id, command_id, output)
+                        }
+                        Err(error) => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            error.to_string(),
+                        ),
+                    }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::SearchFiles(search_command)) => {
             tracing::info!(command_id = %command_id, path = search_command.path, query = search_command.query, "searching files by control-plane request");
-            let event = match filesystem::search_files(
-                &search_command.path,
-                &search_command.query,
-                search_command.limit,
-            ) {
-                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
-                Err(error) => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    error.to_string(),
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue file search result event");
-            }
+            let task_agent = agent.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "file_search",
+                sender.clone(),
+                async move {
+                    match filesystem::search_files(
+                        &search_command.path,
+                        &search_command.query,
+                        search_command.limit,
+                    ) {
+                        Ok(output) => {
+                            task_agent.file_command_result_event(agent_id, command_id, output)
+                        }
+                        Err(error) => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            error.to_string(),
+                        ),
+                    }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::RunFileOperation(file_command)) => {
             tracing::info!(command_id = %command_id, operation = file_command.operation, path = file_command.path, "running file operation by control-plane request");
-            let event = match filesystem::run_operation(file_command, MAX_FILE_TRANSFER_BYTES) {
-                Ok(output) => agent.file_command_result_event(agent_id, command_id, output),
-                Err(error) => agent.command_result_event(
-                    agent_id,
-                    command_id,
-                    grpc::CommandStatus::Failed,
-                    error.to_string(),
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue file operation result event");
-            }
+            let task_agent = agent.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "file_operation",
+                sender.clone(),
+                async move {
+                    if task_agent.config.reliability.preflight_enabled
+                        && let Err(error) =
+                            filesystem::preflight_operation(&file_command, MAX_FILE_TRANSFER_BYTES)
+                    {
+                        return task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            error.to_string(),
+                        );
+                    }
+                    match filesystem::run_operation(file_command, MAX_FILE_TRANSFER_BYTES) {
+                        Ok(output) => {
+                            task_agent.file_command_result_event(agent_id, command_id, output)
+                        }
+                        Err(error) => task_agent.command_result_event(
+                            agent_id,
+                            command_id,
+                            grpc::CommandStatus::Failed,
+                            error.to_string(),
+                        ),
+                    }
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::ApplyWebsiteRoutes(route_command)) => {
             tracing::info!(
@@ -223,15 +333,27 @@ pub(crate) async fn handle_command(
                 .iter()
                 .map(|route| route.website_id.clone())
                 .collect::<Vec<_>>();
-            let result = match &agent.website_runtime {
-                Some(runtime) => apply_website_routes(runtime, route_command.routes),
-                None => Err("website runtime is not enabled".to_string()),
-            };
-            let event =
-                agent.website_routes_applied_event(agent_id, command_id, result, website_ids);
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue website routes applied event");
-            }
+            let task_agent = agent.clone();
+            let runtime = agent.website_runtime.clone();
+            track_event_command(
+                agent,
+                command_id.clone(),
+                "website_routes",
+                sender.clone(),
+                async move {
+                    let result = match runtime {
+                        Some(runtime) => apply_website_routes(&runtime, route_command.routes),
+                        None => Err("website runtime is not enabled".to_string()),
+                    };
+                    task_agent.website_routes_applied_event(
+                        agent_id,
+                        command_id,
+                        result,
+                        website_ids,
+                    )
+                },
+            )
+            .await;
         }
         Some(grpc::control_plane_command::Command::RunAgentTask(agent_task)) => {
             tracing::info!(
@@ -244,18 +366,21 @@ pub(crate) async fn handle_command(
             let task_sender = sender.clone();
             let task_terminal = terminal.clone();
             let task_state = command_state.clone();
-            tokio::spawn(async move {
-                run_agent_task_command(
-                    task_agent,
-                    agent_id,
-                    command_id,
-                    agent_task,
-                    task_sender,
-                    task_terminal,
-                    task_state,
-                )
+            let registry = agent.command_registry.clone();
+            registry
+                .track_spawn(command_id.clone(), "agent_task", async move {
+                    run_agent_task_command(
+                        task_agent,
+                        agent_id,
+                        command_id,
+                        agent_task,
+                        task_sender,
+                        task_terminal,
+                        task_state,
+                    )
+                    .await;
+                })
                 .await;
-            });
         }
         Some(grpc::control_plane_command::Command::RunAgentChatTurn(chat_turn)) => {
             tracing::info!(
@@ -268,18 +393,21 @@ pub(crate) async fn handle_command(
             let task_sender = sender.clone();
             let task_terminal = terminal.clone();
             let task_state = command_state.clone();
-            tokio::spawn(async move {
-                run_agent_chat_turn_command(
-                    task_agent,
-                    agent_id,
-                    command_id,
-                    chat_turn,
-                    task_sender,
-                    task_terminal,
-                    task_state,
-                )
+            let registry = agent.command_registry.clone();
+            registry
+                .track_spawn(command_id.clone(), "agent_chat_turn", async move {
+                    run_agent_chat_turn_command(
+                        task_agent,
+                        agent_id,
+                        command_id,
+                        chat_turn,
+                        task_sender,
+                        task_terminal,
+                        task_state,
+                    )
+                    .await;
+                })
                 .await;
-            });
         }
         Some(grpc::control_plane_command::Command::AgentToolApprovalDecision(decision)) => {
             tracing::info!(
@@ -290,31 +418,83 @@ pub(crate) async fn handle_command(
             );
             command_state.resolve_tool_approval(decision).await;
         }
-        Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {
-            tracing::info!(command_id = %command_id, "executing terminal command by control-plane request");
-            let event = match terminal
-                .execute(TerminalCommand {
-                    command_id: command_id.clone(),
-                    input: terminal_command.input,
-                    cols: terminal_command.cols.clamp(20, 300) as u16,
-                    rows: terminal_command.rows.clamp(5, 120) as u16,
-                    timeout: Duration::from_secs(
-                        terminal_command.timeout_seconds.clamp(1, 120) as u64
-                    ),
-                })
-                .await
-            {
-                Ok(output) => agent.terminal_command_result_event(agent_id, command_id, output),
-                Err(error) => agent.command_result_event(
+        Some(grpc::control_plane_command::Command::CancelCommand(cancel)) => {
+            tracing::info!(
+                command_id = %command_id,
+                target_command_id = cancel.target_command_id,
+                reason = cancel.reason,
+                "cancelling agent command by control-plane request"
+            );
+            let events = agent
+                .command_registry
+                .cancellation_events(
+                    agent,
                     agent_id,
                     command_id,
-                    grpc::CommandStatus::Failed,
-                    error.to_string(),
-                ),
-            };
-            if sender.send(event).await.is_err() {
-                tracing::warn!("failed to enqueue terminal command result event");
+                    cancel.target_command_id,
+                    cancel.reason,
+                )
+                .await;
+            if let Some(event) = events.target_event
+                && send_agent_event(agent, sender, event).await.is_err()
+            {
+                tracing::warn!("failed to enqueue cancelled target command event");
             }
+            if send_agent_event(agent, sender, events.cancel_event)
+                .await
+                .is_err()
+            {
+                tracing::warn!("failed to enqueue cancel command result event");
+            }
+        }
+        Some(grpc::control_plane_command::Command::RunTerminalCommand(terminal_command)) => {
+            tracing::info!(command_id = %command_id, "executing terminal command by control-plane request");
+            let task_agent = agent.clone();
+            let task_sender = sender.clone();
+            let task_terminal = terminal.clone();
+            let registry = agent.command_registry.clone();
+            let cancel_signal = crate::command_registry::CommandCancellationSignal::new();
+            let terminal_cancel_signal = cancel_signal.clone();
+            let cancel_grace =
+                Duration::from_secs(agent.config.reliability.command_cancel_grace_seconds.max(1));
+            registry
+                .track_spawn_with_cancellation(
+                    command_id.clone(),
+                    "terminal_command",
+                    Some(cancel_signal),
+                    async move {
+                        let event = match task_terminal
+                            .execute(TerminalCommand {
+                                command_id: command_id.clone(),
+                                input: terminal_command.input,
+                                cols: terminal_command.cols.clamp(20, 300) as u16,
+                                rows: terminal_command.rows.clamp(5, 120) as u16,
+                                timeout: Duration::from_secs(
+                                    terminal_command.timeout_seconds.clamp(1, 120) as u64,
+                                ),
+                                cancel_signal: Some(terminal_cancel_signal),
+                                cancel_grace,
+                            })
+                            .await
+                        {
+                            Ok(output) => task_agent
+                                .terminal_command_result_event(agent_id, command_id, output),
+                            Err(error) => task_agent.command_result_event(
+                                agent_id,
+                                command_id,
+                                grpc::CommandStatus::Failed,
+                                error.to_string(),
+                            ),
+                        };
+                        if send_agent_event(&task_agent, &task_sender, event)
+                            .await
+                            .is_err()
+                        {
+                            tracing::warn!("failed to enqueue terminal command result event");
+                        }
+                    },
+                )
+                .await;
         }
         Some(grpc::control_plane_command::Command::OpenTerminalSession(open)) => {
             tracing::info!(
@@ -341,7 +521,10 @@ pub(crate) async fn handle_command(
                                 session_id.clone(),
                                 output,
                             );
-                            if output_sender.send(event).await.is_err() {
+                            if send_agent_event(&output_agent, &output_sender, event)
+                                .await
+                                .is_err()
+                            {
                                 return;
                             }
                         }
@@ -350,7 +533,7 @@ pub(crate) async fn handle_command(
                             session_id,
                             "pty output ended",
                         );
-                        let _ = output_sender.send(event).await;
+                        let _ = send_agent_event(&output_agent, &output_sender, event).await;
                     });
                 }
                 Err(error) => {
@@ -359,7 +542,7 @@ pub(crate) async fn handle_command(
                         open.session_id,
                         error.to_string(),
                     );
-                    if sender.send(event).await.is_err() {
+                    if send_agent_event(agent, sender, event).await.is_err() {
                         tracing::warn!("failed to enqueue terminal session error event");
                     }
                 }
@@ -375,7 +558,7 @@ pub(crate) async fn handle_command(
                     input.session_id,
                     error.to_string(),
                 );
-                if sender.send(event).await.is_err() {
+                if send_agent_event(agent, sender, event).await.is_err() {
                     tracing::warn!("failed to enqueue terminal input error event");
                 }
             }
@@ -396,7 +579,7 @@ pub(crate) async fn handle_command(
             let _ = terminal.close_interactive(close.session_id.clone()).await;
             let event =
                 agent.terminal_session_closed_event(agent_id, close.session_id, close.reason);
-            if sender.send(event).await.is_err() {
+            if send_agent_event(agent, sender, event).await.is_err() {
                 tracing::warn!("failed to enqueue terminal close event");
             }
         }
@@ -439,7 +622,7 @@ async fn run_agent_task_command(
             .to_string(),
         },
     );
-    if sender.send(started).await.is_err() {
+    if send_agent_event(&agent, &sender, started).await.is_err() {
         tracing::warn!("failed to enqueue agent task start event");
     }
 
@@ -506,12 +689,18 @@ async fn run_agent_task_command(
 
     let result_event =
         agent.agent_task_result_event(agent_id, command_id.clone(), task_id, &result_outcome);
-    if sender.send(result_event).await.is_err() {
+    if send_agent_event(&agent, &sender, result_event)
+        .await
+        .is_err()
+    {
         tracing::warn!("failed to enqueue agent task result event");
     }
 
     let command_result = agent.command_result_event(agent_id, command_id, status, message);
-    if sender.send(command_result).await.is_err() {
+    if send_agent_event(&agent, &sender, command_result)
+        .await
+        .is_err()
+    {
         tracing::warn!("failed to enqueue agent task command result event");
     }
 }
@@ -614,7 +803,10 @@ async fn run_agent_chat_turn_command(
             .to_string(),
         },
     );
-    if sender.send(result_event).await.is_err() {
+    if send_agent_event(&agent, &sender, result_event)
+        .await
+        .is_err()
+    {
         tracing::warn!("failed to enqueue agent chat turn result event");
     }
 }
@@ -685,10 +877,12 @@ impl AgentRunEventSink for GrpcChatEventSink {
             ),
         };
 
-        self.sender.send(event).await.map_err(|_| AgentError::Tool {
-            name: "chat_stream".to_string(),
-            message: "failed to send chat stream event".to_string(),
-        })
+        send_agent_event(&self.agent, &self.sender, event)
+            .await
+            .map_err(|_| AgentError::Tool {
+                name: "chat_stream".to_string(),
+                message: "failed to send chat stream event".to_string(),
+            })
     }
 }
 

@@ -1,8 +1,10 @@
 mod collectors;
+mod command_registry;
 mod commands;
 mod compose;
 mod config;
 mod constants;
+mod event_spool;
 mod events;
 mod filesystem;
 mod logs;

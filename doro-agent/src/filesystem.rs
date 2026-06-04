@@ -13,6 +13,7 @@ use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::SystemTime;
+use sysinfo::Disks;
 
 const DEFAULT_SEARCH_LIMIT: usize = 500;
 const HOME_SCOPE_ERROR: &str = "path is outside the Agent user home directory";
@@ -41,6 +42,13 @@ pub fn run_operation(
     max_bytes: usize,
 ) -> anyhow::Result<FileCommandOutput> {
     HomeFileScope::from_agent_home()?.run_operation(command, max_bytes)
+}
+
+pub fn preflight_operation(
+    command: &grpc::RunFileOperationCommand,
+    max_bytes: usize,
+) -> anyhow::Result<()> {
+    HomeFileScope::from_agent_home()?.preflight_operation(command, max_bytes)
 }
 
 #[derive(Debug, Clone)]
@@ -185,6 +193,105 @@ impl HomeFileScope {
             "delete" => self.delete_path(&command.path),
             other => anyhow::bail!("unsupported file operation: {other}"),
         }
+    }
+
+    fn preflight_operation(
+        &self,
+        command: &grpc::RunFileOperationCommand,
+        max_bytes: usize,
+    ) -> anyhow::Result<()> {
+        match command.operation.as_str() {
+            "create_directory" => self.preflight_write(&command.path, 0),
+            "upload" => {
+                if command.content.len() > max_bytes {
+                    anyhow::bail!("file is larger than the transfer limit");
+                }
+                self.preflight_write(&command.path, command.content.len())
+            }
+            "rename" => {
+                let source = self.existing_node_path(&command.path)?;
+                self.ensure_not_home_root(&source, "rename")?;
+                let name = validate_name(&command.name)?;
+                let target = source
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("path has no parent"))?
+                    .join(name);
+                self.ensure_path_inside_home(&target)?;
+                self.ensure_available_space(&target, 0)
+            }
+            "move" => {
+                let source = self.existing_node_path(&command.path)?;
+                self.ensure_not_home_root(&source, "move")?;
+                let target = self.target_path(required_text(
+                    &command.target_path,
+                    "target path is required",
+                )?)?;
+                self.ensure_not_home_root(&target, "move to")?;
+                self.ensure_available_space(&target, 0)
+            }
+            "copy" => {
+                let source = self.existing_node_path(&command.path)?;
+                self.ensure_not_home_root(&source, "copy")?;
+                reject_symlink(&source)?;
+                let bytes = fs::symlink_metadata(&source)
+                    .ok()
+                    .filter(|metadata| metadata.is_file())
+                    .map(|metadata| metadata.len() as usize)
+                    .unwrap_or_default();
+                let target = self.target_path(required_text(
+                    &command.target_path,
+                    "target path is required",
+                )?)?;
+                self.ensure_not_home_root(&target, "copy to")?;
+                self.ensure_available_space(&target, bytes)
+            }
+            "delete" => {
+                let path = self.existing_node_path(&command.path)?;
+                self.ensure_not_home_root(&path, "delete")
+            }
+            other => anyhow::bail!("unsupported file operation: {other}"),
+        }
+    }
+
+    fn preflight_write(&self, path: &str, bytes: usize) -> anyhow::Result<()> {
+        let path = self.target_path(path)?;
+        self.ensure_not_home_root(&path, "write to")?;
+        if let Ok(metadata) = fs::symlink_metadata(&path)
+            && metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+        {
+            anyhow::bail!("target is a directory");
+        }
+        let parent = nearest_existing_parent(&path)?;
+        let metadata = fs::metadata(&parent)?;
+        if !metadata.is_dir() {
+            anyhow::bail!("preflight parent is not a directory");
+        }
+        self.ensure_available_space(&path, bytes)
+    }
+
+    fn ensure_available_space(&self, path: &Path, bytes: usize) -> anyhow::Result<()> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        let disks = Disks::new_with_refreshed_list();
+        let Some(disk) = disks
+            .list()
+            .iter()
+            .filter(|disk| path.starts_with(disk.mount_point()))
+            .max_by_key(|disk| disk.mount_point().as_os_str().len())
+        else {
+            return Ok(());
+        };
+        let required = bytes as u64;
+        if disk.available_space() < required {
+            anyhow::bail!(
+                "preflight failed: insufficient disk space for {} bytes at {}",
+                required,
+                path.display()
+            );
+        }
+        Ok(())
     }
 
     fn create_directory(&self, path: &str) -> anyhow::Result<FileCommandOutput> {
@@ -836,6 +943,45 @@ mod tests {
     }
 
     #[test]
+    fn preflight_operation_rejects_upload_outside_home() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let outside = tempdir()?;
+        let scope = HomeFileScope::new(dir.path())?;
+
+        let result = scope.preflight_operation(
+            &grpc::RunFileOperationCommand {
+                operation: "upload".to_string(),
+                path: outside.path().join("upload.txt").display().to_string(),
+                content: b"hello".to_vec(),
+                ..file_command("", "")
+            },
+            64,
+        );
+
+        assert_error_contains(result, HOME_SCOPE_ERROR);
+        Ok(())
+    }
+
+    #[test]
+    fn preflight_operation_rejects_oversized_upload() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let scope = HomeFileScope::new(dir.path())?;
+
+        let result = scope.preflight_operation(
+            &grpc::RunFileOperationCommand {
+                operation: "upload".to_string(),
+                path: "upload.txt".to_string(),
+                content: b"hello".to_vec(),
+                ..file_command("", "")
+            },
+            4,
+        );
+
+        assert_error_contains(result, "transfer limit");
+        Ok(())
+    }
+
+    #[test]
     fn write_operations_reject_home_root() -> anyhow::Result<()> {
         let dir = tempdir()?;
         let scope = HomeFileScope::new(dir.path())?;
@@ -913,7 +1059,7 @@ mod tests {
         }
     }
 
-    fn assert_error_contains(result: anyhow::Result<FileCommandOutput>, needle: &str) {
+    fn assert_error_contains<T>(result: anyhow::Result<T>, needle: &str) {
         match result {
             Ok(_) => panic!("operation should have failed"),
             Err(error) => assert!(error.to_string().contains(needle), "{error}"),

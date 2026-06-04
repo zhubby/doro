@@ -15,6 +15,10 @@
 - Authenticated UI sessions.
 - Real Postgres task, host, approval, and event persistence.
 - Agent task dispatch over gRPC streaming.
+- Cancellable long-running Agent commands with standard cancelled results.
+- Agent event spool and idempotent event ingestion for reconnect recovery.
+- Agent preflight checks for path scope, disk space, runtime readiness, and provider configuration.
+- Runtime metrics for pending commands, cancellation count, and event spool health.
 - Container, service, log, and metrics integrations.
 - Human approval UI.
 - Agent-side Pingora website runtime with approved HTTP reverse proxy routes.

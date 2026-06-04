@@ -286,6 +286,7 @@ pub(crate) async fn record_file_event(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: Some(host_id),
+            external_event_id: None,
             event_type: event_type.into(),
             event_json,
             recorded_at: Utc::now(),

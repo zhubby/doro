@@ -1,6 +1,7 @@
 use crate::constants::MAX_FILE_TRANSFER_BYTES;
 use crate::filesystem;
 use crate::runtime::Agent;
+use crate::session::send_agent_event;
 use crate::terminal::{TerminalCommand, TerminalManager};
 use async_trait::async_trait;
 use base64::Engine;
@@ -242,14 +243,14 @@ impl AgentToolExecutor for LocalAgentToolExecutor {
                 summary: tool_approval_summary(&call),
                 arguments_json: call.arguments.to_string(),
             };
-            if self
-                .sender
-                .send(
-                    self.agent
-                        .agent_tool_approval_request_event(self.agent_id, request),
-                )
-                .await
-                .is_err()
+            if send_agent_event(
+                &self.agent,
+                &self.sender,
+                self.agent
+                    .agent_tool_approval_request_event(self.agent_id, request),
+            )
+            .await
+            .is_err()
             {
                 return Err(AgentError::Tool {
                     name: call.name,
@@ -397,11 +398,19 @@ impl LocalAgentToolExecutor {
                 cols: 100,
                 rows: 30,
                 timeout,
+                cancel_signal: None,
+                cancel_grace: Duration::from_secs(
+                    self.agent
+                        .config
+                        .reliability
+                        .command_cancel_grace_seconds
+                        .max(1),
+                ),
             })
             .await
         {
             Ok(output) => AgentToolResult {
-                status: if output.exit_code == Some(0) && !output.timed_out {
+                status: if output.exit_code == Some(0) && !output.timed_out && !output.cancelled {
                     AgentToolResultStatus::Succeeded
                 } else {
                     AgentToolResultStatus::Failed
@@ -410,6 +419,7 @@ impl LocalAgentToolExecutor {
                     "output": output.output,
                     "exit_code": output.exit_code,
                     "timed_out": output.timed_out,
+                    "cancelled": output.cancelled,
                     "started_at": output.started_at,
                     "finished_at": output.finished_at,
                 }),
@@ -441,6 +451,11 @@ impl LocalAgentToolExecutor {
             content: content.into_bytes(),
             overwrite,
         };
+        if self.agent.config.reliability.preflight_enabled
+            && let Err(error) = filesystem::preflight_operation(&command, MAX_FILE_TRANSFER_BYTES)
+        {
+            return failed_tool_result(error);
+        }
         file_output_tool_result(filesystem::run_operation(command, MAX_FILE_TRANSFER_BYTES))
     }
 
@@ -481,6 +496,11 @@ impl LocalAgentToolExecutor {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         };
+        if self.agent.config.reliability.preflight_enabled
+            && let Err(error) = filesystem::preflight_operation(&command, MAX_FILE_TRANSFER_BYTES)
+        {
+            return failed_tool_result(error);
+        }
         file_output_tool_result(filesystem::run_operation(command, MAX_FILE_TRANSFER_BYTES))
     }
 
@@ -529,7 +549,10 @@ impl LocalAgentToolExecutor {
                 details_json: details.to_string(),
             },
         );
-        if self.sender.send(event).await.is_err() {
+        if send_agent_event(&self.agent, &self.sender, event)
+            .await
+            .is_err()
+        {
             tracing::warn!("failed to enqueue agent task progress event");
         }
     }

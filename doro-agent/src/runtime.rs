@@ -1,6 +1,8 @@
 use crate::collectors::system_profile;
+use crate::command_registry::CommandRegistry;
 use crate::compose::{ComposeCommandError, ComposeManager};
 use crate::config::AgentConfig;
+use crate::event_spool::EventSpool;
 use chrono::Utc;
 use doro_ai::{
     AgentError, AgentRunner, AgentRunnerConfig, DisabledAgentProvider, OpenAiAgentProvider,
@@ -18,6 +20,7 @@ use doro_vm::{QemuProvider, QemuProviderConfig, VirtualMachineProvider};
 use doro_website::{WebsiteRuntime, WebsiteRuntimeConfig, WebsiteRuntimeHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -178,6 +181,8 @@ pub struct Agent {
     pub(crate) container_runtime: Option<ContainerRuntime>,
     pub(crate) vm_runtime: Option<VmRuntime>,
     pub(crate) website_runtime: Option<WebsiteRuntimeHandle>,
+    pub(crate) command_registry: CommandRegistry,
+    pub(crate) event_spool: Arc<Mutex<EventSpool>>,
 }
 
 impl Agent {
@@ -186,10 +191,12 @@ impl Agent {
         let vm_runtime = VmRuntime::from_config(&config);
         let website_runtime = config.websites.enabled.then(WebsiteRuntimeHandle::default);
         Self {
+            event_spool: Arc::new(Mutex::new(EventSpool::from_config(&config.reliability))),
             config,
             container_runtime,
             vm_runtime,
             website_runtime,
+            command_registry: CommandRegistry::default(),
         }
     }
 

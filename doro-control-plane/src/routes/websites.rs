@@ -464,6 +464,7 @@ pub(crate) async fn record_website_event(
         .record(NewAgentEvent {
             agent_id: None,
             host_id: website.host_id,
+            external_event_id: None,
             event_type: event_type.to_string(),
             event_json: serde_json::json!({
                 "website_id": website.id,

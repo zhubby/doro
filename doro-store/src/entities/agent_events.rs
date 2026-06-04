@@ -11,6 +11,7 @@ pub struct Model {
     pub id: i64,
     pub host_id: Option<Uuid>,
     pub agent_id: Option<Uuid>,
+    pub external_event_id: Option<String>,
     pub event_type: String,
     pub event_json: Value,
 }

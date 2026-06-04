@@ -252,6 +252,7 @@ pub struct AgentHeartbeat {
 pub struct NewAgentEvent {
     pub agent_id: Option<Uuid>,
     pub host_id: Option<Uuid>,
+    pub external_event_id: Option<String>,
     pub event_type: String,
     pub event_json: Value,
     pub recorded_at: DateTime<Utc>,
@@ -722,6 +723,7 @@ impl AgentRepository<'_> {
             NewAgentEvent {
                 agent_id: Some(registration.agent_id),
                 host_id: Some(registration.host_id),
+                external_event_id: None,
                 event_type: "agent_enrolled".to_string(),
                 event_json: json!({
                     "agent_id": registration.agent_id,
@@ -3105,10 +3107,23 @@ async fn insert_agent_event<C>(connection: &C, event: NewAgentEvent) -> Result<(
 where
     C: ConnectionTrait,
 {
+    if let Some(external_event_id) = event.external_event_id.as_deref() {
+        let duplicate = entities::agent_events::Entity::find()
+            .filter(entities::agent_events::Column::ExternalEventId.eq(external_event_id))
+            .filter(entities::agent_events::Column::AgentId.eq(event.agent_id))
+            .filter(entities::agent_events::Column::HostId.eq(event.host_id))
+            .one(connection)
+            .await?;
+        if duplicate.is_some() {
+            return Ok(());
+        }
+    }
+
     entities::agent_events::ActiveModel {
         id: sea_orm::ActiveValue::NotSet,
         host_id: Set(event.host_id),
         agent_id: Set(event.agent_id),
+        external_event_id: Set(event.external_event_id),
         event_type: Set(event.event_type),
         event_json: Set(event.event_json),
         recorded_at: Set(event.recorded_at.into()),
@@ -3565,8 +3580,48 @@ mod tests {
         assert!(sql.contains("INTERVAL '30 days'"));
         assert!(sql.contains("ALTER COLUMN host_id DROP NOT NULL"));
         assert!(sql.contains("idx_websites_primary_domain_listen_port"));
+        assert!(sql.contains("external_event_id TEXT"));
+        assert!(
+            sql.contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_external_event_id")
+        );
+        assert!(sql.contains("ON agent_events(recorded_at, agent_id, host_id, external_event_id)"));
         assert!(!sql.contains("AUTOINCREMENT"));
         assert!(!sql.contains("sqlite_master"));
+    }
+
+    #[tokio::test]
+    async fn agent_event_record_is_idempotent_for_replayed_external_event_id() -> anyhow::Result<()>
+    {
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let recorded_at = Utc::now();
+        let duplicate = entities::agent_events::Model {
+            recorded_at: recorded_at.into(),
+            id: 1,
+            host_id: Some(host_id),
+            agent_id: Some(agent_id),
+            external_event_id: Some("event-1".to_string()),
+            event_type: "heartbeat".to_string(),
+            event_json: json!({}),
+        };
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([[duplicate]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        store
+            .events()
+            .record(NewAgentEvent {
+                agent_id: Some(agent_id),
+                host_id: Some(host_id),
+                external_event_id: Some("event-1".to_string()),
+                event_type: "heartbeat".to_string(),
+                event_json: json!({}),
+                recorded_at,
+            })
+            .await?;
+
+        Ok(())
     }
 
     #[test]
