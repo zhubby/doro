@@ -94,6 +94,7 @@ import type {
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
+const CONTROL_PLANE_PORT = "8787";
 const AUTH_STORAGE_KEY = "doro-auth";
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
@@ -109,13 +110,28 @@ type StoredAuth = {
   expiresAt: string;
 };
 
-function controlPlaneUrl() {
-  const configuredUrl =
-    process.env.NEXT_PUBLIC_DORO_CONTROL_PLANE_URL ??
-    process.env.DORO_CONTROL_PLANE_URL ??
-    DEFAULT_CONTROL_PLANE_URL;
+function configuredControlPlaneUrl() {
+  const publicUrl = process.env.NEXT_PUBLIC_DORO_CONTROL_PLANE_URL?.trim();
+  if (publicUrl) {
+    return publicUrl;
+  }
 
-  return configuredUrl.replace(/\/$/, "");
+  const serverUrl = process.env.DORO_CONTROL_PLANE_URL?.trim();
+  return serverUrl || null;
+}
+
+function controlPlaneUrl() {
+  const configuredUrl = configuredControlPlaneUrl();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/$/, "");
+  }
+
+  if (typeof window !== "undefined" && window.location.hostname) {
+    const protocol = window.location.protocol === "https:" ? "https" : "http";
+    return `${protocol}://${window.location.hostname}:${CONTROL_PLANE_PORT}`;
+  }
+
+  return DEFAULT_CONTROL_PLANE_URL;
 }
 
 function controlPlaneWebSocketUrl() {

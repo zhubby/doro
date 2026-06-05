@@ -72,8 +72,8 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
-            console_bind: "127.0.0.1:8787".to_string(),
-            agent_bind: "127.0.0.1:8788".to_string(),
+            console_bind: "0.0.0.0:8787".to_string(),
+            agent_bind: "0.0.0.0:8788".to_string(),
         }
     }
 }
@@ -442,7 +442,8 @@ mod tests {
 
         assert!(loaded.created);
         assert!(path.exists());
-        assert_eq!(loaded.config.server.console_bind, "127.0.0.1:8787");
+        assert_eq!(loaded.config.server.console_bind, "0.0.0.0:8787");
+        assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:8788");
         assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
         assert_eq!(
             loaded.config.store.database_url,

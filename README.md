@@ -49,7 +49,7 @@ Run the control-plane API:
 cargo run -p doro-cli -- control-plane
 ```
 
-The control plane listens on `127.0.0.1:8787` for the console and `127.0.0.1:8788` for agents.
+The control plane listens on `0.0.0.0:8787` for the console and `0.0.0.0:8788` for agents so the UI can reach it over the host network.
 
 Run the agent:
 

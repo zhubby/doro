@@ -21,8 +21,8 @@ The control plane defaults to:
 
 ```toml
 [server]
-console_bind = "127.0.0.1:8787"
-agent_bind = "127.0.0.1:8788"
+console_bind = "0.0.0.0:8787"
+agent_bind = "0.0.0.0:8788"
 
 [store]
 backend = "postgres"

@@ -7,7 +7,7 @@ bun install
 bun run dev
 ```
 
-The UI reads the control-plane API from `NEXT_PUBLIC_DORO_CONTROL_PLANE_URL`, falling back to `http://127.0.0.1:8787`.
+The UI reads the control-plane API from `NEXT_PUBLIC_DORO_CONTROL_PLANE_URL`. When the variable is unset in the browser, it infers `http://<browser-hostname>:8787`, falling back to `http://127.0.0.1:8787` during server-side execution.
 
 The New Host command infers the Agent endpoint as `http://<browser-hostname>:8788`. Set `NEXT_PUBLIC_DORO_AGENT_CONTROL_PLANE_URL` when the Agent endpoint uses a different public URL.
 
