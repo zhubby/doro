@@ -303,6 +303,7 @@ impl Agent {
             host_id: self.config.host_id.to_string(),
             observed_at: Some(protobuf_timestamp_now()),
             capabilities: self.grpc_capabilities(),
+            system_profile_json: system_profile().to_string(),
         }
     }
 

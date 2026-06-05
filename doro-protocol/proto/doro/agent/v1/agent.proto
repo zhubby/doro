@@ -28,6 +28,7 @@ message HeartbeatRequest {
   string host_id = 2;
   google.protobuf.Timestamp observed_at = 3;
   repeated AgentCapability capabilities = 4;
+  string system_profile_json = 5;
 }
 
 message HeartbeatResponse {

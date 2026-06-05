@@ -247,6 +247,7 @@ pub struct AgentHeartbeat {
     pub agent_id: Uuid,
     pub host_id: Uuid,
     pub capabilities: Vec<AgentCapability>,
+    pub system_profile: Option<Value>,
     pub observed_at: DateTime<Utc>,
 }
 
@@ -751,7 +752,7 @@ impl AgentRepository<'_> {
             "online",
         )
         .await?;
-        entities::hosts::Entity::update_many()
+        let mut host_update = entities::hosts::Entity::update_many()
             .col_expr(
                 entities::hosts::Column::Status,
                 sea_orm::sea_query::Expr::value(serialize_host_status(HostStatus::Online)),
@@ -763,7 +764,14 @@ impl AgentRepository<'_> {
             .col_expr(
                 entities::hosts::Column::UpdatedAt,
                 sea_orm::sea_query::Expr::value(Utc::now()),
-            )
+            );
+        if let Some(system_profile) = heartbeat.system_profile {
+            host_update = host_update.col_expr(
+                entities::hosts::Column::SystemProfile,
+                sea_orm::sea_query::Expr::value(system_profile),
+            );
+        }
+        host_update
             .filter(entities::hosts::Column::Id.eq(heartbeat.host_id))
             .exec(&transaction)
             .await?;

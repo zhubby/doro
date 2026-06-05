@@ -89,6 +89,8 @@ impl AgentControlPlane for GrpcAgentService {
             .into_iter()
             .filter_map(grpc_capability_to_protocol)
             .collect();
+        let system_profile = (!request.system_profile_json.trim().is_empty())
+            .then(|| parse_event_payload(&request.system_profile_json));
 
         self.store
             .agents()
@@ -96,6 +98,7 @@ impl AgentControlPlane for GrpcAgentService {
                 agent_id,
                 host_id,
                 capabilities,
+                system_profile,
                 observed_at,
             })
             .await

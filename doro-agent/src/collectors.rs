@@ -296,6 +296,7 @@ async fn collect_container_snapshot(
 
 pub fn system_profile() -> Value {
     let system = System::new_all();
+    let uptime_seconds = System::uptime();
     json!({
         "kernel_version": System::kernel_version(),
         "long_os_version": System::long_os_version(),
@@ -304,6 +305,10 @@ pub fn system_profile() -> Value {
         "cpu_arch": System::cpu_arch(),
         "physical_core_count": System::physical_core_count(),
         "logical_core_count": system.cpus().len(),
+        "booted_at": Utc::now().checked_sub_signed(chrono::Duration::seconds(
+            uptime_seconds.min(i64::MAX as u64) as i64,
+        )),
+        "uptime_seconds": uptime_seconds,
         "memory": {
             "total_bytes": system.total_memory(),
         },
