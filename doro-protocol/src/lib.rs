@@ -271,6 +271,215 @@ pub struct MetricSnapshot {
     pub extra: Value,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AlertSeverity.ts")]
+pub enum AlertSeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AlertMetricSource.ts")]
+pub enum AlertMetricSource {
+    Core,
+    Extra,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AlertOperator.ts")]
+pub enum AlertOperator {
+    GreaterThan,
+    GreaterThanOrEqual,
+    LessThan,
+    LessThanOrEqual,
+    Equal,
+    NotEqual,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AlertIncidentStatus.ts")]
+pub enum AlertIncidentStatus {
+    Firing,
+    Resolved,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "AlertNotificationStatus.ts")]
+pub enum AlertNotificationStatus {
+    Sent,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "AlertMetricSelector.ts")]
+pub struct AlertMetricSelector {
+    pub source: AlertMetricSource,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "AlertRule.ts")]
+pub struct AlertRule {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub host_id: Option<Uuid>,
+    pub enabled: bool,
+    pub for_seconds: u32,
+    pub cooldown_seconds: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "AlertIncident.ts")]
+pub struct AlertIncident {
+    pub id: Uuid,
+    pub alert_rule_id: Uuid,
+    pub host_id: Uuid,
+    pub rule_name: String,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub observed_value: f32,
+    pub status: AlertIncidentStatus,
+    pub triggered_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub last_observed_at: DateTime<Utc>,
+    pub notification_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "AlertNotification.ts")]
+pub struct AlertNotification {
+    pub id: Uuid,
+    pub alert_incident_id: Option<Uuid>,
+    pub alert_rule_id: Option<Uuid>,
+    pub channel: String,
+    pub status: AlertNotificationStatus,
+    pub recipient: String,
+    pub subject: String,
+    pub error_message: Option<String>,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "CreateAlertRuleRequest.ts")]
+pub struct CreateAlertRuleRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub host_id: Option<Uuid>,
+    pub enabled: bool,
+    pub for_seconds: u32,
+    pub cooldown_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "UpdateAlertRuleRequest.ts")]
+pub struct UpdateAlertRuleRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub host_id: Option<Uuid>,
+    pub enabled: bool,
+    pub for_seconds: u32,
+    pub cooldown_seconds: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListAlertRulesResponse.ts")]
+pub struct ListAlertRulesResponse {
+    pub items: Vec<AlertRule>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "AlertRuleResponse.ts")]
+pub struct AlertRuleResponse {
+    pub item: AlertRule,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
+#[ts(export_to = "ListAlertIncidentsResponse.ts")]
+pub struct ListAlertIncidentsResponse {
+    pub items: Vec<AlertIncident>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "EmailSecurityMode.ts")]
+pub enum EmailSecurityMode {
+    StartTls,
+    Tls,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "EmailNotificationSettings.ts")]
+pub struct EmailNotificationSettings {
+    pub enabled: bool,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub security: EmailSecurityMode,
+    pub username: Option<String>,
+    pub from_address: String,
+    pub recipients: Vec<String>,
+    pub subject_prefix: String,
+    pub has_password: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateEmailNotificationSettingsRequest.ts")]
+pub struct UpdateEmailNotificationSettingsRequest {
+    pub enabled: bool,
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub security: EmailSecurityMode,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub clear_password: bool,
+    pub from_address: String,
+    pub recipients: Vec<String>,
+    pub subject_prefix: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "EmailNotificationSettingsResponse.ts")]
+pub struct EmailNotificationSettingsResponse {
+    pub item: EmailNotificationSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "TestEmailNotificationRequest.ts")]
+pub struct TestEmailNotificationRequest {
+    pub recipient: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "TestEmailNotificationResponse.ts")]
+pub struct TestEmailNotificationResponse {
+    pub sent: bool,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "HostContainer.ts")]
 pub struct HostContainer {
@@ -1475,6 +1684,26 @@ mod tests {
         assert!(ResolveApprovalRequest::export_all(&cfg).is_ok());
         assert!(ResolveApprovalResponse::export_all(&cfg).is_ok());
         assert!(MetricSnapshot::export_all(&cfg).is_ok());
+        assert!(AlertSeverity::export_all(&cfg).is_ok());
+        assert!(AlertMetricSource::export_all(&cfg).is_ok());
+        assert!(AlertOperator::export_all(&cfg).is_ok());
+        assert!(AlertIncidentStatus::export_all(&cfg).is_ok());
+        assert!(AlertNotificationStatus::export_all(&cfg).is_ok());
+        assert!(AlertMetricSelector::export_all(&cfg).is_ok());
+        assert!(AlertRule::export_all(&cfg).is_ok());
+        assert!(AlertIncident::export_all(&cfg).is_ok());
+        assert!(AlertNotification::export_all(&cfg).is_ok());
+        assert!(CreateAlertRuleRequest::export_all(&cfg).is_ok());
+        assert!(UpdateAlertRuleRequest::export_all(&cfg).is_ok());
+        assert!(ListAlertRulesResponse::export_all(&cfg).is_ok());
+        assert!(AlertRuleResponse::export_all(&cfg).is_ok());
+        assert!(ListAlertIncidentsResponse::export_all(&cfg).is_ok());
+        assert!(EmailSecurityMode::export_all(&cfg).is_ok());
+        assert!(EmailNotificationSettings::export_all(&cfg).is_ok());
+        assert!(UpdateEmailNotificationSettingsRequest::export_all(&cfg).is_ok());
+        assert!(EmailNotificationSettingsResponse::export_all(&cfg).is_ok());
+        assert!(TestEmailNotificationRequest::export_all(&cfg).is_ok());
+        assert!(TestEmailNotificationResponse::export_all(&cfg).is_ok());
         assert!(HostContainer::export_all(&cfg).is_ok());
         assert!(DockerContainerSummary::export_all(&cfg).is_ok());
         assert!(DockerImageSummary::export_all(&cfg).is_ok());

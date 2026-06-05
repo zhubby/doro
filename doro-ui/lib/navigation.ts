@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  BellRing,
   Bot,
   Boxes,
   CheckCircle2,
@@ -13,7 +14,7 @@ import {
   Network,
   ScrollText,
   Server,
-  Settings,
+  Mail,
   ShipWheel,
   ShieldCheck,
   SquareStack,
@@ -141,9 +142,14 @@ export const navigation: NavigationItem[] = [
     icon: ScrollText,
   },
   {
-    id: "settings",
-    href: "/settings",
-    icon: Settings,
+    id: "alerts",
+    href: "/alerts",
+    icon: BellRing,
+  },
+  {
+    id: "notifications",
+    href: "/notifications",
+    icon: Mail,
   },
 ];
 

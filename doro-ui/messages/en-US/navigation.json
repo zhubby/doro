@@ -106,9 +106,13 @@
       "label": "Logs",
       "description": "Review control-plane, agent, and task logs in one place."
     },
-    "settings": {
-      "label": "Panel settings",
-      "description": "Review control-plane approval policy, agent transport, and database settings."
+    "alerts": {
+      "label": "Alerts",
+      "description": "Configure metric threshold rules and review trigger history."
+    },
+    "notifications": {
+      "label": "Notifications",
+      "description": "Configure alert notification channels. Email is currently supported."
     }
   }
 }

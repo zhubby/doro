@@ -106,9 +106,13 @@
       "label": "日志",
       "description": "集中查看控制面、Agent 和任务日志。"
     },
-    "settings": {
-      "label": "面板设置",
-      "description": "查看控制平面审批策略、Agent 通道和数据库配置。"
+    "alerts": {
+      "label": "告警",
+      "description": "配置 metrics 阈值规则并查看触发和恢复历史。"
+    },
+    "notifications": {
+      "label": "通知",
+      "description": "配置告警通知方式，目前支持邮件。"
     }
   }
 }

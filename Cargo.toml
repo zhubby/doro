@@ -39,6 +39,7 @@ cron = "0.15.0"
 dirs = "6"
 futures-util = "0.3"
 jsonwebtoken = "9"
+lettre = { version = "0.11.22", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 nvml-wrapper = "0.10"
 pingora = { version = "0.8", features = ["proxy"] }
 prost = "0.13"

@@ -1,3 +1,4 @@
+use crate::alerts::evaluate_metric_alerts;
 use crate::prelude::*;
 
 pub(crate) fn grpc_capability_to_protocol(
@@ -307,7 +308,8 @@ pub(crate) async fn ingest_agent_event(
     match event_type {
         "metrics.snapshot" => {
             if let Some(snapshot) = metric_snapshot_from_payload(host_id, payload, recorded_at) {
-                store.metrics().record(snapshot).await?;
+                store.metrics().record(snapshot.clone()).await?;
+                evaluate_metric_alerts(store, &snapshot).await?;
             }
         }
         "container.snapshot" => {

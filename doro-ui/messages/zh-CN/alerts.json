@@ -1,0 +1,4 @@
+{
+  "title": "告警",
+  "description": "配置 metrics 阈值规则并查看触发和恢复历史。"
+}

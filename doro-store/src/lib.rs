@@ -10,6 +10,15 @@ use doro_protocol::AiChatMessageRole;
 use doro_protocol::AiChatMessageStatus;
 use doro_protocol::AiConversation;
 use doro_protocol::AiModelProvider;
+use doro_protocol::AlertIncident;
+use doro_protocol::AlertIncidentStatus;
+use doro_protocol::AlertMetricSelector;
+use doro_protocol::AlertMetricSource;
+use doro_protocol::AlertNotification;
+use doro_protocol::AlertNotificationStatus;
+use doro_protocol::AlertOperator;
+use doro_protocol::AlertRule;
+use doro_protocol::AlertSeverity;
 use doro_protocol::AppSummary;
 use doro_protocol::ApprovalRequest;
 use doro_protocol::ApprovalStatus;
@@ -40,6 +49,7 @@ use doro_protocol::WebsiteProxyTarget;
 use doro_protocol::WebsiteStatus;
 use sea_orm::ActiveModelTrait;
 use sea_orm::ColumnTrait;
+use sea_orm::Condition;
 use sea_orm::ConnectOptions;
 use sea_orm::ConnectionTrait;
 use sea_orm::Database;
@@ -273,6 +283,91 @@ pub struct NewMetricSnapshot {
 }
 
 #[derive(Debug, Clone)]
+pub struct NewAlertRule {
+    pub id: Uuid,
+    pub name: String,
+    pub description: Option<String>,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub host_id: Option<Uuid>,
+    pub enabled: bool,
+    pub for_seconds: u32,
+    pub cooldown_seconds: u32,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AlertRuleChanges {
+    pub name: Option<String>,
+    pub description: Option<Option<String>>,
+    pub severity: Option<AlertSeverity>,
+    pub metric: Option<AlertMetricSelector>,
+    pub operator: Option<AlertOperator>,
+    pub threshold: Option<f32>,
+    pub host_id: Option<Option<Uuid>>,
+    pub enabled: Option<bool>,
+    pub for_seconds: Option<u32>,
+    pub cooldown_seconds: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StoredAlertRuleState {
+    pub id: Uuid,
+    pub alert_rule_id: Uuid,
+    pub host_id: Uuid,
+    pub state: String,
+    pub first_matched_at: Option<DateTime<Utc>>,
+    pub last_matched_at: Option<DateTime<Utc>>,
+    pub last_fired_at: Option<DateTime<Utc>>,
+    pub active_incident_id: Option<Uuid>,
+    pub last_resolved_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AlertRuleStateChanges {
+    pub state: String,
+    pub first_matched_at: Option<DateTime<Utc>>,
+    pub last_matched_at: Option<DateTime<Utc>>,
+    pub last_fired_at: Option<DateTime<Utc>>,
+    pub active_incident_id: Option<Uuid>,
+    pub last_resolved_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAlertIncident {
+    pub id: Uuid,
+    pub alert_rule_id: Uuid,
+    pub host_id: Uuid,
+    pub rule_name: String,
+    pub severity: AlertSeverity,
+    pub metric: AlertMetricSelector,
+    pub operator: AlertOperator,
+    pub threshold: f32,
+    pub observed_value: f32,
+    pub status: AlertIncidentStatus,
+    pub triggered_at: DateTime<Utc>,
+    pub last_observed_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewAlertNotification {
+    pub id: Uuid,
+    pub alert_incident_id: Option<Uuid>,
+    pub alert_rule_id: Option<Uuid>,
+    pub channel: String,
+    pub status: AlertNotificationStatus,
+    pub recipient: String,
+    pub subject: String,
+    pub error_message: Option<String>,
+    pub sent_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct NewContainerObservation {
     pub host_id: Uuid,
     pub runtime: String,
@@ -477,6 +572,10 @@ impl Store {
 
     pub fn metrics(&self) -> MetricRepository<'_> {
         MetricRepository { store: self }
+    }
+
+    pub fn alerts(&self) -> AlertRepository<'_> {
+        AlertRepository { store: self }
     }
 
     pub fn containers(&self) -> ContainerRepository<'_> {
@@ -2089,6 +2188,488 @@ impl MetricRepository<'_> {
             load_average: snapshot.load_average,
             extra: snapshot.extra,
         }
+    }
+}
+
+pub struct AlertRepository<'a> {
+    store: &'a Store,
+}
+
+impl AlertRepository<'_> {
+    pub async fn list_rules(&self) -> Result<Vec<AlertRule>, DbErr> {
+        let rows = entities::alert_rules::Entity::find()
+            .order_by(entities::alert_rules::Column::CreatedAt, Order::Desc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(alert_rule_model_to_protocol).collect())
+    }
+
+    pub async fn enabled_rules_for_host(&self, host_id: Uuid) -> Result<Vec<AlertRule>, DbErr> {
+        let rows = entities::alert_rules::Entity::find()
+            .filter(entities::alert_rules::Column::Enabled.eq(true))
+            .filter(
+                Condition::any()
+                    .add(entities::alert_rules::Column::HostId.is_null())
+                    .add(entities::alert_rules::Column::HostId.eq(host_id)),
+            )
+            .order_by(entities::alert_rules::Column::CreatedAt, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(rows.into_iter().map(alert_rule_model_to_protocol).collect())
+    }
+
+    pub async fn create_rule(&self, rule: NewAlertRule) -> Result<AlertRule, DbErr> {
+        let name = required_trimmed(rule.name, "alert rule name is required")?;
+        let metric = validate_alert_metric(rule.metric)?;
+        let model = entities::alert_rules::ActiveModel {
+            id: Set(rule.id),
+            name: Set(name),
+            description: Set(normalize_optional_string(rule.description)),
+            severity: Set(serialize_alert_severity(rule.severity)),
+            metric_source: Set(serialize_alert_metric_source(metric.source)),
+            metric_key: Set(metric.key),
+            operator: Set(serialize_alert_operator(rule.operator)),
+            threshold: Set(rule.threshold),
+            host_id: Set(rule.host_id),
+            enabled: Set(rule.enabled),
+            for_seconds: Set(clamp_alert_seconds(rule.for_seconds)),
+            cooldown_seconds: Set(clamp_alert_seconds(rule.cooldown_seconds)),
+            created_at: Set(rule.created_at.into()),
+            updated_at: Set(rule.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(alert_rule_model_to_protocol(model))
+    }
+
+    pub async fn update_rule(
+        &self,
+        rule_id: Uuid,
+        changes: AlertRuleChanges,
+    ) -> Result<Option<AlertRule>, DbErr> {
+        let Some(model) = entities::alert_rules::Entity::find_by_id(rule_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let mut active: entities::alert_rules::ActiveModel = model.into();
+        if let Some(name) = changes.name {
+            active.name = Set(required_trimmed(name, "alert rule name is required")?);
+        }
+        if let Some(description) = changes.description {
+            active.description = Set(normalize_optional_string(description));
+        }
+        if let Some(severity) = changes.severity {
+            active.severity = Set(serialize_alert_severity(severity));
+        }
+        if let Some(metric) = changes.metric {
+            let metric = validate_alert_metric(metric)?;
+            active.metric_source = Set(serialize_alert_metric_source(metric.source));
+            active.metric_key = Set(metric.key);
+        }
+        if let Some(operator) = changes.operator {
+            active.operator = Set(serialize_alert_operator(operator));
+        }
+        if let Some(threshold) = changes.threshold {
+            active.threshold = Set(threshold);
+        }
+        if let Some(host_id) = changes.host_id {
+            active.host_id = Set(host_id);
+        }
+        if let Some(enabled) = changes.enabled {
+            active.enabled = Set(enabled);
+        }
+        if let Some(for_seconds) = changes.for_seconds {
+            active.for_seconds = Set(clamp_alert_seconds(for_seconds));
+        }
+        if let Some(cooldown_seconds) = changes.cooldown_seconds {
+            active.cooldown_seconds = Set(clamp_alert_seconds(cooldown_seconds));
+        }
+        active.updated_at = Set(Utc::now().into());
+
+        Ok(Some(alert_rule_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+
+    pub async fn delete_rule(&self, rule_id: Uuid) -> Result<bool, DbErr> {
+        let result = entities::alert_rules::Entity::delete_by_id(rule_id)
+            .exec(self.store.connection())
+            .await?;
+        Ok(result.rows_affected > 0)
+    }
+
+    pub async fn get_state(
+        &self,
+        rule_id: Uuid,
+        host_id: Uuid,
+    ) -> Result<Option<StoredAlertRuleState>, DbErr> {
+        Ok(entities::alert_rule_states::Entity::find()
+            .filter(entities::alert_rule_states::Column::AlertRuleId.eq(rule_id))
+            .filter(entities::alert_rule_states::Column::HostId.eq(host_id))
+            .one(self.store.connection())
+            .await?
+            .map(alert_rule_state_model_to_stored))
+    }
+
+    pub async fn upsert_state(
+        &self,
+        rule_id: Uuid,
+        host_id: Uuid,
+        changes: AlertRuleStateChanges,
+    ) -> Result<StoredAlertRuleState, DbErr> {
+        let model =
+            entities::alert_rule_states::Entity::insert(entities::alert_rule_states::ActiveModel {
+                id: Set(Uuid::new_v4()),
+                alert_rule_id: Set(rule_id),
+                host_id: Set(host_id),
+                state: Set(changes.state),
+                first_matched_at: Set(changes.first_matched_at.map(Into::into)),
+                last_matched_at: Set(changes.last_matched_at.map(Into::into)),
+                last_fired_at: Set(changes.last_fired_at.map(Into::into)),
+                active_incident_id: Set(changes.active_incident_id),
+                last_resolved_at: Set(changes.last_resolved_at.map(Into::into)),
+                updated_at: Set(changes.updated_at.into()),
+            })
+            .on_conflict(
+                sea_orm::sea_query::OnConflict::columns([
+                    entities::alert_rule_states::Column::AlertRuleId,
+                    entities::alert_rule_states::Column::HostId,
+                ])
+                .update_columns([
+                    entities::alert_rule_states::Column::State,
+                    entities::alert_rule_states::Column::FirstMatchedAt,
+                    entities::alert_rule_states::Column::LastMatchedAt,
+                    entities::alert_rule_states::Column::LastFiredAt,
+                    entities::alert_rule_states::Column::ActiveIncidentId,
+                    entities::alert_rule_states::Column::LastResolvedAt,
+                    entities::alert_rule_states::Column::UpdatedAt,
+                ])
+                .to_owned(),
+            )
+            .exec_with_returning(self.store.connection())
+            .await?;
+        Ok(alert_rule_state_model_to_stored(model))
+    }
+
+    pub async fn create_incident(
+        &self,
+        incident: NewAlertIncident,
+    ) -> Result<AlertIncident, DbErr> {
+        let model = entities::alert_incidents::ActiveModel {
+            id: Set(incident.id),
+            alert_rule_id: Set(incident.alert_rule_id),
+            host_id: Set(incident.host_id),
+            rule_name: Set(incident.rule_name),
+            severity: Set(serialize_alert_severity(incident.severity)),
+            metric_source: Set(serialize_alert_metric_source(incident.metric.source)),
+            metric_key: Set(incident.metric.key),
+            operator: Set(serialize_alert_operator(incident.operator)),
+            threshold: Set(incident.threshold),
+            observed_value: Set(incident.observed_value),
+            status: Set(serialize_alert_incident_status(incident.status)),
+            triggered_at: Set(incident.triggered_at.into()),
+            resolved_at: Set(None),
+            last_observed_at: Set(incident.last_observed_at.into()),
+            notification_count: Set(0),
+        }
+        .insert(self.store.connection())
+        .await?;
+        Ok(alert_incident_model_to_protocol(model))
+    }
+
+    pub async fn resolve_incident(
+        &self,
+        incident_id: Uuid,
+        observed_value: f32,
+        resolved_at: DateTime<Utc>,
+    ) -> Result<Option<AlertIncident>, DbErr> {
+        let Some(model) = entities::alert_incidents::Entity::find_by_id(incident_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let mut active: entities::alert_incidents::ActiveModel = model.into();
+        active.status = Set(serialize_alert_incident_status(
+            AlertIncidentStatus::Resolved,
+        ));
+        active.observed_value = Set(observed_value);
+        active.resolved_at = Set(Some(resolved_at.into()));
+        active.last_observed_at = Set(resolved_at.into());
+        Ok(Some(alert_incident_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+
+    pub async fn list_incidents(&self, limit: u64) -> Result<Vec<AlertIncident>, DbErr> {
+        let rows = entities::alert_incidents::Entity::find()
+            .order_by(entities::alert_incidents::Column::TriggeredAt, Order::Desc)
+            .limit(limit.clamp(1, 500))
+            .all(self.store.connection())
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(alert_incident_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn record_notification(
+        &self,
+        notification: NewAlertNotification,
+    ) -> Result<AlertNotification, DbErr> {
+        let model = entities::alert_notifications::ActiveModel {
+            id: Set(notification.id),
+            alert_incident_id: Set(notification.alert_incident_id),
+            alert_rule_id: Set(notification.alert_rule_id),
+            channel: Set(notification.channel),
+            status: Set(serialize_alert_notification_status(notification.status)),
+            recipient: Set(notification.recipient),
+            subject: Set(notification.subject),
+            error_message: Set(notification.error_message),
+            sent_at: Set(notification.sent_at.map(Into::into)),
+            created_at: Set(notification.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+
+        if let Some(incident_id) = model.alert_incident_id {
+            let _ = self
+                .increment_incident_notification_count(incident_id)
+                .await?;
+        }
+
+        Ok(alert_notification_model_to_protocol(model))
+    }
+
+    async fn increment_incident_notification_count(
+        &self,
+        incident_id: Uuid,
+    ) -> Result<Option<AlertIncident>, DbErr> {
+        let Some(model) = entities::alert_incidents::Entity::find_by_id(incident_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+        let next_count = model.notification_count.saturating_add(1);
+        let mut active: entities::alert_incidents::ActiveModel = model.into();
+        active.notification_count = Set(next_count);
+        Ok(Some(alert_incident_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+}
+
+fn alert_rule_model_to_protocol(rule: entities::alert_rules::Model) -> AlertRule {
+    AlertRule {
+        id: rule.id,
+        name: rule.name,
+        description: rule.description,
+        severity: parse_alert_severity(&rule.severity).unwrap_or(AlertSeverity::Warning),
+        metric: AlertMetricSelector {
+            source: parse_alert_metric_source(&rule.metric_source)
+                .unwrap_or(AlertMetricSource::Core),
+            key: rule.metric_key,
+        },
+        operator: parse_alert_operator(&rule.operator).unwrap_or(AlertOperator::GreaterThan),
+        threshold: rule.threshold,
+        host_id: rule.host_id,
+        enabled: rule.enabled,
+        for_seconds: rule.for_seconds.max(0) as u32,
+        cooldown_seconds: rule.cooldown_seconds.max(0) as u32,
+        created_at: rule.created_at.into(),
+        updated_at: rule.updated_at.into(),
+    }
+}
+
+fn alert_rule_state_model_to_stored(
+    state: entities::alert_rule_states::Model,
+) -> StoredAlertRuleState {
+    StoredAlertRuleState {
+        id: state.id,
+        alert_rule_id: state.alert_rule_id,
+        host_id: state.host_id,
+        state: state.state,
+        first_matched_at: state.first_matched_at.map(Into::into),
+        last_matched_at: state.last_matched_at.map(Into::into),
+        last_fired_at: state.last_fired_at.map(Into::into),
+        active_incident_id: state.active_incident_id,
+        last_resolved_at: state.last_resolved_at.map(Into::into),
+        updated_at: state.updated_at.into(),
+    }
+}
+
+fn alert_incident_model_to_protocol(incident: entities::alert_incidents::Model) -> AlertIncident {
+    AlertIncident {
+        id: incident.id,
+        alert_rule_id: incident.alert_rule_id,
+        host_id: incident.host_id,
+        rule_name: incident.rule_name,
+        severity: parse_alert_severity(&incident.severity).unwrap_or(AlertSeverity::Warning),
+        metric: AlertMetricSelector {
+            source: parse_alert_metric_source(&incident.metric_source)
+                .unwrap_or(AlertMetricSource::Core),
+            key: incident.metric_key,
+        },
+        operator: parse_alert_operator(&incident.operator).unwrap_or(AlertOperator::GreaterThan),
+        threshold: incident.threshold,
+        observed_value: incident.observed_value,
+        status: parse_alert_incident_status(&incident.status)
+            .unwrap_or(AlertIncidentStatus::Firing),
+        triggered_at: incident.triggered_at.into(),
+        resolved_at: incident.resolved_at.map(Into::into),
+        last_observed_at: incident.last_observed_at.into(),
+        notification_count: incident.notification_count.max(0) as u32,
+    }
+}
+
+fn alert_notification_model_to_protocol(
+    notification: entities::alert_notifications::Model,
+) -> AlertNotification {
+    AlertNotification {
+        id: notification.id,
+        alert_incident_id: notification.alert_incident_id,
+        alert_rule_id: notification.alert_rule_id,
+        channel: notification.channel,
+        status: parse_alert_notification_status(&notification.status)
+            .unwrap_or(AlertNotificationStatus::Failed),
+        recipient: notification.recipient,
+        subject: notification.subject,
+        error_message: notification.error_message,
+        sent_at: notification.sent_at.map(Into::into),
+        created_at: notification.created_at.into(),
+    }
+}
+
+fn validate_alert_metric(metric: AlertMetricSelector) -> Result<AlertMetricSelector, DbErr> {
+    let key = required_trimmed(metric.key, "alert metric key is required")?;
+    match metric.source {
+        AlertMetricSource::Core => match key.as_str() {
+            "cpu_percent" | "memory_percent" | "disk_percent" | "load_average" => {
+                Ok(AlertMetricSelector {
+                    source: metric.source,
+                    key,
+                })
+            }
+            _ => Err(DbErr::Custom(
+                "alert core metric key is unsupported".to_string(),
+            )),
+        },
+        AlertMetricSource::Extra => {
+            if !key.starts_with('/') {
+                return Err(DbErr::Custom(
+                    "alert extra metric key must be a JSON pointer".to_string(),
+                ));
+            }
+            Ok(AlertMetricSelector {
+                source: metric.source,
+                key,
+            })
+        }
+    }
+}
+
+fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn clamp_alert_seconds(value: u32) -> i32 {
+    value.min(i32::MAX as u32) as i32
+}
+
+fn serialize_alert_severity(severity: AlertSeverity) -> String {
+    match severity {
+        AlertSeverity::Info => "info",
+        AlertSeverity::Warning => "warning",
+        AlertSeverity::Critical => "critical",
+    }
+    .to_string()
+}
+
+fn parse_alert_severity(value: &str) -> Option<AlertSeverity> {
+    match value {
+        "info" => Some(AlertSeverity::Info),
+        "warning" => Some(AlertSeverity::Warning),
+        "critical" => Some(AlertSeverity::Critical),
+        _ => None,
+    }
+}
+
+fn serialize_alert_metric_source(source: AlertMetricSource) -> String {
+    match source {
+        AlertMetricSource::Core => "core",
+        AlertMetricSource::Extra => "extra",
+    }
+    .to_string()
+}
+
+fn parse_alert_metric_source(value: &str) -> Option<AlertMetricSource> {
+    match value {
+        "core" => Some(AlertMetricSource::Core),
+        "extra" => Some(AlertMetricSource::Extra),
+        _ => None,
+    }
+}
+
+fn serialize_alert_operator(operator: AlertOperator) -> String {
+    match operator {
+        AlertOperator::GreaterThan => "greater_than",
+        AlertOperator::GreaterThanOrEqual => "greater_than_or_equal",
+        AlertOperator::LessThan => "less_than",
+        AlertOperator::LessThanOrEqual => "less_than_or_equal",
+        AlertOperator::Equal => "equal",
+        AlertOperator::NotEqual => "not_equal",
+    }
+    .to_string()
+}
+
+fn parse_alert_operator(value: &str) -> Option<AlertOperator> {
+    match value {
+        "greater_than" => Some(AlertOperator::GreaterThan),
+        "greater_than_or_equal" => Some(AlertOperator::GreaterThanOrEqual),
+        "less_than" => Some(AlertOperator::LessThan),
+        "less_than_or_equal" => Some(AlertOperator::LessThanOrEqual),
+        "equal" => Some(AlertOperator::Equal),
+        "not_equal" => Some(AlertOperator::NotEqual),
+        _ => None,
+    }
+}
+
+fn serialize_alert_incident_status(status: AlertIncidentStatus) -> String {
+    match status {
+        AlertIncidentStatus::Firing => "firing",
+        AlertIncidentStatus::Resolved => "resolved",
+    }
+    .to_string()
+}
+
+fn parse_alert_incident_status(value: &str) -> Option<AlertIncidentStatus> {
+    match value {
+        "firing" => Some(AlertIncidentStatus::Firing),
+        "resolved" => Some(AlertIncidentStatus::Resolved),
+        _ => None,
+    }
+}
+
+fn serialize_alert_notification_status(status: AlertNotificationStatus) -> String {
+    match status {
+        AlertNotificationStatus::Sent => "sent",
+        AlertNotificationStatus::Failed => "failed",
+    }
+    .to_string()
+}
+
+fn parse_alert_notification_status(value: &str) -> Option<AlertNotificationStatus> {
+    match value {
+        "sent" => Some(AlertNotificationStatus::Sent),
+        "failed" => Some(AlertNotificationStatus::Failed),
+        _ => None,
     }
 }
 

@@ -24,7 +24,8 @@ export type NavigationItem = {
     | "dockerCompose"
     | "system"
     | "logs"
-    | "settings";
+    | "alerts"
+    | "notifications";
   href: string;
   icon: ElementType;
   count?: number;

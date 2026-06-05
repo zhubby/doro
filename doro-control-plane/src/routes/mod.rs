@@ -9,10 +9,12 @@ use crate::prelude::*;
 use crate::state::AppState;
 
 pub(crate) mod ai;
+pub(crate) mod alerts;
 pub(crate) mod approvals;
 pub(crate) mod docker;
 pub(crate) mod files;
 pub(crate) mod hosts;
+pub(crate) mod notifications;
 pub(crate) mod scheduled_tasks;
 pub(crate) mod system;
 pub(crate) mod tasks;
@@ -21,11 +23,13 @@ pub(crate) mod virtual_machines;
 pub(crate) mod websites;
 
 use ai::*;
+use alerts::*;
 use approvals::*;
 use docker::*;
 use files::*;
 use hosts::*;
 use logs::*;
+use notifications::*;
 use scheduled_tasks::*;
 use system::*;
 use tasks::*;
@@ -98,6 +102,23 @@ pub(crate) fn app_with_auth_streams_logs_and_chat(
         .route(
             "/api/v1/hosts/:host_id/containers",
             get(list_host_containers),
+        )
+        .route(
+            "/api/v1/alerts/rules",
+            get(list_alert_rules).post(create_alert_rule),
+        )
+        .route(
+            "/api/v1/alerts/rules/:rule_id",
+            axum::routing::delete(delete_alert_rule).patch(update_alert_rule),
+        )
+        .route("/api/v1/alerts/incidents", get(list_alert_incidents))
+        .route(
+            "/api/v1/notifications/email",
+            get(get_email_notification_settings).patch(update_email_notification_settings),
+        )
+        .route(
+            "/api/v1/notifications/email/test",
+            axum::routing::post(test_email_notification),
         )
         .route("/api/v1/containers", get(refresh_containers))
         .route(

@@ -1,10 +1,12 @@
 import type {
   AiConversationResponse,
   AiModelProviderResponse,
+  AlertRuleResponse,
   AuthStatusResponse,
   AuthTokenResponse,
   ChangeCurrentUserPasswordRequest,
   ControlPlaneEnvironmentResponse,
+  CreateAlertRuleRequest,
   CreateAiModelProviderRequest,
   CreateAiChatTurnRequest,
   CreateAiChatTurnResponse,
@@ -40,6 +42,8 @@ import type {
   LatestMetricResponse,
   ListAiModelProvidersResponse,
   ListAiConversationsResponse,
+  ListAlertIncidentsResponse,
+  ListAlertRulesResponse,
   ListAppsResponse,
   ListApprovalsResponse,
   ListDockerComposeProjectsResponse,
@@ -69,9 +73,13 @@ import type {
   Task,
   TerminalCommandRequest,
   TerminalCommandResponse,
+  TestEmailNotificationRequest,
+  TestEmailNotificationResponse,
   UpdateAiModelProviderRequest,
+  UpdateAlertRuleRequest,
   UpdateCurrentUserRequest,
   UpdateCurrentUserResponse,
+  UpdateEmailNotificationSettingsRequest,
   UpdateHostRequest,
   UpdateHostResponse,
   UpdateScheduledTaskRequest,
@@ -82,6 +90,7 @@ import type {
   VirtualMachineConsoleResponse,
   WebsiteActionRequest,
   WebsiteActionResponse,
+  EmailNotificationSettingsResponse,
 } from "@/types/api";
 
 const DEFAULT_CONTROL_PLANE_URL = "http://127.0.0.1:8787";
@@ -370,6 +379,67 @@ export async function getLatestHostMetric(hostId: string) {
 export async function getHostMetrics(hostId: string, limit = 60) {
   return getJson<ListMetricSnapshotsResponse>(
     `/api/v1/hosts/${hostId}/metrics?limit=${limit}`,
+  );
+}
+
+export async function getAlertRules() {
+  return getJson<ListAlertRulesResponse>("/api/v1/alerts/rules");
+}
+
+export async function createAlertRule(request: CreateAlertRuleRequest) {
+  return authedRequest<AlertRuleResponse>("/api/v1/alerts/rules", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function updateAlertRule(
+  ruleId: string,
+  request: UpdateAlertRuleRequest,
+) {
+  return authedRequest<AlertRuleResponse>(`/api/v1/alerts/rules/${ruleId}`, {
+    method: "PATCH",
+    body: JSON.stringify(request),
+  });
+}
+
+export async function deleteAlertRule(ruleId: string) {
+  return authedRequest<null>(`/api/v1/alerts/rules/${ruleId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function getAlertIncidents(limit = 100) {
+  return getJson<ListAlertIncidentsResponse>(
+    `/api/v1/alerts/incidents?limit=${limit}`,
+  );
+}
+
+export async function getEmailNotificationSettings() {
+  return getJson<EmailNotificationSettingsResponse>("/api/v1/notifications/email");
+}
+
+export async function updateEmailNotificationSettings(
+  request: UpdateEmailNotificationSettingsRequest,
+) {
+  return authedRequest<EmailNotificationSettingsResponse>(
+    "/api/v1/notifications/email",
+    {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function testEmailNotification(
+  request: TestEmailNotificationRequest = { recipient: null },
+) {
+  return authedRequest<TestEmailNotificationResponse>(
+    "/api/v1/notifications/email/test",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
   );
 }
 

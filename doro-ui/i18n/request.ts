@@ -11,6 +11,8 @@ const namespaces = [
   "dashboard",
   "resources",
   "settings",
+  "alerts",
+  "notifications",
   "account",
 ] as const;
 

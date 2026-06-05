@@ -4,7 +4,7 @@
 
 `doro-protocol` contains shared wire types, lifecycle vocabulary, generated tonic/prost gRPC types, and ts-rs TypeScript bindings for UI REST contracts. Public protocol changes should start here.
 
-`doro-control-plane` exposes `/api/v1`, owns task orchestration, AI model provider management, persistent AI chat conversations, command-scoped AI provider dispatch, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, emits events, and dispatches cancellable Agent stream commands.
+`doro-control-plane` exposes `/api/v1`, owns task orchestration, AI model provider management, persistent AI chat conversations, command-scoped AI provider dispatch, runs the scheduled-task dispatcher, serves UI-facing state, receives agent connections, ingests one-way agent observations, evaluates metrics alert rules, sends configured notification emails, emits events, and dispatches cancellable Agent stream commands.
 
 `doro-agent` runs on macOS and Linux managed hosts. It enrolls with a one-time token, persists its durable agent and host identifiers in config, declares capabilities, reports heartbeat and local metrics, and executes approved tasks. Its local command registry tracks long-running terminal, AI, Docker, virtual machine, file, website, and refresh work by `command_id` so the control plane can cancel running commands and receive standard final results. Its event spool buffers non-log operational events when the Agent stream is unavailable and drains them after reconnect. Its local collectors read cross-platform system metrics, optional container runtime state through `doro-container`, and optional Linux/NVIDIA GPU state, then send observations only through the agent protocol stream. It also owns direct filesystem operations for the file manager and performs them as the current agent OS user after preflight checks. The Agent owns Docker Compose file execution under the configured managed root; it writes only `compose.yaml` and optional `.env` inside that root and runs the local Docker CLI plugin for approved Compose actions. The `AgentRun` capability runs the local AI runner for natural-language host operations while pausing high-risk tools for control-plane approval. When website routing is enabled, the Agent owns the local Pingora runtime and declares `NetworkExpose`.
 
@@ -14,16 +14,16 @@
 
 `doro-website` owns the embedded Pingora website reverse proxy runtime used by Agents. It builds a hot-swappable route table from control-plane website records sent over the Agent protocol, matches HTTP Host headers to reverse proxy upstreams, and exposes runtime handles for Agents to reload routes after approved website changes. It does not own persisted website state or UI contracts.
 
-`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, scheduled task definitions and runs, approvals, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`. Agent event writes are idempotent by external event ID so replayed Agent spool events do not duplicate audit rows. Docker image, network, volume, and Compose inventories are live Agent queries; only tasks, approvals, runs, and agent events are persisted for those Docker management actions.
+`doro-store` owns Postgres persistence for control-plane facts, agent observations, task lifecycle, scheduled task definitions and runs, approvals, alert rules and incidents, events, app catalog state, container observations, virtual machine observations, and metric summaries. It uses SeaORM for database access and reads backend URL and pool settings through `doro-config`. Agent event writes are idempotent by external event ID so replayed Agent spool events do not duplicate audit rows. Docker image, network, volume, and Compose inventories are live Agent queries; only tasks, approvals, runs, and agent events are persisted for those Docker management actions.
 
 The first durable schema is organized into table families:
 
 - Identity: `hosts`, `agents`, `enrollment_tokens`, and `agent_capabilities`.
-- Observability: `metric_snapshots`, `agent_events`, and `operation_logs`.
+- Observability: `metric_snapshots`, `agent_events`, `operation_logs`, `alert_rules`, `alert_rule_states`, `alert_incidents`, and `alert_notifications`.
 - Workflows: `tasks`, `task_steps`, `task_runs`, `approvals`, `ai_conversations`,
   `ai_chat_messages`, and `ai_chat_events`. Approvals are
   durable control-plane records with explicit expiration and decision metadata.
-- Configuration and resource directory: `settings`, `ai_model_providers`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`.
+- Configuration and resource directory: `settings`, `ai_model_providers`, `resource_groups`, `apps`, `app_installs`, `websites`, `databases`, `containers`, `virtual_machines`, `virtual_machine_images`, `virtual_machine_templates`, `virtual_machine_snapshots`, `backup_accounts`, `backup_records`, `cron_jobs`, and `cron_job_runs`. Email notification settings live in `settings` as redacted control-plane configuration.
 
 The control plane should access these tables through typed `doro-store` repositories rather than constructing SeaORM entity queries directly. Agent enrollment token validation and consumption belongs in `doro-store` so identity writes and token state stay transactional. Agents remain authoritative for local observations; the store records those observations as metric snapshots, current container rows, current virtual machine rows, and audit events.
 
@@ -35,6 +35,6 @@ The control plane should access these tables through typed `doro-store` reposito
 
 ## UI
 
-`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, AI chat, model providers, files, websites, Docker, databases, logs, and settings.
+`doro-ui` is a Next.js operations console. Its navigation should match the control-plane model: overview, hosts, tasks, approvals, virtual machines, AI chat, model providers, files, websites, Docker, databases, logs, alerts, and notifications.
 
 The UI should call `doro-control-plane`; it should not shell out, talk directly to agents, or own durable operational state. UI API types should come from `doro-ui/types/api.ts`, which re-exports ts-rs bindings generated from `doro-protocol`.

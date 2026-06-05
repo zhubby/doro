@@ -21,6 +21,7 @@ doro-store = { workspace = true }
 doro-vm = { workspace = true }
 futures-util = { workspace = true }
 jsonwebtoken = { workspace = true }
+lettre = { workspace = true }
 prost-types = { workspace = true }
 rand = { workspace = true }
 sea-orm = { workspace = true }
