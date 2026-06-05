@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, RefreshCw } from "lucide-react";
+import { ChevronDown, RefreshCw, Search, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,13 +25,18 @@ import type { Host, RuntimeLogEntry } from "@/types/api";
 
 const LOG_LIMIT = 500;
 const MAX_RENDERED_LOGS = 1000;
+const ALL_LEVELS = "all";
+const KNOWN_LOG_LEVELS = ["error", "warn", "info", "debug", "trace"];
 
 type StreamState = "connecting" | "connected" | "closed" | "error";
 
 type LogViewerProps = {
   entries: RuntimeLogEntry[];
+  totalCount: number;
   state: StreamState;
   emptyText: string;
+  noMatchesText: string;
+  hasActiveFilters: boolean;
 };
 
 function appendLogs(current: RuntimeLogEntry[], incoming: RuntimeLogEntry[]) {
@@ -61,7 +66,7 @@ function streamLabel(state: StreamState) {
 }
 
 function levelVariant(level: string) {
-  const normalized = level.toLowerCase();
+  const normalized = normalizeLogLevel(level);
   if (normalized === "error") {
     return "destructive" as const;
   }
@@ -69,6 +74,72 @@ function levelVariant(level: string) {
     return "outline" as const;
   }
   return "secondary" as const;
+}
+
+function normalizeLogLevel(level: string) {
+  const normalized = level.trim().toLowerCase();
+  if (!normalized) {
+    return "unknown";
+  }
+  if (normalized === "warning") {
+    return "warn";
+  }
+  return normalized;
+}
+
+function logLevelLabel(level: string) {
+  if (level === ALL_LEVELS) {
+    return "全部";
+  }
+  return level.toUpperCase();
+}
+
+function searchableLogText(entry: RuntimeLogEntry) {
+  return [
+    entry.message,
+    entry.target,
+    JSON.stringify(entry.fields),
+  ]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+function filterLogs(
+  entries: RuntimeLogEntry[],
+  levelFilter: string,
+  searchQuery: string,
+) {
+  const normalizedLevelFilter = normalizeLogLevel(levelFilter);
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+
+  if (normalizedLevelFilter === ALL_LEVELS && !normalizedQuery) {
+    return entries;
+  }
+
+  return entries.filter((entry) => {
+    if (
+      normalizedLevelFilter !== ALL_LEVELS &&
+      normalizeLogLevel(entry.level) !== normalizedLevelFilter
+    ) {
+      return false;
+    }
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return searchableLogText(entry).includes(normalizedQuery);
+  });
+}
+
+function levelCounts(entries: RuntimeLogEntry[]) {
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const level = normalizeLogLevel(entry.level);
+    counts.set(level, (counts.get(level) ?? 0) + 1);
+  }
+  return counts;
 }
 
 function formatTime(value: string) {
@@ -79,7 +150,14 @@ function formatTime(value: string) {
   }).format(new Date(value));
 }
 
-function LogViewer({ entries, state, emptyText }: LogViewerProps) {
+function LogViewer({
+  entries,
+  totalCount,
+  state,
+  emptyText,
+  noMatchesText,
+  hasActiveFilters,
+}: LogViewerProps) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number | null>(null);
@@ -119,6 +197,9 @@ function LogViewer({ entries, state, emptyText }: LogViewerProps) {
     element.scrollTop = element.scrollHeight;
   }, [entries.length]);
 
+  const displayEmptyText =
+    hasActiveFilters && totalCount > 0 ? noMatchesText : emptyText;
+
   return (
     <div
       className="flex min-h-0 flex-col overflow-hidden rounded-md border bg-background"
@@ -127,7 +208,9 @@ function LogViewer({ entries, state, emptyText }: LogViewerProps) {
     >
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div className="text-sm text-muted-foreground">
-          {entries.length} 条日志
+          {entries.length === totalCount
+            ? `${totalCount} 条日志`
+            : `${entries.length} / ${totalCount} 条日志`}
         </div>
         <Badge variant={state === "connected" ? "secondary" : "outline"}>
           {streamLabel(state)}
@@ -139,7 +222,7 @@ function LogViewer({ entries, state, emptyText }: LogViewerProps) {
       >
         {entries.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground dark:text-zinc-400">
-            {emptyText}
+            {displayEmptyText}
           </div>
         ) : (
           <div className="space-y-1 font-mono text-xs leading-5">
@@ -155,7 +238,7 @@ function LogViewer({ entries, state, emptyText }: LogViewerProps) {
                   className="h-5 justify-center px-1.5 font-mono uppercase"
                   variant={levelVariant(entry.level)}
                 >
-                  {entry.level}
+                  {entry.level || "unknown"}
                 </Badge>
                 <span
                   className="truncate text-muted-foreground dark:text-zinc-400"
@@ -175,12 +258,107 @@ function LogViewer({ entries, state, emptyText }: LogViewerProps) {
   );
 }
 
+type LogFiltersProps = {
+  entries: RuntimeLogEntry[];
+  levelFilter: string;
+  searchQuery: string;
+  onLevelFilterChange: (value: string) => void;
+  onSearchQueryChange: (value: string) => void;
+  onClear: () => void;
+};
+
+function LogFilters({
+  entries,
+  levelFilter,
+  searchQuery,
+  onLevelFilterChange,
+  onSearchQueryChange,
+  onClear,
+}: LogFiltersProps) {
+  const counts = useMemo(() => levelCounts(entries), [entries]);
+  const normalizedLevelFilter = normalizeLogLevel(levelFilter);
+  const dynamicLevels = Array.from(counts.keys())
+    .filter((level) => !KNOWN_LOG_LEVELS.includes(level))
+    .sort();
+  const levels = [
+    ALL_LEVELS,
+    ...KNOWN_LOG_LEVELS,
+    ...dynamicLevels,
+    ...(normalizedLevelFilter !== ALL_LEVELS &&
+    !KNOWN_LOG_LEVELS.includes(normalizedLevelFilter) &&
+    !dynamicLevels.includes(normalizedLevelFilter)
+      ? [normalizedLevelFilter]
+      : []),
+  ];
+  const hasActiveFilters =
+    normalizedLevelFilter !== ALL_LEVELS || searchQuery.trim().length > 0;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-md border bg-background p-3">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+        <label className="relative min-w-0 lg:w-96">
+          <Search
+            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <span className="sr-only">搜索日志</span>
+          <input
+            value={searchQuery}
+            onChange={(event) => onSearchQueryChange(event.target.value)}
+            placeholder="搜索消息、目标或结构化字段"
+            className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </label>
+        {hasActiveFilters ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full justify-center lg:w-auto"
+            onClick={onClear}
+          >
+            <X className="size-4" aria-hidden="true" />
+            清空筛选
+          </Button>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {levels.map((level) => {
+          const isActive = normalizedLevelFilter === level;
+          const count = level === ALL_LEVELS ? entries.length : counts.get(level) ?? 0;
+
+          return (
+            <Button
+              key={level}
+              type="button"
+              variant={isActive ? "default" : "outline"}
+              size="sm"
+              aria-pressed={isActive}
+              onClick={() => onLevelFilterChange(level)}
+            >
+              {logLevelLabel(level)}
+              <Badge
+                variant={isActive ? "secondary" : "outline"}
+                className="ml-1 font-mono"
+              >
+                {count}
+              </Badge>
+            </Button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function LogsRoute() {
   const [tab, setTab] = useState("control-plane");
   const [hosts, setHosts] = useState<Host[]>([]);
   const [selectedHostId, setSelectedHostId] = useState<string>("");
   const [controlPlaneLogs, setControlPlaneLogs] = useState<RuntimeLogEntry[]>([]);
   const [agentLogs, setAgentLogs] = useState<RuntimeLogEntry[]>([]);
+  const [levelFilter, setLevelFilter] = useState(ALL_LEVELS);
+  const [searchQuery, setSearchQuery] = useState("");
   const [controlPlaneState, setControlPlaneState] =
     useState<StreamState>("connecting");
   const [agentState, setAgentState] = useState<StreamState>("closed");
@@ -194,6 +372,17 @@ export default function LogsRoute() {
   const selectedHost = useMemo(
     () => hosts.find((host) => host.id === selectedHostId) ?? null,
     [hosts, selectedHostId],
+  );
+  const activeLogs = tab === "agent" ? agentLogs : controlPlaneLogs;
+  const hasActiveFilters =
+    normalizeLogLevel(levelFilter) !== ALL_LEVELS || searchQuery.trim().length > 0;
+  const filteredControlPlaneLogs = useMemo(
+    () => filterLogs(controlPlaneLogs, levelFilter, searchQuery),
+    [controlPlaneLogs, levelFilter, searchQuery],
+  );
+  const filteredAgentLogs = useMemo(
+    () => filterLogs(agentLogs, levelFilter, searchQuery),
+    [agentLogs, levelFilter, searchQuery],
   );
 
   useEffect(() => {
@@ -315,7 +504,7 @@ export default function LogsRoute() {
   return (
     <div className="box-border min-h-0 flex-1 overflow-hidden p-6">
       <Tabs
-        className="flex min-h-0 flex-col gap-2"
+        className="flex min-h-0 flex-col gap-3"
         value={tab}
         onValueChange={setTab}
       >
@@ -357,14 +546,28 @@ export default function LogsRoute() {
             </Button>
           )}
         </div>
+        <LogFilters
+          entries={activeLogs}
+          levelFilter={levelFilter}
+          searchQuery={searchQuery}
+          onLevelFilterChange={setLevelFilter}
+          onSearchQueryChange={setSearchQuery}
+          onClear={() => {
+            setLevelFilter(ALL_LEVELS);
+            setSearchQuery("");
+          }}
+        />
         <TabsContent
           className="mt-0 min-h-0 overflow-hidden"
           value="control-plane"
         >
           <LogViewer
-            entries={controlPlaneLogs}
+            entries={filteredControlPlaneLogs}
+            totalCount={controlPlaneLogs.length}
             state={controlPlaneState}
             emptyText="暂无控制平面日志"
+            noMatchesText="没有匹配的控制平面日志"
+            hasActiveFilters={hasActiveFilters}
           />
         </TabsContent>
         <TabsContent
@@ -372,9 +575,12 @@ export default function LogsRoute() {
           value="agent"
         >
           <LogViewer
-            entries={agentLogs}
+            entries={filteredAgentLogs}
+            totalCount={agentLogs.length}
             state={agentState}
             emptyText={selectedHostId ? "暂无 Agent 日志" : "请选择 Agent"}
+            noMatchesText="没有匹配的 Agent 日志"
+            hasActiveFilters={hasActiveFilters}
           />
         </TabsContent>
       </Tabs>
