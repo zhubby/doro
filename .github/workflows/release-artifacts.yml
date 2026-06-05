@@ -1,0 +1,99 @@
+name: Release Doro Artifacts
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-artifacts-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.artifact_name }}
+    runs-on: ${{ matrix.runner }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact_name: doro-mac-arm64
+            runner: macos-15
+            target: aarch64-apple-darwin
+            archive_binary_name: doro
+          - artifact_name: doro-linux-amd64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_binary_name: doro
+          - artifact_name: doro-linux-arm64
+            runner: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive_binary_name: doro
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux build packages
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=(cmake pkg-config protobuf-compiler)
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            packages+=(gcc-aarch64-linux-gnu g++-aarch64-linux-gnu)
+          fi
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "${packages[@]}"
+
+      - name: Install protobuf compiler
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Install Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release binary
+        env:
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          CXX_aarch64_unknown_linux_gnu: aarch64-linux-gnu-g++
+        run: cargo build --release --locked -p doro-cli --bin doro --target ${{ matrix.target }}
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          staging_dir="dist/${{ matrix.artifact_name }}"
+          mkdir -p "$staging_dir"
+          cp "target/${{ matrix.target }}/release/${{ matrix.archive_binary_name }}" "$staging_dir/"
+          cp README.md "$staging_dir/"
+          cp LICENSE-* "$staging_dir/" 2>/dev/null || true
+          tar -C dist -czf "dist/${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
+          shasum -a 256 "dist/${{ matrix.artifact_name }}.tar.gz" > "dist/${{ matrix.artifact_name }}.tar.gz.sha256"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/${{ matrix.artifact_name }}.tar.gz
+            dist/${{ matrix.artifact_name }}.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/${{ matrix.artifact_name }}.tar.gz
+            dist/${{ matrix.artifact_name }}.tar.gz.sha256
