@@ -211,11 +211,13 @@ fn ai_detail(config: &doro_config::AiConfig) -> String {
     )
 }
 
-fn api_surfaces() -> [&'static str; 11] {
+fn api_surfaces() -> [&'static str; 13] {
     [
         "/health",
         "/api/v1/auth/*",
         "/api/v1/hosts",
+        "/api/v1/alerts/*",
+        "/api/v1/notifications/*",
         "/api/v1/tasks",
         "/api/v1/approvals",
         "/api/v1/scheduled-tasks",
