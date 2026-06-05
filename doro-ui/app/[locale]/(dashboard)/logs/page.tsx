@@ -189,6 +189,28 @@ function LogViewer({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+
+    function scrollToBottom() {
+      const current = scrollRef.current;
+      if (!current) {
+        return;
+      }
+      current.scrollTop = current.scrollHeight;
+    }
+
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(scrollToBottom);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [entries, height]);
+
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) {
