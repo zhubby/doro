@@ -61,6 +61,7 @@ import type {
   ListRuntimeLogsResponse,
   ListScheduledTaskRunsResponse,
   ListScheduledTasksResponse,
+  ListSystemNotificationsResponse,
   ListTasksResponse,
   ListVirtualMachineImagesResponse,
   ListVirtualMachineSnapshotsResponse,
@@ -74,6 +75,9 @@ import type {
   ResolveApprovalResponse,
   ScheduledTaskActionResponse,
   SettingsResponse,
+  SystemNotificationResponse,
+  SystemNotificationStatus,
+  SystemNotificationSettingsResponse,
   Task,
   TerminalCommandRequest,
   TerminalCommandResponse,
@@ -88,6 +92,7 @@ import type {
   UpdateHostResponse,
   UpdateScheduledTaskRequest,
   UpdateScheduledTaskResponse,
+  UpdateSystemNotificationSettingsRequest,
   UpdateWebsiteRequest,
   VirtualMachineActionRequest,
   VirtualMachineActionResponse,
@@ -437,6 +442,50 @@ export async function getAlertIncidents(limit = 100) {
 
 export async function getEmailNotificationSettings() {
   return getJson<EmailNotificationSettingsResponse>("/api/v1/notifications/email");
+}
+
+export async function getSystemNotificationSettings() {
+  return getJson<SystemNotificationSettingsResponse>(
+    "/api/v1/notifications/system/settings",
+  );
+}
+
+export async function updateSystemNotificationSettings(
+  request: UpdateSystemNotificationSettingsRequest,
+) {
+  return authedRequest<SystemNotificationSettingsResponse>(
+    "/api/v1/notifications/system/settings",
+    {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function getSystemNotifications({
+  status,
+  limit = 100,
+}: {
+  status?: SystemNotificationStatus;
+  limit?: number;
+} = {}) {
+  const params = new URLSearchParams();
+  if (status) {
+    params.set("status", status);
+  }
+  params.set("limit", String(limit));
+  return getJson<ListSystemNotificationsResponse>(
+    `/api/v1/notifications/system?${params.toString()}`,
+  );
+}
+
+export async function markSystemNotificationRead(notificationId: string) {
+  return authedRequest<SystemNotificationResponse>(
+    `/api/v1/notifications/system/${notificationId}/read`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function updateEmailNotificationSettings(

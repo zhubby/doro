@@ -1,6 +1,6 @@
 "use client";
 
-import { Mail, RefreshCw, Send } from "lucide-react";
+import { Bell, RefreshCw, Send } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { PageSection } from "@/components/admin/page-section";
@@ -13,12 +13,15 @@ import { Switch } from "@/components/ui/switch";
 import { useToastMessage } from "@/components/ui/use-toast-message";
 import {
   getEmailNotificationSettings,
+  getSystemNotificationSettings,
   testEmailNotification,
   updateEmailNotificationSettings,
+  updateSystemNotificationSettings,
 } from "@/lib/control-plane-api";
 import type {
   EmailNotificationSettings,
   EmailSecurityMode,
+  SystemNotificationSettings,
   UpdateEmailNotificationSettingsRequest,
 } from "@/types/api";
 
@@ -36,6 +39,10 @@ type EmailFormState = {
   hasPassword: boolean;
 };
 
+type SystemNotificationFormState = {
+  enabled: boolean;
+};
+
 const emptyForm: EmailFormState = {
   enabled: false,
   smtpHost: "",
@@ -48,6 +55,10 @@ const emptyForm: EmailFormState = {
   recipients: "",
   subjectPrefix: "[Doro]",
   hasPassword: false,
+};
+
+const emptySystemForm: SystemNotificationFormState = {
+  enabled: true,
 };
 
 const inputClass =
@@ -78,6 +89,14 @@ function settingsToForm(settings: EmailNotificationSettings): EmailFormState {
   };
 }
 
+function systemSettingsToForm(
+  settings: SystemNotificationSettings,
+): SystemNotificationFormState {
+  return {
+    enabled: settings.enabled,
+  };
+}
+
 function recipientsFromText(value: string) {
   return value
     .split(/\r?\n|,/)
@@ -102,6 +121,8 @@ function formToRequest(form: EmailFormState): UpdateEmailNotificationSettingsReq
 
 export function NotificationsPage() {
   const [form, setForm] = useState<EmailFormState>(emptyForm);
+  const [systemForm, setSystemForm] =
+    useState<SystemNotificationFormState>(emptySystemForm);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -131,14 +152,22 @@ export function NotificationsPage() {
 
   async function load() {
     setIsRefreshing(true);
-    const result = await getEmailNotificationSettings();
+    const [emailResult, systemResult] = await Promise.all([
+      getEmailNotificationSettings(),
+      getSystemNotificationSettings(),
+    ]);
     setIsRefreshing(false);
-    if (!result.data) {
-      setError(result.error ?? "无法读取邮件通知配置");
+    if (!emailResult.data || !systemResult.data) {
+      setError(
+        emailResult.error ??
+          systemResult.error ??
+          "无法读取通知配置",
+      );
       return;
     }
     setError(null);
-    setForm(settingsToForm(result.data.item));
+    setForm(settingsToForm(emailResult.data.item));
+    setSystemForm(systemSettingsToForm(systemResult.data.item));
   }
 
   useEffect(() => {
@@ -149,14 +178,22 @@ export function NotificationsPage() {
     setSavePending(true);
     setActionError(null);
     setActionMessage(null);
-    const result = await updateEmailNotificationSettings(formToRequest(form));
+    const [emailResult, systemResult] = await Promise.all([
+      updateEmailNotificationSettings(formToRequest(form)),
+      updateSystemNotificationSettings(systemForm),
+    ]);
     setSavePending(false);
-    if (!result.data) {
-      setActionError(result.error ?? "保存失败");
+    if (!emailResult.data || !systemResult.data) {
+      setActionError(
+        emailResult.error ??
+          systemResult.error ??
+          "保存失败",
+      );
       return;
     }
-    setForm(settingsToForm(result.data.item));
-    setActionMessage("邮件通知配置已保存");
+    setForm(settingsToForm(emailResult.data.item));
+    setSystemForm(systemSettingsToForm(systemResult.data.item));
+    setActionMessage("通知配置已保存");
   }
 
   async function handleTest() {
@@ -175,13 +212,57 @@ export function NotificationsPage() {
   return (
     <PageContainer>
       <PageSection contentClassName="grid gap-3 md:grid-cols-3">
-        <SummaryTile label="通知方式" value="邮件" />
+        <SummaryTile label="通知方式" value="站内 / 邮件" />
         <SummaryTile label="收件人" value={String(recipientCount)} />
         <SummaryTile
           label="配置状态"
-          value={form.enabled ? "启用" : "停用"}
-          muted={!form.enabled}
+          value={systemForm.enabled || form.enabled ? "启用" : "停用"}
+          muted={!systemForm.enabled && !form.enabled}
         />
+      </PageSection>
+
+      <PageSection
+        title="系统站内通知"
+        description="告警触发和恢复时写入未读站内通知，首页会展示未读列表。"
+        contentClassName="space-y-4"
+      >
+        <Toolbar
+          right={
+            <>
+              <Button variant="outline" size="icon" aria-label="刷新" onClick={load}>
+                <RefreshCw
+                  className={isRefreshing ? "size-4 animate-spin" : "size-4"}
+                  aria-hidden="true"
+                />
+              </Button>
+              <Button onClick={handleSave} disabled={savePending || testPending}>
+                {savePending ? "保存中" : "保存配置"}
+              </Button>
+            </>
+          }
+        />
+
+        <div className="grid gap-4 rounded-lg border p-4 md:grid-cols-2">
+          <Field label="启用站内通知">
+            <div className="flex h-9 items-center gap-3 rounded-md border px-3">
+              <Switch
+                checked={systemForm.enabled}
+                disabled={savePending}
+                onCheckedChange={(enabled) => setSystemForm({ enabled })}
+              />
+              <span className="text-sm">{systemForm.enabled ? "启用" : "停用"}</span>
+            </div>
+          </Field>
+          <div className="flex items-center gap-3 rounded-lg border bg-muted/30 px-3 py-2">
+            <Bell className="size-4 text-muted-foreground" aria-hidden="true" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium">首页未读通知</p>
+              <p className="truncate text-xs text-muted-foreground">
+                未读站内通知会显示在首页右侧卡片中。
+              </p>
+            </div>
+          </div>
+        </div>
       </PageSection>
 
       <PageSection
@@ -332,7 +413,7 @@ function SummaryTile({
     <div className="rounded-lg border p-4">
       <div className="flex items-center justify-between gap-2 text-sm text-muted-foreground">
         <span className="flex items-center gap-2">
-          <Mail className="size-4" aria-hidden="true" />
+          <Bell className="size-4" aria-hidden="true" />
           {label}
         </span>
         {muted ? <Badge variant="outline">未启用</Badge> : null}

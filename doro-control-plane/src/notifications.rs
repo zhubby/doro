@@ -5,6 +5,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 const EMAIL_SETTINGS_KEY: &str = "notification_email";
+const SYSTEM_SETTINGS_KEY: &str = "notification_system";
 const DEFAULT_SUBJECT_PREFIX: &str = "[Doro]";
 
 #[derive(Debug, Clone)]
@@ -39,10 +40,47 @@ impl EmailSettingsSecret {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SystemNotificationSettingsSecret {
+    pub enabled: bool,
+}
+
+impl SystemNotificationSettingsSecret {
+    fn public(self) -> SystemNotificationSettings {
+        SystemNotificationSettings {
+            enabled: self.enabled,
+        }
+    }
+}
+
 pub(crate) async fn public_email_settings(
     store: &Store,
 ) -> Result<EmailNotificationSettings, AppError> {
     Ok(load_email_settings(store).await?.public())
+}
+
+pub(crate) async fn public_system_notification_settings(
+    store: &Store,
+) -> Result<SystemNotificationSettings, AppError> {
+    Ok(load_system_notification_settings(store).await?.public())
+}
+
+pub(crate) async fn save_system_notification_settings(
+    store: &Store,
+    request: UpdateSystemNotificationSettingsRequest,
+) -> Result<SystemNotificationSettings, AppError> {
+    let settings = SystemNotificationSettingsSecret {
+        enabled: request.enabled,
+    };
+    store
+        .settings()
+        .upsert_json(
+            SYSTEM_SETTINGS_KEY,
+            system_notification_settings_json(settings),
+            Some("System in-app notification channel".to_string()),
+        )
+        .await?;
+    Ok(settings.public())
 }
 
 pub(crate) async fn save_email_settings(
@@ -85,6 +123,25 @@ pub(crate) async fn save_email_settings(
         )
         .await?;
     Ok(settings.public())
+}
+
+pub(crate) async fn list_system_notifications(
+    store: &Store,
+    status: Option<SystemNotificationStatus>,
+    limit: u64,
+) -> Result<Vec<SystemNotification>, AppError> {
+    Ok(store.system_notifications().list(status, limit).await?)
+}
+
+pub(crate) async fn mark_system_notification_read(
+    store: &Store,
+    notification_id: Uuid,
+) -> Result<SystemNotification, AppError> {
+    store
+        .system_notifications()
+        .mark_read(notification_id, Utc::now())
+        .await?
+        .ok_or_else(|| AppError::status(StatusCode::NOT_FOUND, "system notification not found"))
 }
 
 pub(crate) async fn send_test_email(
@@ -158,11 +215,74 @@ pub(crate) async fn send_alert_email(
     Ok(())
 }
 
+pub(crate) async fn create_alert_system_notification(
+    store: &Store,
+    rule: &AlertRule,
+    incident: &AlertIncident,
+    recovered: bool,
+    observed_value: f32,
+) -> Result<(), AppError> {
+    let settings = load_system_notification_settings(store).await?;
+    if !settings.enabled {
+        return Ok(());
+    }
+
+    let state_label = if recovered { "恢复" } else { "触发" };
+    let title = format!("告警{}：{}", state_label, rule.name);
+    let body = format!(
+        "{} {} {}，当前值 {}。",
+        metric_label(&rule.metric),
+        operator_label(rule.operator),
+        rule.threshold,
+        observed_value,
+    );
+    store
+        .system_notifications()
+        .create(NewSystemNotification {
+            id: Uuid::new_v4(),
+            source: SystemNotificationSource::Alert,
+            severity: rule.severity,
+            title,
+            body,
+            link_url: Some("/alerts".to_string()),
+            alert_incident_id: Some(incident.id),
+            alert_rule_id: Some(rule.id),
+            host_id: Some(incident.host_id),
+            created_at: Utc::now(),
+        })
+        .await?;
+    Ok(())
+}
+
 pub(crate) async fn load_email_settings(store: &Store) -> Result<EmailSettingsSecret, AppError> {
     let value = store.settings().get_json(EMAIL_SETTINGS_KEY).await?;
     Ok(email_settings_from_json(
         value.unwrap_or_else(|| serde_json::json!({})),
     ))
+}
+
+pub(crate) async fn load_system_notification_settings(
+    store: &Store,
+) -> Result<SystemNotificationSettingsSecret, AppError> {
+    let value = store.settings().get_json(SYSTEM_SETTINGS_KEY).await?;
+    Ok(system_notification_settings_from_json(
+        value.unwrap_or_else(|| serde_json::json!({})),
+    ))
+}
+
+fn system_notification_settings_from_json(value: Value) -> SystemNotificationSettingsSecret {
+    SystemNotificationSettingsSecret {
+        enabled: value
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+    }
+}
+
+fn system_notification_settings_json(settings: SystemNotificationSettingsSecret) -> Value {
+    serde_json::json!({
+        "enabled": settings.enabled,
+    })
 }
 
 fn email_settings_from_json(value: Value) -> EmailSettingsSecret {
@@ -381,5 +501,26 @@ fn serialize_email_security(value: EmailSecurityMode) -> &'static str {
         EmailSecurityMode::StartTls => "start_tls",
         EmailSecurityMode::Tls => "tls",
         EmailSecurityMode::None => "none",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn system_notification_settings_default_to_enabled() {
+        let settings = system_notification_settings_from_json(serde_json::json!({}));
+
+        assert!(settings.enabled);
+    }
+
+    #[test]
+    fn system_notification_settings_parse_disabled_state() {
+        let settings = system_notification_settings_from_json(serde_json::json!({
+            "enabled": false
+        }));
+
+        assert!(!settings.enabled);
     }
 }

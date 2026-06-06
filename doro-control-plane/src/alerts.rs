@@ -1,4 +1,4 @@
-use crate::notifications::send_alert_email;
+use crate::notifications::{create_alert_system_notification, send_alert_email};
 use crate::prelude::*;
 
 const ALERT_STATE_INACTIVE: &str = "inactive";
@@ -165,6 +165,16 @@ async fn fire_alert(
             "failed to send alert notification"
         );
     }
+    if let Err(error) =
+        create_alert_system_notification(store, rule, &incident, false, observed_value).await
+    {
+        tracing::warn!(
+            ?error,
+            rule_id = %rule.id,
+            incident_id = %incident.id,
+            "failed to create alert system notification"
+        );
+    }
     Ok(())
 }
 
@@ -181,14 +191,25 @@ async fn recover_alert(
             .alerts()
             .resolve_incident(incident_id, observed_value, observed_at)
             .await?
-        && let Err(error) = send_alert_email(store, rule, &incident, true, observed_value).await
     {
-        tracing::warn!(
-            ?error,
-            rule_id = %rule.id,
-            incident_id = %incident.id,
-            "failed to send alert recovery notification"
-        );
+        if let Err(error) = send_alert_email(store, rule, &incident, true, observed_value).await {
+            tracing::warn!(
+                ?error,
+                rule_id = %rule.id,
+                incident_id = %incident.id,
+                "failed to send alert recovery notification"
+            );
+        }
+        if let Err(error) =
+            create_alert_system_notification(store, rule, &incident, true, observed_value).await
+        {
+            tracing::warn!(
+                ?error,
+                rule_id = %rule.id,
+                incident_id = %incident.id,
+                "failed to create alert recovery system notification"
+            );
+        }
     }
     store
         .alerts()

@@ -8,6 +8,7 @@ import {
   getHostMetrics,
   getHosts,
   getSettings,
+  getSystemNotifications,
   refreshContainers,
   refreshVirtualMachines,
 } from "@/lib/control-plane-api";
@@ -23,6 +24,7 @@ import type {
   HostContainer,
   MetricSnapshot,
   SettingsResponse,
+  SystemNotification,
   VirtualMachine,
 } from "@/types/api";
 
@@ -32,6 +34,7 @@ type DashboardData = {
   controlPlaneEnvironment: ControlPlaneEnvironment | null;
   metricHistoryByHost: Record<string, MetricSnapshot[]>;
   settings: SettingsResponse | null;
+  systemNotifications: SystemNotification[];
   virtualMachines: VirtualMachine[];
   containers: HostContainer[];
   error: string | null;
@@ -43,6 +46,7 @@ const emptyData: DashboardData = {
   controlPlaneEnvironment: null,
   metricHistoryByHost: {},
   settings: null,
+  systemNotifications: [],
   virtualMachines: [],
   containers: [],
   error: null,
@@ -82,12 +86,15 @@ export function DashboardDataPage({
       const hostItems = hosts.data?.items ?? [];
       const shouldLoadControlPlaneEnvironment =
         view === "overview" && !controlPlaneEnvironmentLoaded.current;
-      const [metricResults, controlPlaneEnvironment] = await Promise.all([
+      const [metricResults, controlPlaneEnvironment, systemNotifications] = await Promise.all([
         Promise.all(
           hostItems.map((host) => getHostMetrics(host.id, DASHBOARD_METRIC_HISTORY_LIMIT)),
         ),
         shouldLoadControlPlaneEnvironment
           ? getControlPlaneEnvironment()
+          : Promise.resolve({ data: null, error: null }),
+        view === "overview"
+          ? getSystemNotifications({ status: "unread", limit: 8 })
           : Promise.resolve({ data: null, error: null }),
       ]);
       if (cancelled) {
@@ -101,6 +108,7 @@ export function DashboardDataPage({
         containers.error ??
         metricResults.find((result) => result.error)?.error ??
         controlPlaneEnvironment.error ??
+        systemNotifications.error ??
         null;
       const metricHistoryByHost = Object.fromEntries(
         hostItems.map((host, index) => [
@@ -127,6 +135,8 @@ export function DashboardDataPage({
             controlPlaneEnvironment.data?.item ?? current.controlPlaneEnvironment,
           metricHistoryByHost,
           settings: settings.data,
+          systemNotifications:
+            systemNotifications.data?.items ?? current.systemNotifications,
           virtualMachines: virtualMachines.data?.items ?? current.virtualMachines,
           containers: containers.data?.items ?? current.containers,
           error: null,
@@ -229,6 +239,15 @@ export function DashboardDataPage({
       containers={data.containers}
       controlPlaneEnvironment={data.controlPlaneEnvironment}
       metricHistoryByHost={data.metricHistoryByHost}
+      systemNotifications={data.systemNotifications}
+      onSystemNotificationRead={(notificationId) => {
+        setData((current) => ({
+          ...current,
+          systemNotifications: current.systemNotifications.filter(
+            (notification) => notification.id !== notificationId,
+          ),
+        }));
+      }}
       apiError={data.error}
     />
   );

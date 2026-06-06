@@ -25,6 +25,7 @@ pub mod operation_logs;
 pub mod refresh_tokens;
 pub mod resource_groups;
 pub mod settings;
+pub mod system_notifications;
 pub mod task_runs;
 pub mod task_steps;
 pub mod tasks;

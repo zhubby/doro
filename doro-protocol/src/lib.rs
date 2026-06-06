@@ -375,6 +375,38 @@ pub struct AlertNotification {
     pub created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "SystemNotificationStatus.ts")]
+pub enum SystemNotificationStatus {
+    Unread,
+    Read,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export_to = "SystemNotificationSource.ts")]
+pub enum SystemNotificationSource {
+    Alert,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "SystemNotification.ts")]
+pub struct SystemNotification {
+    pub id: Uuid,
+    pub source: SystemNotificationSource,
+    pub severity: AlertSeverity,
+    pub title: String,
+    pub body: String,
+    pub link_url: Option<String>,
+    pub alert_incident_id: Option<Uuid>,
+    pub alert_rule_id: Option<Uuid>,
+    pub host_id: Option<Uuid>,
+    pub status: SystemNotificationStatus,
+    pub read_at: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "CreateAlertRuleRequest.ts")]
 pub struct CreateAlertRuleRequest {
@@ -421,6 +453,36 @@ pub struct AlertRuleResponse {
 #[ts(export_to = "ListAlertIncidentsResponse.ts")]
 pub struct ListAlertIncidentsResponse {
     pub items: Vec<AlertIncident>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "SystemNotificationSettings.ts")]
+pub struct SystemNotificationSettings {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "UpdateSystemNotificationSettingsRequest.ts")]
+pub struct UpdateSystemNotificationSettingsRequest {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "SystemNotificationSettingsResponse.ts")]
+pub struct SystemNotificationSettingsResponse {
+    pub item: SystemNotificationSettings,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListSystemNotificationsResponse.ts")]
+pub struct ListSystemNotificationsResponse {
+    pub items: Vec<SystemNotification>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "SystemNotificationResponse.ts")]
+pub struct SystemNotificationResponse {
+    pub item: SystemNotification,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -1733,11 +1795,19 @@ mod tests {
         assert!(AlertRule::export_all(&cfg).is_ok());
         assert!(AlertIncident::export_all(&cfg).is_ok());
         assert!(AlertNotification::export_all(&cfg).is_ok());
+        assert!(SystemNotificationStatus::export_all(&cfg).is_ok());
+        assert!(SystemNotificationSource::export_all(&cfg).is_ok());
+        assert!(SystemNotification::export_all(&cfg).is_ok());
         assert!(CreateAlertRuleRequest::export_all(&cfg).is_ok());
         assert!(UpdateAlertRuleRequest::export_all(&cfg).is_ok());
         assert!(ListAlertRulesResponse::export_all(&cfg).is_ok());
         assert!(AlertRuleResponse::export_all(&cfg).is_ok());
         assert!(ListAlertIncidentsResponse::export_all(&cfg).is_ok());
+        assert!(SystemNotificationSettings::export_all(&cfg).is_ok());
+        assert!(UpdateSystemNotificationSettingsRequest::export_all(&cfg).is_ok());
+        assert!(SystemNotificationSettingsResponse::export_all(&cfg).is_ok());
+        assert!(ListSystemNotificationsResponse::export_all(&cfg).is_ok());
+        assert!(SystemNotificationResponse::export_all(&cfg).is_ok());
         assert!(EmailSecurityMode::export_all(&cfg).is_ok());
         assert!(EmailNotificationSettings::export_all(&cfg).is_ok());
         assert!(UpdateEmailNotificationSettingsRequest::export_all(&cfg).is_ok());

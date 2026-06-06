@@ -120,6 +120,18 @@ pub(crate) fn app_with_auth_streams_logs_and_chat(
             "/api/v1/notifications/email/test",
             axum::routing::post(test_email_notification),
         )
+        .route(
+            "/api/v1/notifications/system/settings",
+            get(get_system_notification_settings).patch(update_system_notification_settings),
+        )
+        .route(
+            "/api/v1/notifications/system",
+            get(list_system_notifications_route),
+        )
+        .route(
+            "/api/v1/notifications/system/:notification_id/read",
+            axum::routing::post(mark_system_notification_read_route),
+        )
         .route("/api/v1/containers", get(refresh_containers))
         .route(
             "/api/v1/docker/containers",

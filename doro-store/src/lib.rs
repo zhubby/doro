@@ -33,6 +33,9 @@ use doro_protocol::ScheduledTaskKind;
 use doro_protocol::ScheduledTaskRun;
 use doro_protocol::ScheduledTaskRunStatus;
 use doro_protocol::ScheduledTaskStatus;
+use doro_protocol::SystemNotification;
+use doro_protocol::SystemNotificationSource;
+use doro_protocol::SystemNotificationStatus;
 use doro_protocol::Task;
 use doro_protocol::TaskStatus;
 use doro_protocol::TaskStep;
@@ -368,6 +371,20 @@ pub struct NewAlertNotification {
 }
 
 #[derive(Debug, Clone)]
+pub struct NewSystemNotification {
+    pub id: Uuid,
+    pub source: SystemNotificationSource,
+    pub severity: AlertSeverity,
+    pub title: String,
+    pub body: String,
+    pub link_url: Option<String>,
+    pub alert_incident_id: Option<Uuid>,
+    pub alert_rule_id: Option<Uuid>,
+    pub host_id: Option<Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone)]
 pub struct NewContainerObservation {
     pub host_id: Uuid,
     pub runtime: String,
@@ -576,6 +593,10 @@ impl Store {
 
     pub fn alerts(&self) -> AlertRepository<'_> {
         AlertRepository { store: self }
+    }
+
+    pub fn system_notifications(&self) -> SystemNotificationRepository<'_> {
+        SystemNotificationRepository { store: self }
     }
 
     pub fn containers(&self) -> ContainerRepository<'_> {
@@ -2445,7 +2466,7 @@ impl AlertRepository<'_> {
         Ok(alert_notification_model_to_protocol(model))
     }
 
-    async fn increment_incident_notification_count(
+    pub async fn increment_incident_notification_count(
         &self,
         incident_id: Uuid,
     ) -> Result<Option<AlertIncident>, DbErr> {
@@ -2459,6 +2480,101 @@ impl AlertRepository<'_> {
         let mut active: entities::alert_incidents::ActiveModel = model.into();
         active.notification_count = Set(next_count);
         Ok(Some(alert_incident_model_to_protocol(
+            active.update(self.store.connection()).await?,
+        )))
+    }
+}
+
+pub struct SystemNotificationRepository<'a> {
+    store: &'a Store,
+}
+
+impl SystemNotificationRepository<'_> {
+    pub async fn create(
+        &self,
+        notification: NewSystemNotification,
+    ) -> Result<SystemNotification, DbErr> {
+        let model = entities::system_notifications::ActiveModel {
+            id: Set(notification.id),
+            source: Set(serialize_system_notification_source(notification.source)),
+            severity: Set(serialize_alert_severity(notification.severity)),
+            title: Set(required_trimmed(
+                notification.title,
+                "system notification title is required",
+            )?),
+            body: Set(required_trimmed(
+                notification.body,
+                "system notification body is required",
+            )?),
+            link_url: Set(normalize_optional_string(notification.link_url)),
+            alert_incident_id: Set(notification.alert_incident_id),
+            alert_rule_id: Set(notification.alert_rule_id),
+            host_id: Set(notification.host_id),
+            status: Set(serialize_system_notification_status(
+                SystemNotificationStatus::Unread,
+            )),
+            read_at: Set(None),
+            created_at: Set(notification.created_at.into()),
+        }
+        .insert(self.store.connection())
+        .await?;
+
+        if let Some(incident_id) = model.alert_incident_id {
+            let _ = self
+                .store
+                .alerts()
+                .increment_incident_notification_count(incident_id)
+                .await?;
+        }
+
+        Ok(system_notification_model_to_protocol(model))
+    }
+
+    pub async fn list(
+        &self,
+        status: Option<SystemNotificationStatus>,
+        limit: u64,
+    ) -> Result<Vec<SystemNotification>, DbErr> {
+        let mut query = entities::system_notifications::Entity::find()
+            .order_by(
+                entities::system_notifications::Column::CreatedAt,
+                Order::Desc,
+            )
+            .limit(limit.clamp(1, 500));
+
+        if let Some(status) = status {
+            query = query.filter(
+                entities::system_notifications::Column::Status
+                    .eq(serialize_system_notification_status(status)),
+            );
+        }
+
+        let rows = query.all(self.store.connection()).await?;
+        Ok(rows
+            .into_iter()
+            .map(system_notification_model_to_protocol)
+            .collect())
+    }
+
+    pub async fn mark_read(
+        &self,
+        notification_id: Uuid,
+        read_at: DateTime<Utc>,
+    ) -> Result<Option<SystemNotification>, DbErr> {
+        let Some(model) = entities::system_notifications::Entity::find_by_id(notification_id)
+            .one(self.store.connection())
+            .await?
+        else {
+            return Ok(None);
+        };
+
+        let read_at = model.read_at.map(Into::into).unwrap_or(read_at);
+        let mut active: entities::system_notifications::ActiveModel = model.into();
+        active.status = Set(serialize_system_notification_status(
+            SystemNotificationStatus::Read,
+        ));
+        active.read_at = Set(Some(read_at.into()));
+        Ok(Some(system_notification_model_to_protocol(
             active.update(self.store.connection()).await?,
         )))
     }
@@ -2541,6 +2657,27 @@ fn alert_notification_model_to_protocol(
         subject: notification.subject,
         error_message: notification.error_message,
         sent_at: notification.sent_at.map(Into::into),
+        created_at: notification.created_at.into(),
+    }
+}
+
+fn system_notification_model_to_protocol(
+    notification: entities::system_notifications::Model,
+) -> SystemNotification {
+    SystemNotification {
+        id: notification.id,
+        source: parse_system_notification_source(&notification.source)
+            .unwrap_or(SystemNotificationSource::Alert),
+        severity: parse_alert_severity(&notification.severity).unwrap_or(AlertSeverity::Warning),
+        title: notification.title,
+        body: notification.body,
+        link_url: notification.link_url,
+        alert_incident_id: notification.alert_incident_id,
+        alert_rule_id: notification.alert_rule_id,
+        host_id: notification.host_id,
+        status: parse_system_notification_status(&notification.status)
+            .unwrap_or(SystemNotificationStatus::Unread),
+        read_at: notification.read_at.map(Into::into),
         created_at: notification.created_at.into(),
     }
 }
@@ -2669,6 +2806,36 @@ fn parse_alert_notification_status(value: &str) -> Option<AlertNotificationStatu
     match value {
         "sent" => Some(AlertNotificationStatus::Sent),
         "failed" => Some(AlertNotificationStatus::Failed),
+        _ => None,
+    }
+}
+
+fn serialize_system_notification_source(source: SystemNotificationSource) -> String {
+    match source {
+        SystemNotificationSource::Alert => "alert",
+    }
+    .to_string()
+}
+
+fn parse_system_notification_source(value: &str) -> Option<SystemNotificationSource> {
+    match value {
+        "alert" => Some(SystemNotificationSource::Alert),
+        _ => None,
+    }
+}
+
+fn serialize_system_notification_status(status: SystemNotificationStatus) -> String {
+    match status {
+        SystemNotificationStatus::Unread => "unread",
+        SystemNotificationStatus::Read => "read",
+    }
+    .to_string()
+}
+
+fn parse_system_notification_status(value: &str) -> Option<SystemNotificationStatus> {
+    match value {
+        "unread" => Some(SystemNotificationStatus::Unread),
+        "read" => Some(SystemNotificationStatus::Read),
         _ => None,
     }
 }
