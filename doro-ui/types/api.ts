@@ -64,6 +64,10 @@ export type { DockerImageSummary } from "./generated/DockerImageSummary";
 export type { DockerNetworkContainerRequest } from "./generated/DockerNetworkContainerRequest";
 export type { DockerNetworkCreateRequest } from "./generated/DockerNetworkCreateRequest";
 export type { DockerNetworkSummary } from "./generated/DockerNetworkSummary";
+export type { DockerRegistryCredentialRemoveRequest } from "./generated/DockerRegistryCredentialRemoveRequest";
+export type { DockerRegistryCredentialResponse } from "./generated/DockerRegistryCredentialResponse";
+export type { DockerRegistryCredentialSummary } from "./generated/DockerRegistryCredentialSummary";
+export type { DockerRegistryCredentialUpsertRequest } from "./generated/DockerRegistryCredentialUpsertRequest";
 export type { DockerVolumeCreateRequest } from "./generated/DockerVolumeCreateRequest";
 export type { DockerVolumeSummary } from "./generated/DockerVolumeSummary";
 export type { EnrollmentToken } from "./generated/EnrollmentToken";
@@ -96,6 +100,7 @@ export type { ListDockerComposeProjectsResponse } from "./generated/ListDockerCo
 export type { ListDockerContainersResponse } from "./generated/ListDockerContainersResponse";
 export type { ListDockerImagesResponse } from "./generated/ListDockerImagesResponse";
 export type { ListDockerNetworksResponse } from "./generated/ListDockerNetworksResponse";
+export type { ListDockerRegistryCredentialsResponse } from "./generated/ListDockerRegistryCredentialsResponse";
 export type { ListDockerVolumesResponse } from "./generated/ListDockerVolumesResponse";
 export type { ListHostContainersResponse } from "./generated/ListHostContainersResponse";
 export type { ListHostsResponse } from "./generated/ListHostsResponse";

@@ -1241,6 +1241,7 @@ name = "doro-container"
 version = "0.2.2"
 dependencies = [
  "async-trait",
+ "base64",
  "bollard",
  "futures-util",
  "serde",

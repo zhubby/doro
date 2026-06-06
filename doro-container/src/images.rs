@@ -5,6 +5,7 @@ use super::ImageOperationResult;
 use super::ImageSummary;
 use super::PullImageRequest;
 use super::RemoveImageRequest;
+use crate::docker_credentials_for_reference;
 use bollard::image::CreateImageOptions;
 use bollard::image::ListImagesOptions;
 use bollard::image::RemoveImageOptions;
@@ -21,17 +22,25 @@ impl DockerProvider {
                 ..Default::default()
             }))
             .await?;
-        Ok(images
-            .into_iter()
-            .map(|image| ImageSummary {
+        let mut summaries = Vec::with_capacity(images.len());
+        for image in images {
+            let architecture = self
+                .docker()
+                .inspect_image(&image.id)
+                .await
+                .ok()
+                .and_then(|detail| platform_label(detail.os, detail.architecture, detail.variant));
+            summaries.push(ImageSummary {
                 id: Some(image.id),
                 repo_tags: image.repo_tags,
                 repo_digests: image.repo_digests,
+                architecture,
                 created: Some(image.created),
                 size: Some(image.size),
                 labels: json!(image.labels),
-            })
-            .collect())
+            });
+        }
+        Ok(summaries)
     }
 
     pub async fn inspect_image(
@@ -55,6 +64,7 @@ impl DockerProvider {
         request: PullImageRequest,
     ) -> Result<ImageOperationResult, ContainerProviderError> {
         require_identifier(&request.reference, "image reference")?;
+        let credentials = docker_credentials_for_reference(self.config_dir(), &request.reference);
         let mut stream = self.docker().create_image(
             Some(CreateImageOptions {
                 from_image: request.reference.clone(),
@@ -63,7 +73,7 @@ impl DockerProvider {
                 ..Default::default()
             }),
             None,
-            None,
+            credentials,
         );
         let mut updates = Vec::new();
         while let Some(update) = stream.next().await {
@@ -107,6 +117,21 @@ fn require_identifier(value: &str, field: &'static str) -> Result<(), ContainerP
         )));
     }
     Ok(())
+}
+
+fn platform_label(
+    os: Option<String>,
+    architecture: Option<String>,
+    variant: Option<String>,
+) -> Option<String> {
+    let architecture = architecture?;
+    let platform = match variant.filter(|value| !value.trim().is_empty()) {
+        Some(variant) => format!("{architecture}/{variant}"),
+        None => architecture,
+    };
+    os.filter(|value| !value.trim().is_empty())
+        .map(|os| format!("{os}/{platform}"))
+        .or(Some(platform))
 }
 
 #[allow(dead_code)]

@@ -8,6 +8,7 @@ mod event_spool;
 mod events;
 mod filesystem;
 mod logs;
+mod registry_config;
 mod runtime;
 mod session;
 mod startup;

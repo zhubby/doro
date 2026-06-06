@@ -15,6 +15,7 @@ const ENV_FILE_NAME: &str = ".env";
 #[derive(Debug, Clone)]
 pub(crate) struct ComposeManager {
     root: PathBuf,
+    docker_config_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -57,7 +58,15 @@ impl ComposeManager {
         if !root.is_dir() {
             anyhow::bail!("compose root is not a directory");
         }
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            docker_config_dir: None,
+        })
+    }
+
+    pub(crate) fn with_docker_config_dir(mut self, docker_config_dir: Option<PathBuf>) -> Self {
+        self.docker_config_dir = docker_config_dir;
+        self
     }
 
     pub(crate) fn execute(
@@ -177,9 +186,12 @@ impl ComposeManager {
     fn run_compose(&self, project: &str, args: &[&str]) -> anyhow::Result<ComposeCommandOutput> {
         let project_dir = self.existing_project_dir(project)?;
         let argv = self.compose_argv(project, args)?;
-        let output = Command::new("docker")
-            .args(&argv)
-            .current_dir(project_dir)
+        let mut command = Command::new("docker");
+        command.args(&argv).current_dir(project_dir);
+        if let Some(config_dir) = &self.docker_config_dir {
+            command.env("DOCKER_CONFIG", config_dir);
+        }
+        let output = command
             .output()
             .map_err(|source| anyhow::anyhow!("failed to run docker compose: {source}"))?;
         let result = ComposeCommandOutput {

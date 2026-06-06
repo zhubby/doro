@@ -3,6 +3,7 @@ use crate::command_registry::CommandRegistry;
 use crate::compose::{ComposeCommandError, ComposeManager};
 use crate::config::AgentConfig;
 use crate::event_spool::EventSpool;
+use crate::registry_config::DockerRegistryConfigManager;
 use chrono::Utc;
 use doro_ai::{
     AgentError, AgentRunner, AgentRunnerConfig, DisabledAgentProvider, OpenAiAgentProvider,
@@ -28,6 +29,7 @@ pub(crate) struct ContainerRuntime {
     provider: Result<Arc<dyn ContainerProvider>, String>,
     executor: Option<ContainerRuntimeExecutor>,
     compose: Option<ComposeManager>,
+    registry_config: Option<DockerRegistryConfigManager>,
 }
 
 impl std::fmt::Debug for ContainerRuntime {
@@ -41,9 +43,24 @@ impl ContainerRuntime {
         if !config.container_metrics_enabled && !config.docker_manage_enabled {
             return None;
         }
-        let docker = DockerProvider::connect(&DockerProviderConfig::new(
-            config.docker_socket_path.clone(),
-        ));
+        let registry_config = if config.docker_manage_enabled {
+            match DockerRegistryConfigManager::from_default_config_dir() {
+                Ok(manager) => Some(manager),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to initialize Docker registry config manager");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let docker_config_dir = registry_config
+            .as_ref()
+            .map(|manager| manager.config_dir().to_path_buf());
+        let docker = DockerProvider::connect(
+            &DockerProviderConfig::new(config.docker_socket_path.clone())
+                .with_config_dir(docker_config_dir.clone()),
+        );
         let executor = docker
             .as_ref()
             .ok()
@@ -55,7 +72,7 @@ impl ContainerRuntime {
             .map_err(|error| error.to_string());
         let compose = if config.docker_manage_enabled && config.docker_compose_enabled {
             match ComposeManager::from_config(config.docker_compose_root.as_deref()) {
-                Ok(manager) => Some(manager),
+                Ok(manager) => Some(manager.with_docker_config_dir(docker_config_dir.clone())),
                 Err(error) => {
                     tracing::warn!(%error, "failed to initialize Docker Compose manager");
                     None
@@ -68,6 +85,7 @@ impl ContainerRuntime {
             provider,
             executor,
             compose,
+            registry_config,
         })
     }
 
@@ -87,6 +105,30 @@ impl ContainerRuntime {
         envelope: ContainerRuntimeCommandEnvelope,
     ) -> doro_container::ContainerCommandResult {
         match envelope.command {
+            doro_container::ContainerRuntimeCommand::Registry(command) => {
+                let Some(registry_config) = &self.registry_config else {
+                    return doro_container::ContainerCommandResult {
+                        command_id: envelope.command_id,
+                        status: doro_container::ContainerCommandStatus::Failed,
+                        message: "docker registry config is not available".to_string(),
+                        details: serde_json::json!({}),
+                    };
+                };
+                match registry_config.execute(command) {
+                    Ok(details) => doro_container::ContainerCommandResult {
+                        command_id: envelope.command_id,
+                        status: doro_container::ContainerCommandStatus::Succeeded,
+                        message: "docker registry config command succeeded".to_string(),
+                        details,
+                    },
+                    Err(error) => doro_container::ContainerCommandResult {
+                        command_id: envelope.command_id,
+                        status: doro_container::ContainerCommandStatus::Failed,
+                        message: error.to_string(),
+                        details: serde_json::json!({}),
+                    },
+                }
+            }
             doro_container::ContainerRuntimeCommand::Compose(command) => {
                 let Some(compose) = &self.compose else {
                     return doro_container::ContainerCommandResult {

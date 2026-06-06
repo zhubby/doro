@@ -3,6 +3,7 @@ mod containers;
 mod executor;
 mod images;
 mod networks;
+mod registry;
 mod traits;
 mod types;
 mod volumes;
@@ -12,6 +13,7 @@ use thiserror::Error;
 
 pub use client::DockerProvider;
 pub use executor::ContainerRuntimeExecutor;
+pub use registry::*;
 pub use traits::*;
 pub use types::*;
 

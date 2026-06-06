@@ -30,6 +30,8 @@ use bollard::models::RestartPolicyNameEnum;
 use serde_json::json;
 use std::collections::HashMap;
 
+type AnonymousVolumes = HashMap<String, HashMap<(), ()>>;
+
 impl DockerProvider {
     pub async fn containers(
         &self,
@@ -326,9 +328,7 @@ fn build_networking_config(
     Ok(Some(NetworkingConfig { endpoints_config }))
 }
 
-fn build_volumes(
-    values: &[String],
-) -> Result<Option<HashMap<String, HashMap<(), ()>>>, ContainerProviderError> {
+fn build_volumes(values: &[String]) -> Result<Option<AnonymousVolumes>, ContainerProviderError> {
     let mut volumes = HashMap::new();
     for value in clean_vec(values.to_vec()) {
         if !value.starts_with('/') {

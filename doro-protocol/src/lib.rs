@@ -520,6 +520,7 @@ pub struct DockerImageSummary {
     pub id: Option<String>,
     pub repo_tags: Vec<String>,
     pub repo_digests: Vec<String>,
+    pub architecture: Option<String>,
     pub created: Option<i64>,
     pub size: Option<i64>,
     pub labels: Value,
@@ -560,6 +561,17 @@ pub struct DockerComposeProject {
     pub services: Vec<String>,
     pub compose_yaml: Option<String>,
     pub env_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerRegistryCredentialSummary.ts")]
+pub struct DockerRegistryCredentialSummary {
+    pub host_id: Uuid,
+    pub registry: String,
+    pub username: Option<String>,
+    pub source: String,
+    pub has_secret: bool,
+    pub config_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -730,10 +742,32 @@ pub struct DockerComposeProjectRequest {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerRegistryCredentialUpsertRequest.ts")]
+pub struct DockerRegistryCredentialUpsertRequest {
+    pub host_id: Uuid,
+    pub registry: String,
+    pub username: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerRegistryCredentialRemoveRequest.ts")]
+pub struct DockerRegistryCredentialRemoveRequest {
+    pub host_id: Uuid,
+    pub registry: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, TS)]
 #[ts(export_to = "DockerActionResponse.ts")]
 pub struct DockerActionResponse {
     pub task: Task,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "DockerRegistryCredentialResponse.ts")]
+pub struct DockerRegistryCredentialResponse {
+    pub item: DockerRegistryCredentialSummary,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, TS)]
@@ -1483,6 +1517,12 @@ pub struct ListDockerComposeProjectsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
+#[ts(export_to = "ListDockerRegistryCredentialsResponse.ts")]
+pub struct ListDockerRegistryCredentialsResponse {
+    pub items: Vec<DockerRegistryCredentialSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[ts(export_to = "DockerComposeProjectResponse.ts")]
 pub struct DockerComposeProjectResponse {
     pub item: DockerComposeProject,
@@ -1710,6 +1750,7 @@ mod tests {
         assert!(DockerNetworkSummary::export_all(&cfg).is_ok());
         assert!(DockerVolumeSummary::export_all(&cfg).is_ok());
         assert!(DockerComposeProject::export_all(&cfg).is_ok());
+        assert!(DockerRegistryCredentialSummary::export_all(&cfg).is_ok());
         assert!(DockerActionRequest::export_all(&cfg).is_ok());
         assert!(DockerContainerCreateExecutionMode::export_all(&cfg).is_ok());
         assert!(DockerContainerRestartPolicyName::export_all(&cfg).is_ok());
@@ -1723,7 +1764,10 @@ mod tests {
         assert!(DockerNetworkContainerRequest::export_all(&cfg).is_ok());
         assert!(DockerVolumeCreateRequest::export_all(&cfg).is_ok());
         assert!(DockerComposeProjectRequest::export_all(&cfg).is_ok());
+        assert!(DockerRegistryCredentialUpsertRequest::export_all(&cfg).is_ok());
+        assert!(DockerRegistryCredentialRemoveRequest::export_all(&cfg).is_ok());
         assert!(DockerActionResponse::export_all(&cfg).is_ok());
+        assert!(DockerRegistryCredentialResponse::export_all(&cfg).is_ok());
         assert!(VirtualMachineStatus::export_all(&cfg).is_ok());
         assert!(VirtualMachineNetworkMode::export_all(&cfg).is_ok());
         assert!(VirtualMachinePortForward::export_all(&cfg).is_ok());
@@ -1806,6 +1850,7 @@ mod tests {
         assert!(ListDockerNetworksResponse::export_all(&cfg).is_ok());
         assert!(ListDockerVolumesResponse::export_all(&cfg).is_ok());
         assert!(ListDockerComposeProjectsResponse::export_all(&cfg).is_ok());
+        assert!(ListDockerRegistryCredentialsResponse::export_all(&cfg).is_ok());
         assert!(DockerComposeProjectResponse::export_all(&cfg).is_ok());
         assert!(ListWebsitesResponse::export_all(&cfg).is_ok());
         assert!(ListVirtualMachinesResponse::export_all(&cfg).is_ok());

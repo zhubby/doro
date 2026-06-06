@@ -31,6 +31,9 @@ import type {
   DockerImageRemoveRequest,
   DockerNetworkContainerRequest,
   DockerNetworkCreateRequest,
+  DockerRegistryCredentialRemoveRequest,
+  DockerRegistryCredentialResponse,
+  DockerRegistryCredentialUpsertRequest,
   DockerVolumeCreateRequest,
   FileDirectoryResponse,
   FileDownloadResponse,
@@ -50,6 +53,7 @@ import type {
   ListDockerContainersResponse,
   ListDockerImagesResponse,
   ListDockerNetworksResponse,
+  ListDockerRegistryCredentialsResponse,
   ListDockerVolumesResponse,
   ListHostContainersResponse,
   ListHostsResponse,
@@ -614,6 +618,36 @@ export async function pullDockerImage(request: DockerImagePullRequest) {
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export async function getDockerRegistryCredentials(hostId: string) {
+  return getJson<ListDockerRegistryCredentialsResponse>(
+    `/api/v1/docker/registry-credentials${hostQuery(hostId)}`,
+  );
+}
+
+export async function upsertDockerRegistryCredential(
+  request: DockerRegistryCredentialUpsertRequest,
+) {
+  return authedRequest<DockerRegistryCredentialResponse>(
+    "/api/v1/docker/registry-credentials",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+export async function removeDockerRegistryCredential(
+  request: DockerRegistryCredentialRemoveRequest,
+) {
+  return authedRequest<DockerRegistryCredentialResponse>(
+    "/api/v1/docker/registry-credentials/remove",
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
 }
 
 export async function removeDockerImage(request: DockerImageRemoveRequest) {

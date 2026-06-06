@@ -2,16 +2,26 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DockerProviderConfig {
     pub socket_path: Option<String>,
+    pub config_dir: Option<PathBuf>,
 }
 
 impl DockerProviderConfig {
     pub fn new(socket_path: Option<String>) -> Self {
-        Self { socket_path }
+        Self {
+            socket_path,
+            config_dir: None,
+        }
+    }
+
+    pub fn with_config_dir(mut self, config_dir: Option<PathBuf>) -> Self {
+        self.config_dir = config_dir;
+        self
     }
 }
 
@@ -178,6 +188,7 @@ pub struct ImageSummary {
     pub id: Option<String>,
     pub repo_tags: Vec<String>,
     pub repo_digests: Vec<String>,
+    pub architecture: Option<String>,
     pub created: Option<i64>,
     pub size: Option<i64>,
     pub labels: Value,
@@ -212,6 +223,27 @@ pub struct ImageOperationResult {
     pub reference: String,
     pub action: String,
     pub details: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RegistryCredentialSummary {
+    pub registry: String,
+    pub username: Option<String>,
+    pub source: String,
+    pub has_secret: bool,
+    pub config_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UpsertRegistryCredentialRequest {
+    pub registry: String,
+    pub username: String,
+    pub secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RemoveRegistryCredentialRequest {
+    pub registry: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -298,6 +330,7 @@ pub enum ContainerRuntimeCommand {
     Network(ContainerNetworkCommand),
     Volume(ContainerVolumeCommand),
     Compose(ContainerComposeCommand),
+    Registry(ContainerRegistryCommand),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -309,12 +342,20 @@ pub enum ContainerImageCommand {
     Remove(RemoveImageRequest),
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum ContainerRegistryCommand {
+    List,
+    Upsert(UpsertRegistryCredentialRequest),
+    Remove(RemoveRegistryCredentialRequest),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum ContainerCommand {
     List { filter: ContainerListFilter },
     Inspect { id_or_name: String },
-    Create(CreateContainerRequest),
+    Create(Box<CreateContainerRequest>),
     Start { id_or_name: String },
     Stop(StopContainerRequest),
     Restart(RestartContainerRequest),

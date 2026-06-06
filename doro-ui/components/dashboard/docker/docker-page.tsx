@@ -7,6 +7,8 @@ import {
   ChevronRight,
   FilePenLine,
   Filter,
+  FolderOpen,
+  KeyRound,
   Link2,
   Play,
   Plus,
@@ -28,7 +30,14 @@ import {
 
 import { DataTable, ResourceStatusBadge, TruncatedText } from "@/components/admin/data-table";
 import { PageSection } from "@/components/admin/page-section";
+import {
+  KeyValueRowsField,
+  StringListRowsField,
+  type KeyValueRow,
+  type StringListRow,
+} from "@/components/admin/repeating-fields";
 import { Toolbar } from "@/components/admin/toolbar";
+import { HostDirectoryPickerDialog } from "@/components/dashboard/files/host-directory-picker-dialog";
 import { PageContainer } from "@/components/layout/page-container";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,13 +74,16 @@ import {
   getDockerContainers,
   getDockerImages,
   getDockerNetworks,
+  getDockerRegistryCredentials,
   getDockerVolumes,
   getHosts,
   pullDockerImage,
   readDockerComposeProject,
   removeDockerImage,
+  removeDockerRegistryCredential,
   removeDockerVolume,
   updateDockerComposeProject,
+  upsertDockerRegistryCredential,
 } from "@/lib/control-plane-api";
 import type {
   DockerActionResponse,
@@ -80,6 +92,7 @@ import type {
   DockerContainerSummary,
   DockerImageSummary,
   DockerNetworkSummary,
+  DockerRegistryCredentialSummary,
   DockerVolumeSummary,
   Host,
 } from "@/types/api";
@@ -125,6 +138,45 @@ type ActiveDialog = {
   row?: DockerRow;
 } | null;
 
+type PortMappingRow = {
+  id: string;
+  hostIp: string;
+  hostPort: string;
+  containerPort: string;
+  protocol: string;
+};
+
+type BindMountRow = {
+  id: string;
+  source: string;
+  target: string;
+  mode: string;
+};
+
+type AnonymousVolumeRow = {
+  id: string;
+  target: string;
+};
+
+type TmpfsMountRow = {
+  id: string;
+  target: string;
+  options: string;
+};
+
+type ExtraHostRow = {
+  id: string;
+  hostname: string;
+  address: string;
+};
+
+type DeviceMappingRow = {
+  id: string;
+  hostPath: string;
+  containerPath: string;
+  permissions: string;
+};
+
 type DockerFormState = {
   hostId: string;
   name: string;
@@ -139,20 +191,21 @@ type DockerFormState = {
   workingDir: string;
   entrypoint: string;
   command: string;
-  env: string;
-  labels: string;
+  containerEnv: KeyValueRow[];
+  operationLabels: KeyValueRow[];
+  containerLabels: KeyValueRow[];
   networkMode: string;
   networkName: string;
-  aliases: string;
+  containerAliases: StringListRow[];
   ipv4Address: string;
   macAddress: string;
-  ports: string;
-  dns: string;
-  dnsSearch: string;
-  extraHosts: string;
-  binds: string;
-  volumes: string;
-  tmpfs: string;
+  containerPorts: PortMappingRow[];
+  containerDns: StringListRow[];
+  containerDnsSearch: StringListRow[];
+  containerExtraHosts: ExtraHostRow[];
+  containerBinds: BindMountRow[];
+  containerVolumes: AnonymousVolumeRow[];
+  containerTmpfs: TmpfsMountRow[];
   shmSize: string;
   restartPolicy: string;
   restartMaxRetries: string;
@@ -162,9 +215,9 @@ type DockerFormState = {
   tty: boolean;
   openStdin: boolean;
   readOnlyRootfs: boolean;
-  capAdd: string;
-  capDrop: string;
-  devices: string;
+  containerCapAdd: StringListRow[];
+  containerCapDrop: StringListRow[];
+  containerDevices: DeviceMappingRow[];
   memory: string;
   memorySwap: string;
   cpus: string;
@@ -179,17 +232,24 @@ type DockerFormState = {
   healthcheckStartPeriod: string;
   healthcheckStartInterval: string;
   logDriver: string;
-  logOptions: string;
+  containerLogOptions: KeyValueRow[];
   driver: string;
   internal: boolean;
   attachable: boolean;
-  driverOpts: string;
+  driverOptionRows: KeyValueRow[];
   force: boolean;
   noprune: boolean;
   container: string;
   composeYaml: string;
   envFile: string;
   reason: string;
+};
+
+type RegistryFormState = {
+  hostId: string;
+  registry: string;
+  username: string;
+  secret: string;
 };
 
 const defaultComposeYaml = "services:\n  app:\n    image: nginx:1.27\n";
@@ -208,20 +268,21 @@ const emptyForm: DockerFormState = {
   workingDir: "",
   entrypoint: "",
   command: "",
-  env: "",
-  labels: "",
+  containerEnv: [],
+  operationLabels: [],
+  containerLabels: [],
   networkMode: "bridge",
   networkName: "",
-  aliases: "",
+  containerAliases: [],
   ipv4Address: "",
   macAddress: "",
-  ports: "",
-  dns: "",
-  dnsSearch: "",
-  extraHosts: "",
-  binds: "",
-  volumes: "",
-  tmpfs: "",
+  containerPorts: [],
+  containerDns: [],
+  containerDnsSearch: [],
+  containerExtraHosts: [],
+  containerBinds: [],
+  containerVolumes: [],
+  containerTmpfs: [],
   shmSize: "",
   restartPolicy: "default",
   restartMaxRetries: "",
@@ -231,9 +292,9 @@ const emptyForm: DockerFormState = {
   tty: false,
   openStdin: false,
   readOnlyRootfs: false,
-  capAdd: "",
-  capDrop: "",
-  devices: "",
+  containerCapAdd: [],
+  containerCapDrop: [],
+  containerDevices: [],
   memory: "",
   memorySwap: "",
   cpus: "",
@@ -248,17 +309,24 @@ const emptyForm: DockerFormState = {
   healthcheckStartPeriod: "",
   healthcheckStartInterval: "",
   logDriver: "",
-  logOptions: "",
+  containerLogOptions: [],
   driver: "",
   internal: false,
   attachable: false,
-  driverOpts: "",
+  driverOptionRows: [],
   force: true,
   noprune: false,
   container: "",
   composeYaml: defaultComposeYaml,
   envFile: "",
   reason: "",
+};
+
+const emptyRegistryForm: RegistryFormState = {
+  hostId: "",
+  registry: "",
+  username: "",
+  secret: "",
 };
 
 type ContainerCreateStep = "basic" | "network" | "storage" | "features";
@@ -281,7 +349,7 @@ const kindMeta: Record<
   },
   images: {
     title: "镜像",
-    description: "实时查询 Docker 镜像，拉取和移除镜像会进入高风险审批链路。",
+    description: "实时查询 Docker 镜像，拉取镜像直接执行并保留审计，移除镜像仍需审批。",
     createLabel: "拉取镜像",
   },
   networks: {
@@ -301,7 +369,7 @@ const kindMeta: Record<
   },
 };
 
-const columns: ResourceColumn<DockerRow>[] = [
+const baseColumns: ResourceColumn<DockerRow>[] = [
   {
     key: "name",
     label: "名称",
@@ -327,7 +395,12 @@ const columns: ResourceColumn<DockerRow>[] = [
     key: "status",
     label: "状态",
     width: "7rem",
-    render: (row) => <ResourceStatusBadge status={row.status} />,
+    render: (row) =>
+      isImageRow(row) ? (
+        <TruncatedText value={row.statusLabel} />
+      ) : (
+        <ResourceStatusBadge status={row.status} />
+      ),
   },
   {
     key: "detailA",
@@ -349,6 +422,23 @@ const columns: ResourceColumn<DockerRow>[] = [
   },
 ];
 
+function dockerColumns(kind: DockerKind) {
+  if (kind !== "images") {
+    return baseColumns;
+  }
+  return baseColumns.map((column) =>
+    column.key === "status"
+      ? { ...column, label: "架构" }
+      : column.key === "detailC"
+        ? { ...column, label: "创建时间" }
+        : column,
+  );
+}
+
+function isImageRow(row: DockerRow) {
+  return "repo_tags" in row.raw;
+}
+
 export function DockerPage({ kind }: DockerPageProps) {
   const [hosts, setHosts] = useState<Host[]>([]);
   const [rows, setRows] = useState<DockerRow[]>([]);
@@ -360,7 +450,15 @@ export function DockerPage({ kind }: DockerPageProps) {
   const [notice, setNotice] = useState<string | null>(null);
   const [activeDialog, setActiveDialog] = useState<ActiveDialog>(null);
   const [form, setForm] = useState<DockerFormState>(emptyForm);
+  const [registryDialogOpen, setRegistryDialogOpen] = useState(false);
+  const [registryCredentialDialogOpen, setRegistryCredentialDialogOpen] = useState(false);
+  const [registryCredentialMode, setRegistryCredentialMode] = useState<"create" | "edit">("create");
+  const [registryCredentials, setRegistryCredentials] = useState<DockerRegistryCredentialSummary[]>([]);
+  const [registryForm, setRegistryForm] = useState<RegistryFormState>(emptyRegistryForm);
+  const [registryLoading, setRegistryLoading] = useState(false);
+  const [registryPending, setRegistryPending] = useState<string | null>(null);
   const meta = kindMeta[kind];
+  const columns = useMemo(() => dockerColumns(kind), [kind]);
 
   const dockerHosts = useMemo(
     () =>
@@ -404,6 +502,29 @@ export function DockerPage({ kind }: DockerPageProps) {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  const loadRegistryCredentials = useCallback(async (hostId: string) => {
+    if (!hostId) {
+      setRegistryCredentials([]);
+      return;
+    }
+    setRegistryLoading(true);
+    const result = await getDockerRegistryCredentials(hostId);
+    if (result.data) {
+      setRegistryCredentials(result.data.items);
+      setApiError(null);
+    } else {
+      setRegistryCredentials([]);
+      setApiError(result.error);
+    }
+    setRegistryLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (registryDialogOpen && registryForm.hostId) {
+      void loadRegistryCredentials(registryForm.hostId);
+    }
+  }, [loadRegistryCredentials, registryDialogOpen, registryForm.hostId]);
 
   useToastMessage(apiError, {
     id: `docker-${kind}-api-error`,
@@ -468,6 +589,90 @@ export function DockerPage({ kind }: DockerPageProps) {
     setActiveDialog({ kind: dialogKind, row });
   };
 
+  const openRegistryDialog = () => {
+    const hostId = hostFilter !== "all" ? hostFilter : dockerHosts[0]?.id ?? "";
+    setRegistryForm({ ...emptyRegistryForm, hostId });
+    setRegistryCredentials([]);
+    setRegistryDialogOpen(true);
+  };
+
+  const updateRegistryDialogOpen = (open: boolean) => {
+    setRegistryDialogOpen(open);
+    if (!open) {
+      setRegistryCredentialDialogOpen(false);
+      setRegistryPending(null);
+    }
+  };
+
+  const openRegistryCredentialForm = (credential?: DockerRegistryCredentialSummary) => {
+    if (credential) {
+      setRegistryCredentialMode("edit");
+      setRegistryForm({
+        hostId: credential.host_id,
+        registry: credential.registry,
+        username: credential.username ?? "",
+        secret: "",
+      });
+    } else {
+      setRegistryCredentialMode("create");
+      setRegistryForm({
+        ...emptyRegistryForm,
+        hostId: registryForm.hostId,
+      });
+    }
+    setRegistryCredentialDialogOpen(true);
+  };
+
+  const submitRegistryCredential = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!registryForm.hostId) {
+      return;
+    }
+    setRegistryPending("save");
+    setNotice(null);
+    const result = await upsertDockerRegistryCredential({
+      host_id: registryForm.hostId,
+      registry: registryForm.registry.trim(),
+      username: registryForm.username.trim(),
+      secret: registryForm.secret,
+    });
+    if (result.data) {
+      setNotice(`已更新 Registry 凭证：${result.data.item.registry}`);
+      setRegistryCredentialDialogOpen(false);
+      setRegistryForm({
+        ...emptyRegistryForm,
+        hostId: registryForm.hostId,
+      });
+      await loadRegistryCredentials(registryForm.hostId);
+    } else {
+      setApiError(result.error);
+    }
+    setRegistryPending(null);
+  };
+
+  const removeRegistryCredential = async (credential: DockerRegistryCredentialSummary) => {
+    if (!window.confirm(`删除 ${credential.registry} 的 Registry 凭证？`)) {
+      return;
+    }
+    setRegistryPending(`remove:${credential.registry}`);
+    setNotice(null);
+    const result = await removeDockerRegistryCredential({
+      host_id: credential.host_id,
+      registry: credential.registry,
+    });
+    if (result.data) {
+      setNotice(`已删除 Registry 凭证：${result.data.item.registry}`);
+      await loadRegistryCredentials(credential.host_id);
+      if (registryCredentialDialogOpen && registryForm.registry === credential.registry) {
+        setRegistryCredentialDialogOpen(false);
+        setRegistryForm({ ...emptyRegistryForm, hostId: credential.host_id });
+      }
+    } else {
+      setApiError(result.error);
+    }
+    setRegistryPending(null);
+  };
+
   const submitDialog = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!activeDialog) {
@@ -476,11 +681,7 @@ export function DockerPage({ kind }: DockerPageProps) {
     setBusyId(activeDialog.row?.id ?? activeDialog.kind);
     setNotice(null);
     const result = await runDialogSubmit(activeDialog, form);
-    const message =
-      activeDialog.kind === "container-create" && !form.requiresApproval
-        ? "已创建 Docker 容器任务，Agent 正在执行该操作。"
-        : "已创建 Docker 审批任务，批准后 Agent 会执行该操作。";
-    handleActionResult(result, message);
+    handleActionResult(result, dialogSubmitMessage(activeDialog.kind, form));
     if (result.data) {
       setActiveDialog(null);
       await loadData();
@@ -545,7 +746,7 @@ export function DockerPage({ kind }: DockerPageProps) {
       host_id: row.hostId,
       reason: `operator requested docker compose ${action}`,
     });
-    handleActionResult(result);
+    handleActionResult(result, composeActionMessage(action));
     await loadData();
     setBusyId(null);
   };
@@ -567,10 +768,22 @@ export function DockerPage({ kind }: DockerPageProps) {
       <PageSection title={meta.title} description={meta.description} contentClassName="space-y-4">
         <Toolbar
           left={
-            <Button onClick={() => openDialog(defaultCreateDialog(kind))}>
-              <Plus className="size-4" aria-hidden="true" />
-              {meta.createLabel}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={() => openDialog(defaultCreateDialog(kind))}>
+                <Plus className="size-4" aria-hidden="true" />
+                {meta.createLabel}
+              </Button>
+              {kind === "images" ? (
+                <Button
+                  variant="outline"
+                  disabled={dockerHosts.length === 0}
+                  onClick={openRegistryDialog}
+                >
+                  <KeyRound className="size-4" aria-hidden="true" />
+                  Registry 管理
+                </Button>
+              ) : null}
+            </div>
           }
           right={
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -658,7 +871,250 @@ export function DockerPage({ kind }: DockerPageProps) {
         onFormChange={setForm}
         onSubmit={submitDialog}
       />
+      <RegistryCredentialsDialog
+        open={registryDialogOpen}
+        hosts={dockerHosts}
+        form={registryForm}
+        credentials={registryCredentials}
+        loading={registryLoading}
+        pending={registryPending}
+        onOpenChange={updateRegistryDialogOpen}
+        onFormChange={setRegistryForm}
+        onAdd={() => openRegistryCredentialForm()}
+        onEdit={openRegistryCredentialForm}
+        onRemove={removeRegistryCredential}
+      />
+      <RegistryCredentialFormDialog
+        open={registryCredentialDialogOpen}
+        mode={registryCredentialMode}
+        form={registryForm}
+        pending={registryPending}
+        onOpenChange={setRegistryCredentialDialogOpen}
+        onFormChange={setRegistryForm}
+        onSubmit={submitRegistryCredential}
+      />
     </PageContainer>
+  );
+}
+
+function RegistryCredentialsDialog({
+  open,
+  hosts,
+  form,
+  credentials,
+  loading,
+  pending,
+  onOpenChange,
+  onFormChange,
+  onAdd,
+  onEdit,
+  onRemove,
+}: {
+  open: boolean;
+  hosts: Host[];
+  form: RegistryFormState;
+  credentials: DockerRegistryCredentialSummary[];
+  loading: boolean;
+  pending: string | null;
+  onOpenChange: (open: boolean) => void;
+  onFormChange: (form: RegistryFormState) => void;
+  onAdd: () => void;
+  onEdit: (credential: DockerRegistryCredentialSummary) => void;
+  onRemove: (credential: DockerRegistryCredentialSummary) => void;
+}) {
+  const operationPending = pending !== null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-4xl">
+        <div className="space-y-5">
+          <DialogHeader>
+            <DialogTitle>Registry 管理</DialogTitle>
+            <DialogDescription>
+              管理目标 Agent 用户默认 Docker 配置中的 registry 凭证，镜像拉取和 Compose 会使用这些凭证。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            <Field label="目标 Agent">
+              <Select
+                required
+                value={form.hostId}
+                disabled={hosts.length === 0 || operationPending}
+                onValueChange={(hostId) => onFormChange({ ...emptyRegistryForm, hostId })}
+                options={
+                  hosts.length === 0
+                    ? [{ value: "", label: "暂无在线 Docker Agent" }]
+                    : hosts.map((host) => ({ value: host.id, label: hostLabel(host) }))
+                }
+              />
+            </Field>
+            <Button type="button" disabled={!form.hostId || operationPending} onClick={onAdd}>
+              <Plus className="size-4" aria-hidden="true" />
+              新增凭证
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-medium">已保存凭证</h3>
+              <span className="truncate text-xs text-muted-foreground">
+                {credentials[0]?.config_path ?? "~/.docker/config.json"}
+              </span>
+            </div>
+            <div className="overflow-hidden rounded-md border">
+              {loading ? (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  正在读取 Registry 凭证...
+                </div>
+              ) : credentials.length === 0 ? (
+                <div className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  暂无 Registry 凭证
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {credentials.map((credential) => {
+                    const removePending = pending === `remove:${credential.registry}`;
+                    const external = credential.source !== "inline";
+                    return (
+                      <div
+                        key={`${credential.host_id}:${credential.registry}`}
+                        className="grid gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto]"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-medium" title={credential.registry}>
+                            {credential.registry}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {registrySourceLabel(credential.source)}
+                          </p>
+                        </div>
+                        <div className="min-w-0 text-sm">
+                          <p className="truncate" title={credential.username ?? ""}>
+                            {credential.username ?? "-"}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {credential.has_secret ? "已保存凭证" : "未保存 inline 凭证"}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={operationPending || removePending}
+                            onClick={() => onEdit(credential)}
+                          >
+                            <FilePenLine className="size-4" aria-hidden="true" />
+                            编辑
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={operationPending || removePending || external}
+                            onClick={() => onRemove(credential)}
+                          >
+                            <Trash2 className="size-4" aria-hidden="true" />
+                            删除
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function RegistryCredentialFormDialog({
+  open,
+  mode,
+  form,
+  pending,
+  onOpenChange,
+  onFormChange,
+  onSubmit,
+}: {
+  open: boolean;
+  mode: "create" | "edit";
+  form: RegistryFormState;
+  pending: string | null;
+  onOpenChange: (open: boolean) => void;
+  onFormChange: (form: RegistryFormState) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const savePending = pending === "save";
+  const canSave =
+    Boolean(form.hostId) &&
+    Boolean(form.registry.trim()) &&
+    Boolean(form.username.trim()) &&
+    Boolean(form.secret);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-xl">
+        <form onSubmit={onSubmit} className="space-y-5">
+          <DialogHeader>
+            <DialogTitle>{mode === "edit" ? "编辑 Registry 凭证" : "新增 Registry 凭证"}</DialogTitle>
+            <DialogDescription>
+              保存到目标 Agent 用户默认 Docker 配置，列表不会显示密码或 Token。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <TextField
+              label="Registry"
+              value={form.registry}
+              disabled={savePending || !form.hostId || mode === "edit"}
+              onChange={(registry) => onFormChange({ ...form, registry })}
+              required
+              placeholder="docker.io 或 ghcr.io"
+            />
+            <TextField
+              label="用户名"
+              value={form.username}
+              disabled={savePending || !form.hostId}
+              onChange={(username) => onFormChange({ ...form, username })}
+              required
+              placeholder="registry 用户名"
+            />
+            <div className="sm:col-span-2">
+              <TextField
+                label="密码或 Token"
+                value={form.secret}
+                disabled={savePending || !form.hostId}
+                onChange={(secret) => onFormChange({ ...form, secret })}
+                required
+                type="password"
+                placeholder="保存时需重新输入"
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+            <Button type="submit" disabled={!canSave || savePending}>
+              <KeyRound className="size-4" aria-hidden="true" />
+              保存凭证
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -847,6 +1303,8 @@ function DockerDialog({
   const title = dialogTitle(kind);
   const description = dialogDescription(kind);
   const isContainerCreate = kind === "container-create";
+  const showApprovalReason =
+    Boolean(kind) && !isContainerCreate && kind !== "image-pull" && kind !== "compose-edit";
   const [containerStep, setContainerStep] = useState<ContainerCreateStep>("basic");
   const currentStepIndex = containerCreateSteps.findIndex(
     (step) => step.value === containerStep,
@@ -902,7 +1360,7 @@ function DockerDialog({
             />
           ) : null}
 
-          {!isContainerCreate ? (
+          {showApprovalReason ? (
             <Field label="审批原因">
             <textarea
               value={form.reason}
@@ -926,7 +1384,7 @@ function DockerDialog({
                 取消
               </Button>
               <Button type="submit" disabled={!form.hostId || hosts.length === 0}>
-                提交审批
+                {dialogSubmitLabel(kind, dialog?.row)}
               </Button>
             </DialogFooter>
           )}
@@ -1003,14 +1461,15 @@ function DialogFields({
           <CheckboxField label="Internal" checked={form.internal} onChange={(internal) => onFormChange({ ...form, internal })} />
           <CheckboxField label="Attachable" checked={form.attachable} onChange={(attachable) => onFormChange({ ...form, attachable })} />
         </div>
-        <Field label="标签">
-          <textarea
-            value={form.labels}
-            onChange={(event) => onFormChange({ ...form, labels: event.target.value })}
-            placeholder="key=value，每行一个"
-            className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-          />
-        </Field>
+        <KeyValueRowsField
+          label="标签"
+          rows={form.operationLabels}
+          keyPlaceholder="com.example.scope"
+          valuePlaceholder="network"
+          addLabel="添加标签"
+          emptyText="暂无标签"
+          onChange={(operationLabels) => onFormChange({ ...form, operationLabels })}
+        />
       </>
     );
   }
@@ -1037,22 +1496,24 @@ function DialogFields({
           <TextField label="驱动" value={form.driver} onChange={(driver) => onFormChange({ ...form, driver })} placeholder="local" />
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Driver opts">
-            <textarea
-              value={form.driverOpts}
-              onChange={(event) => onFormChange({ ...form, driverOpts: event.target.value })}
-              placeholder="key=value，每行一个"
-              className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </Field>
-          <Field label="标签">
-            <textarea
-              value={form.labels}
-              onChange={(event) => onFormChange({ ...form, labels: event.target.value })}
-              placeholder="key=value，每行一个"
-              className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </Field>
+          <KeyValueRowsField
+            label="Driver opts"
+            rows={form.driverOptionRows}
+            keyPlaceholder="type"
+            valuePlaceholder="none"
+            addLabel="添加选项"
+            emptyText="暂无 Driver opts"
+            onChange={(driverOptionRows) => onFormChange({ ...form, driverOptionRows })}
+          />
+          <KeyValueRowsField
+            label="标签"
+            rows={form.operationLabels}
+            keyPlaceholder="com.example.scope"
+            valuePlaceholder="volume"
+            addLabel="添加标签"
+            emptyText="暂无标签"
+            onChange={(operationLabels) => onFormChange({ ...form, operationLabels })}
+          />
         </div>
       </>
     );
@@ -1104,6 +1565,7 @@ function ContainerCreateFields({
   onStepChange: (step: ContainerCreateStep) => void;
   onFormChange: (form: DockerFormState) => void;
 }) {
+  const selectedHost = hosts.find((host) => host.id === form.hostId) ?? null;
   const hostSelector = (
     <Field label="目标 Agent">
       <Select
@@ -1143,7 +1605,11 @@ function ContainerCreateFields({
         <ContainerNetworkFields form={form} onFormChange={onFormChange} />
       ) : null}
       {step === "storage" ? (
-        <ContainerStorageFields form={form} onFormChange={onFormChange} />
+        <ContainerStorageFields
+          form={form}
+          selectedHost={selectedHost}
+          onFormChange={onFormChange}
+        />
       ) : null}
       {step === "features" ? (
         <ContainerFeatureFields form={form} onFormChange={onFormChange} />
@@ -1223,19 +1689,23 @@ function ContainerBasicFields({
         />
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
-        <TextareaField
+        <KeyValueRowsField
           label="环境变量"
-          value={form.env}
-          onChange={(env) => onFormChange({ ...form, env })}
-          placeholder="KEY=value，每行一个"
-          minHeight="min-h-28"
+          rows={form.containerEnv}
+          keyPlaceholder="POSTGRES_PASSWORD"
+          valuePlaceholder="secret"
+          addLabel="添加变量"
+          emptyText="暂无环境变量"
+          onChange={(containerEnv) => onFormChange({ ...form, containerEnv })}
         />
-        <TextareaField
+        <KeyValueRowsField
           label="标签"
-          value={form.labels}
-          onChange={(labels) => onFormChange({ ...form, labels })}
-          placeholder="key=value，每行一个"
-          minHeight="min-h-28"
+          rows={form.containerLabels}
+          keyPlaceholder="com.example.role"
+          valuePlaceholder="web"
+          addLabel="添加标签"
+          emptyText="暂无标签"
+          onChange={(containerLabels) => onFormChange({ ...form, containerLabels })}
         />
       </div>
     </div>
@@ -1299,77 +1769,73 @@ function ContainerNetworkFields({
           placeholder="02:42:ac:14:00:0a"
         />
       </div>
+      <PortMappingsField
+        rows={form.containerPorts}
+        onChange={(containerPorts) => onFormChange({ ...form, containerPorts })}
+      />
       <div className="grid gap-4 lg:grid-cols-2">
-        <TextareaField
-          label="端口映射"
-          value={form.ports}
-          onChange={(ports) => onFormChange({ ...form, ports })}
-          placeholder={"8080:80/tcp\n127.0.0.1:8443:443/tcp"}
-          minHeight="min-h-28"
-        />
-        <TextareaField
+        <StringListRowsField
           label="网络别名"
-          value={form.aliases}
-          onChange={(aliases) => onFormChange({ ...form, aliases })}
-          placeholder="web，每行一个"
-          minHeight="min-h-28"
+          rows={form.containerAliases}
+          valuePlaceholder="web"
+          addLabel="添加别名"
+          emptyText="暂无网络别名"
+          onChange={(containerAliases) => onFormChange({ ...form, containerAliases })}
         />
-        <TextareaField
+        <StringListRowsField
           label="DNS"
-          value={form.dns}
-          onChange={(dns) => onFormChange({ ...form, dns })}
-          placeholder="1.1.1.1，每行一个"
-          minHeight="min-h-24"
+          rows={form.containerDns}
+          valuePlaceholder="1.1.1.1"
+          addLabel="添加 DNS"
+          emptyText="暂无 DNS"
+          onChange={(containerDns) => onFormChange({ ...form, containerDns })}
         />
-        <TextareaField
+        <StringListRowsField
           label="DNS Search"
-          value={form.dnsSearch}
-          onChange={(dnsSearch) => onFormChange({ ...form, dnsSearch })}
-          placeholder="home.arpa，每行一个"
-          minHeight="min-h-24"
+          rows={form.containerDnsSearch}
+          valuePlaceholder="home.arpa"
+          addLabel="添加搜索域"
+          emptyText="暂无 DNS Search"
+          onChange={(containerDnsSearch) => onFormChange({ ...form, containerDnsSearch })}
+        />
+        <ExtraHostRowsField
+          rows={form.containerExtraHosts}
+          onChange={(containerExtraHosts) => onFormChange({ ...form, containerExtraHosts })}
         />
       </div>
-      <TextareaField
-        label="Extra Hosts"
-        value={form.extraHosts}
-        onChange={(extraHosts) => onFormChange({ ...form, extraHosts })}
-        placeholder="host.docker.internal:host-gateway，每行一个"
-        minHeight="min-h-24"
-      />
     </div>
   );
 }
 
 function ContainerStorageFields({
   form,
+  selectedHost,
   onFormChange,
 }: {
   form: DockerFormState;
+  selectedHost: Host | null;
   onFormChange: (form: DockerFormState) => void;
 }) {
+  const canBrowseHostDirectories = Boolean(
+    selectedHost?.capabilities.some((capability) => capability.name === "files_read"),
+  );
+
   return (
     <div className="space-y-4">
+      <BindMountRowsField
+        rows={form.containerBinds}
+        hostId={form.hostId}
+        canBrowseHostDirectories={canBrowseHostDirectories}
+        onChange={(containerBinds) => onFormChange({ ...form, containerBinds })}
+      />
       <div className="grid gap-4 lg:grid-cols-2">
-        <TextareaField
-          label="Bind / 命名卷"
-          value={form.binds}
-          onChange={(binds) => onFormChange({ ...form, binds })}
-          placeholder={"/srv/www:/usr/share/nginx/html:ro\napp-data:/data"}
-          minHeight="min-h-32"
+        <AnonymousVolumeRowsField
+          rows={form.containerVolumes}
+          onChange={(containerVolumes) => onFormChange({ ...form, containerVolumes })}
         />
-        <TextareaField
-          label="匿名卷"
-          value={form.volumes}
-          onChange={(volumes) => onFormChange({ ...form, volumes })}
-          placeholder="/cache，每行一个容器内路径"
-          minHeight="min-h-32"
-        />
-        <TextareaField
-          label="tmpfs"
-          value={form.tmpfs}
-          onChange={(tmpfs) => onFormChange({ ...form, tmpfs })}
-          placeholder="/run:rw,size=64m，每行一个"
-          minHeight="min-h-28"
+        <TmpfsRowsField
+          rows={form.containerTmpfs}
+          onChange={(containerTmpfs) => onFormChange({ ...form, containerTmpfs })}
         />
         <TextField
           label="/dev/shm 大小"
@@ -1466,33 +1932,34 @@ function ContainerFeatureFields({
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <TextareaField
+        <StringListRowsField
           label="Cap Add"
-          value={form.capAdd}
-          onChange={(capAdd) => onFormChange({ ...form, capAdd })}
-          placeholder="NET_ADMIN，每行一个"
-          minHeight="min-h-24"
+          rows={form.containerCapAdd}
+          valuePlaceholder="NET_ADMIN"
+          addLabel="添加 Capability"
+          emptyText="暂无 Cap Add"
+          onChange={(containerCapAdd) => onFormChange({ ...form, containerCapAdd })}
         />
-        <TextareaField
+        <StringListRowsField
           label="Cap Drop"
-          value={form.capDrop}
-          onChange={(capDrop) => onFormChange({ ...form, capDrop })}
-          placeholder="ALL，每行一个"
-          minHeight="min-h-24"
+          rows={form.containerCapDrop}
+          valuePlaceholder="ALL"
+          addLabel="添加 Capability"
+          emptyText="暂无 Cap Drop"
+          onChange={(containerCapDrop) => onFormChange({ ...form, containerCapDrop })}
         />
-        <TextareaField
-          label="设备"
-          value={form.devices}
-          onChange={(devices) => onFormChange({ ...form, devices })}
-          placeholder="/dev/fuse:/dev/fuse:rwm，每行一个"
-          minHeight="min-h-24"
+        <DeviceRowsField
+          rows={form.containerDevices}
+          onChange={(containerDevices) => onFormChange({ ...form, containerDevices })}
         />
-        <TextareaField
+        <KeyValueRowsField
           label="日志选项"
-          value={form.logOptions}
-          onChange={(logOptions) => onFormChange({ ...form, logOptions })}
-          placeholder="max-size=10m，每行一个"
-          minHeight="min-h-24"
+          rows={form.containerLogOptions}
+          keyPlaceholder="max-size"
+          valuePlaceholder="10m"
+          addLabel="添加选项"
+          emptyText="暂无日志选项"
+          onChange={(containerLogOptions) => onFormChange({ ...form, containerLogOptions })}
         />
       </div>
 
@@ -1623,6 +2090,557 @@ function ContainerCreateFooter({
   );
 }
 
+let formRowId = 0;
+
+function nextFormRowId() {
+  formRowId += 1;
+  return `container-form-row-${formRowId}`;
+}
+
+function emptyPortMappingRow(): PortMappingRow {
+  return {
+    id: nextFormRowId(),
+    hostIp: "",
+    hostPort: "",
+    containerPort: "",
+    protocol: "tcp",
+  };
+}
+
+function emptyBindMountRow(): BindMountRow {
+  return {
+    id: nextFormRowId(),
+    source: "",
+    target: "",
+    mode: "default",
+  };
+}
+
+function emptyAnonymousVolumeRow(): AnonymousVolumeRow {
+  return {
+    id: nextFormRowId(),
+    target: "",
+  };
+}
+
+function emptyTmpfsMountRow(): TmpfsMountRow {
+  return {
+    id: nextFormRowId(),
+    target: "",
+    options: "",
+  };
+}
+
+function emptyExtraHostRow(): ExtraHostRow {
+  return {
+    id: nextFormRowId(),
+    hostname: "",
+    address: "",
+  };
+}
+
+function emptyDeviceMappingRow(): DeviceMappingRow {
+  return {
+    id: nextFormRowId(),
+    hostPath: "",
+    containerPath: "",
+    permissions: "default",
+  };
+}
+
+function PortMappingsField({
+  rows,
+  onChange,
+}: {
+  rows: PortMappingRow[];
+  onChange: (rows: PortMappingRow[]) => void;
+}) {
+  const updateRow = (id: string, patch: Partial<PortMappingRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm font-medium">端口映射</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyPortMappingRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加端口
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无端口映射
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1fr)_6rem_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+            <span>监听地址</span>
+            <span>宿主机端口</span>
+            <span>容器端口</span>
+            <span>协议</span>
+            <span className="sr-only">操作</span>
+          </div>
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1fr)_6rem_2.25rem]"
+            >
+              <input
+                value={row.hostIp}
+                onChange={(event) => updateRow(row.id, { hostIp: event.target.value })}
+                placeholder="127.0.0.1"
+                aria-label="监听地址"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <input
+                value={row.hostPort}
+                onChange={(event) => updateRow(row.id, { hostPort: event.target.value })}
+                placeholder="8080"
+                aria-label="宿主机端口"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <input
+                value={row.containerPort}
+                onChange={(event) => updateRow(row.id, { containerPort: event.target.value })}
+                placeholder="80"
+                aria-label="容器端口"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Select
+                value={row.protocol}
+                onValueChange={(protocol) => updateRow(row.id, { protocol })}
+                aria-label="协议"
+                options={[
+                  { value: "tcp", label: "tcp" },
+                  { value: "udp", label: "udp" },
+                ]}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除端口映射"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BindMountRowsField({
+  rows,
+  hostId,
+  canBrowseHostDirectories,
+  onChange,
+}: {
+  rows: BindMountRow[];
+  hostId: string;
+  canBrowseHostDirectories: boolean;
+  onChange: (rows: BindMountRow[]) => void;
+}) {
+  const [pickerRowId, setPickerRowId] = useState<string | null>(null);
+  const pickerRow = rows.find((row) => row.id === pickerRowId) ?? null;
+  const updateRow = (id: string, patch: Partial<BindMountRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium">Bind / 命名卷</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            来源可以是宿主机目录或 Docker 命名卷。
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyBindMountRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加挂载
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无挂载
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_7rem_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground sm:grid">
+            <span>来源</span>
+            <span>容器路径</span>
+            <span>模式</span>
+            <span className="sr-only">操作</span>
+          </div>
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_7rem_2.25rem]"
+            >
+              <div className="flex min-w-0 gap-2">
+                <input
+                  value={row.source}
+                  onChange={(event) => updateRow(row.id, { source: event.target.value })}
+                  placeholder="/home/doro/www 或 app-data"
+                  aria-label="挂载来源"
+                  className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  aria-label="选择宿主机目录"
+                  disabled={!hostId || !canBrowseHostDirectories}
+                  onClick={() => setPickerRowId(row.id)}
+                >
+                  <FolderOpen className="size-4" aria-hidden="true" />
+                </Button>
+              </div>
+              <input
+                value={row.target}
+                onChange={(event) => updateRow(row.id, { target: event.target.value })}
+                placeholder="/usr/share/nginx/html"
+                aria-label="容器内路径"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Select
+                value={row.mode}
+                onValueChange={(mode) => updateRow(row.id, { mode })}
+                aria-label="挂载模式"
+                options={[
+                  { value: "default", label: "默认" },
+                  { value: "rw", label: "读写" },
+                  { value: "ro", label: "只读" },
+                ]}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除挂载"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {!canBrowseHostDirectories && hostId ? (
+        <p className="text-xs text-muted-foreground">
+          当前 Agent 未声明 files_read capability，宿主机目录可手动输入。
+        </p>
+      ) : null}
+
+      <HostDirectoryPickerDialog
+        open={Boolean(pickerRow)}
+        hostId={hostId}
+        initialPath={pickerRow?.source.startsWith("/") ? pickerRow.source : undefined}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPickerRowId(null);
+          }
+        }}
+        onSelect={(source) => {
+          if (pickerRow) {
+            updateRow(pickerRow.id, { source });
+          }
+        }}
+      />
+    </div>
+  );
+}
+
+function AnonymousVolumeRowsField({
+  rows,
+  onChange,
+}: {
+  rows: AnonymousVolumeRow[];
+  onChange: (rows: AnonymousVolumeRow[]) => void;
+}) {
+  const updateRow = (id: string, patch: Partial<AnonymousVolumeRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">匿名卷</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyAnonymousVolumeRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加路径
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无匿名卷
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_2.25rem]">
+              <input
+                value={row.target}
+                onChange={(event) => updateRow(row.id, { target: event.target.value })}
+                placeholder="/cache"
+                aria-label="匿名卷容器路径"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除匿名卷"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TmpfsRowsField({
+  rows,
+  onChange,
+}: {
+  rows: TmpfsMountRow[];
+  onChange: (rows: TmpfsMountRow[]) => void;
+}) {
+  const updateRow = (id: string, patch: Partial<TmpfsMountRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">tmpfs</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyTmpfsMountRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加 tmpfs
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无 tmpfs
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]">
+              <input
+                value={row.target}
+                onChange={(event) => updateRow(row.id, { target: event.target.value })}
+                placeholder="/run"
+                aria-label="tmpfs 路径"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <input
+                value={row.options}
+                onChange={(event) => updateRow(row.id, { options: event.target.value })}
+                placeholder="rw,size=64m"
+                aria-label="tmpfs 选项"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除 tmpfs"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExtraHostRowsField({
+  rows,
+  onChange,
+}: {
+  rows: ExtraHostRow[];
+  onChange: (rows: ExtraHostRow[]) => void;
+}) {
+  const updateRow = (id: string, patch: Partial<ExtraHostRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm font-medium">Extra Hosts</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyExtraHostRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加 Host
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无 Extra Hosts
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((row) => (
+            <div key={row.id} className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_2.25rem]">
+              <input
+                value={row.hostname}
+                onChange={(event) => updateRow(row.id, { hostname: event.target.value })}
+                placeholder="host.docker.internal"
+                aria-label="Host 名称"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <input
+                value={row.address}
+                onChange={(event) => updateRow(row.id, { address: event.target.value })}
+                placeholder="host-gateway"
+                aria-label="Host 地址"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除 Extra Host"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeviceRowsField({
+  rows,
+  onChange,
+}: {
+  rows: DeviceMappingRow[];
+  onChange: (rows: DeviceMappingRow[]) => void;
+}) {
+  const updateRow = (id: string, patch: Partial<DeviceMappingRow>) => {
+    onChange(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
+  };
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm font-medium">设备</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() => onChange([...rows, emptyDeviceMappingRow()])}
+        >
+          <Plus className="size-4" aria-hidden="true" />
+          添加设备
+        </Button>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-center text-sm text-muted-foreground">
+          暂无设备
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="hidden grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_2.25rem] gap-2 px-1 text-xs font-medium text-muted-foreground md:grid">
+            <span>宿主机路径</span>
+            <span>容器路径</span>
+            <span>权限</span>
+            <span className="sr-only">操作</span>
+          </div>
+          {rows.map((row) => (
+            <div
+              key={row.id}
+              className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_7rem_2.25rem]"
+            >
+              <input
+                value={row.hostPath}
+                onChange={(event) => updateRow(row.id, { hostPath: event.target.value })}
+                placeholder="/dev/fuse"
+                aria-label="设备宿主机路径"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <input
+                value={row.containerPath}
+                onChange={(event) => updateRow(row.id, { containerPath: event.target.value })}
+                placeholder="/dev/fuse"
+                aria-label="设备容器路径"
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <Select
+                value={row.permissions}
+                onValueChange={(permissions) => updateRow(row.id, { permissions })}
+                aria-label="设备权限"
+                options={[
+                  { value: "default", label: "默认" },
+                  { value: "rwm", label: "rwm" },
+                  { value: "rw", label: "rw" },
+                  { value: "r", label: "r" },
+                ]}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="删除设备"
+                onClick={() => onChange(rows.filter((item) => item.id !== row.id))}
+              >
+                <Trash2 className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TextareaField({
   label,
   value,
@@ -1681,6 +2699,7 @@ function TextField({
   required,
   disabled,
   placeholder,
+  type = "text",
 }: {
   label: string;
   value: string;
@@ -1688,10 +2707,12 @@ function TextField({
   required?: boolean;
   disabled?: boolean;
   placeholder?: string;
+  type?: string;
 }) {
   return (
     <Field label={label}>
       <input
+        type={type}
         required={required}
         disabled={disabled}
         value={value}
@@ -1781,7 +2802,7 @@ function toRows(
         name,
         secondary: item.id ?? item.repo_digests[0] ?? "-",
         status: "running",
-        statusLabel: "available",
+        statusLabel: item.architecture ?? "unknown",
         detailA: item.repo_tags.length ? item.repo_tags.join(", ") : "untagged",
         detailB: formatBytes(item.size),
         detailC: item.created ? formatUnixTime(item.created) : "-",
@@ -1856,20 +2877,20 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       working_dir: optionalText(form.workingDir),
       entrypoint: splitWords(form.entrypoint),
       command: splitWords(form.command),
-      env: splitLines(form.env),
-      labels: keyValueObject(form.labels),
+      env: keyValueRowsToLines(form.containerEnv),
+      labels: keyValueRowsToObject(form.containerLabels),
       network_mode: containerNetworkMode(form),
       network_name: form.networkMode === "custom" ? optionalText(form.networkName) : null,
-      aliases: splitLines(form.aliases),
+      aliases: stringListRowsToLines(form.containerAliases),
       ipv4_address: optionalText(form.ipv4Address),
       mac_address: optionalText(form.macAddress),
-      ports: parsePortLines(form.ports),
-      dns: splitLines(form.dns),
-      dns_search: splitLines(form.dnsSearch),
-      extra_hosts: splitLines(form.extraHosts),
-      binds: splitLines(form.binds),
-      volumes: splitLines(form.volumes),
-      tmpfs: splitLines(form.tmpfs),
+      ports: portRowsToBindings(form.containerPorts),
+      dns: stringListRowsToLines(form.containerDns),
+      dns_search: stringListRowsToLines(form.containerDnsSearch),
+      extra_hosts: extraHostRowsToLines(form.containerExtraHosts),
+      binds: bindMountRowsToLines(form.containerBinds),
+      volumes: anonymousVolumeRowsToLines(form.containerVolumes),
+      tmpfs: tmpfsRowsToLines(form.containerTmpfs),
       shm_size: optionalText(form.shmSize),
       restart_policy: containerRestartPolicy(form.restartPolicy),
       restart_max_retries: optionalInteger(form.restartMaxRetries),
@@ -1879,9 +2900,9 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       tty: form.tty,
       open_stdin: form.openStdin,
       read_only_rootfs: form.readOnlyRootfs,
-      cap_add: splitLines(form.capAdd),
-      cap_drop: splitLines(form.capDrop),
-      devices: parseDeviceLines(form.devices),
+      cap_add: stringListRowsToLines(form.containerCapAdd),
+      cap_drop: stringListRowsToLines(form.containerCapDrop),
+      devices: deviceRowsToDevices(form.containerDevices),
       memory: optionalText(form.memory),
       memory_swap: optionalText(form.memorySwap),
       cpus: optionalText(form.cpus),
@@ -1890,7 +2911,7 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       pids_limit: optionalInteger(form.pidsLimit),
       healthcheck: containerHealthcheck(form),
       log_driver: optionalText(form.logDriver),
-      log_options: keyValueObject(form.logOptions),
+      log_options: keyValueRowsToObject(form.containerLogOptions),
       reason: form.requiresApproval ? reason : null,
     });
   }
@@ -1900,7 +2921,7 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       reference: form.reference.trim(),
       tag: optionalText(form.tag),
       platform: optionalText(form.platform),
-      reason,
+      reason: null,
     });
   }
   if (dialog.kind === "image-remove") {
@@ -1919,7 +2940,7 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       driver: form.driver.trim() || "bridge",
       internal: form.internal,
       attachable: form.attachable,
-      labels: keyValueObject(form.labels),
+      labels: keyValueRowsToObject(form.operationLabels),
       reason,
     });
   }
@@ -1940,8 +2961,8 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
       host_id: form.hostId,
       name: form.name.trim(),
       driver: form.driver.trim() || "local",
-      driver_opts: keyValueObject(form.driverOpts),
-      labels: keyValueObject(form.labels),
+      driver_opts: keyValueRowsToObject(form.driverOptionRows),
+      labels: keyValueRowsToObject(form.operationLabels),
       reason,
     });
   }
@@ -1951,7 +2972,7 @@ async function runDialogSubmit(dialog: NonNullable<ActiveDialog>, form: DockerFo
     name: form.name.trim(),
     compose_yaml: form.composeYaml,
     env_file: optionalText(form.envFile),
-    reason,
+    reason: null,
   };
   return dialog.row
     ? updateDockerComposeProject(form.name.trim(), request)
@@ -1977,6 +2998,46 @@ function defaultCreateDialog(kind: DockerKind): DialogKind {
 function defaultReason(kind: DialogKind, row?: DockerRow) {
   const target = row ? ` ${row.name}` : "";
   return `operator requested docker ${kind.replaceAll("-", " ")}${target}`;
+}
+
+function dialogSubmitMessage(kind: DialogKind, form: DockerFormState) {
+  if (kind === "image-pull") {
+    return "已创建 Docker 镜像拉取任务，Agent 正在执行该操作。";
+  }
+  if (kind === "compose-edit") {
+    return "已创建 Docker Compose 保存任务，Agent 正在执行该操作。";
+  }
+  if (kind === "container-create" && !form.requiresApproval) {
+    return "已创建 Docker 容器任务，Agent 正在执行该操作。";
+  }
+  return "已创建 Docker 审批任务，批准后 Agent 会执行该操作。";
+}
+
+function dialogSubmitLabel(kind?: DialogKind, row?: DockerRow) {
+  if (kind === "image-pull") {
+    return "开始拉取";
+  }
+  if (kind === "compose-edit") {
+    return row ? "保存项目" : "创建项目";
+  }
+  return "提交审批";
+}
+
+function composeActionMessage(action: "up" | "down" | "restart" | "pull" | "delete") {
+  if (action === "up" || action === "pull") {
+    return "已创建 Docker 任务，Agent 正在执行该操作。";
+  }
+  return "已创建 Docker 审批任务，批准后 Agent 会执行该操作。";
+}
+
+function registrySourceLabel(source: string) {
+  if (source === "inline") {
+    return "Doro 管理的内联凭证";
+  }
+  if (source === "removed") {
+    return "已删除";
+  }
+  return "Docker credential helper 管理";
 }
 
 function dialogTitle(kind?: DialogKind) {
@@ -2011,8 +3072,11 @@ function dialogDescription(kind?: DialogKind) {
   if (kind === "container-create") {
     return "默认直接创建并记录任务审计；需要人工确认时可在特性阶段打开提交审批。";
   }
+  if (kind === "image-pull") {
+    return "拉取镜像会直接创建任务并由目标 Agent 执行，Agent 会使用本机 Docker registry 配置。";
+  }
   if (kind === "compose-edit") {
-    return "Compose 文件只会写入 Agent 配置的受控目录，部署动作仍需要审批。";
+    return "Compose 文件会写入 Agent 配置的受控目录，并直接创建任务由目标 Agent 执行。";
   }
   return "该操作会创建高风险审批任务，批准后由目标 Agent 执行。";
 }
@@ -2040,27 +3104,109 @@ function optionalText(value: string) {
   return trimmed ? trimmed : null;
 }
 
-function splitLines(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
 function splitWords(value: string) {
   return value.trim() ? value.trim().split(/\s+/) : [];
 }
 
-function keyValueObject(value: string) {
+function keyValueRowsToLines(rows: KeyValueRow[]) {
+  return rows.flatMap((row) => {
+    const key = row.key.trim();
+    if (!key) {
+      return [];
+    }
+    return [`${key}=${row.value}`];
+  });
+}
+
+function keyValueRowsToObject(rows: KeyValueRow[]) {
   return Object.fromEntries(
-    splitLines(value).flatMap((line) => {
-      const index = line.indexOf("=");
-      if (index <= 0) {
+    rows.flatMap((row) => {
+      const key = row.key.trim();
+      if (!key) {
         return [];
       }
-      return [[line.slice(0, index).trim(), line.slice(index + 1).trim()]];
+      return [[key, row.value]];
     }),
   );
+}
+
+function stringListRowsToLines(rows: StringListRow[]) {
+  return rows
+    .map((row) => row.value.trim())
+    .filter(Boolean);
+}
+
+function portRowsToBindings(rows: PortMappingRow[]) {
+  return rows.flatMap((row) => {
+    const containerPort = row.containerPort.trim();
+    if (!containerPort) {
+      return [];
+    }
+    return [
+      {
+        container_port: containerPort,
+        protocol: optionalText(row.protocol),
+        host_ip: optionalText(row.hostIp),
+        host_port: optionalText(row.hostPort),
+      },
+    ];
+  });
+}
+
+function bindMountRowsToLines(rows: BindMountRow[]) {
+  return rows.flatMap((row) => {
+    const source = row.source.trim();
+    const target = row.target.trim();
+    if (!source || !target) {
+      return [];
+    }
+    const mode = row.mode === "default" ? "" : row.mode.trim();
+    return [[source, target, mode].filter(Boolean).join(":")];
+  });
+}
+
+function anonymousVolumeRowsToLines(rows: AnonymousVolumeRow[]) {
+  return rows
+    .map((row) => row.target.trim())
+    .filter(Boolean);
+}
+
+function tmpfsRowsToLines(rows: TmpfsMountRow[]) {
+  return rows.flatMap((row) => {
+    const target = row.target.trim();
+    if (!target) {
+      return [];
+    }
+    const options = row.options.trim();
+    return [options ? `${target}:${options}` : target];
+  });
+}
+
+function extraHostRowsToLines(rows: ExtraHostRow[]) {
+  return rows.flatMap((row) => {
+    const hostname = row.hostname.trim();
+    const address = row.address.trim();
+    if (!hostname || !address) {
+      return [];
+    }
+    return [`${hostname}:${address}`];
+  });
+}
+
+function deviceRowsToDevices(rows: DeviceMappingRow[]) {
+  return rows.flatMap((row) => {
+    const hostPath = row.hostPath.trim();
+    if (!hostPath) {
+      return [];
+    }
+    return [
+      {
+        host_path: hostPath,
+        container_path: optionalText(row.containerPath),
+        permissions: row.permissions === "default" ? null : optionalText(row.permissions),
+      },
+    ];
+  });
 }
 
 function containerCreateCanSubmit(form: DockerFormState, hosts: Host[]) {
@@ -2114,41 +3260,6 @@ function containerHealthcheck(form: DockerFormState) {
     start_period_seconds: optionalInteger(form.healthcheckStartPeriod),
     start_interval_seconds: optionalInteger(form.healthcheckStartInterval),
   };
-}
-
-function parsePortLines(value: string) {
-  return splitLines(value).map((line) => {
-    const parts = line.split(":");
-    let hostIp: string | null = null;
-    let hostPort: string | null = null;
-    let target = line;
-    if (parts.length === 2) {
-      hostPort = optionalText(parts[0]);
-      target = parts[1];
-    } else if (parts.length >= 3) {
-      hostIp = optionalText(parts[0]);
-      hostPort = optionalText(parts[1]);
-      target = parts.slice(2).join(":");
-    }
-    const [containerPort, protocol] = target.split("/", 2);
-    return {
-      container_port: containerPort.trim(),
-      protocol: optionalText(protocol ?? ""),
-      host_ip: hostIp,
-      host_port: hostPort,
-    };
-  });
-}
-
-function parseDeviceLines(value: string) {
-  return splitLines(value).map((line) => {
-    const [hostPath, containerPath, permissions] = line.split(":", 3);
-    return {
-      host_path: hostPath.trim(),
-      container_path: optionalText(containerPath ?? ""),
-      permissions: optionalText(permissions ?? ""),
-    };
-  });
 }
 
 function optionalInteger(value: string) {

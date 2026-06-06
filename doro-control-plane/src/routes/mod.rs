@@ -143,6 +143,14 @@ pub(crate) fn app_with_auth_streams_logs_and_chat(
         )
         .route("/api/v1/docker/images", get(list_docker_images))
         .route(
+            "/api/v1/docker/registry-credentials",
+            get(list_docker_registry_credentials).post(upsert_docker_registry_credential),
+        )
+        .route(
+            "/api/v1/docker/registry-credentials/remove",
+            axum::routing::post(remove_docker_registry_credential),
+        )
+        .route(
             "/api/v1/docker/images/pull",
             axum::routing::post(pull_docker_image),
         )

@@ -53,6 +53,9 @@ impl ContainerRuntimeExecutor {
             ContainerRuntimeCommand::Compose(_) => Err(ContainerProviderError::InvalidRequest(
                 "compose commands are executed by the agent runtime".to_string(),
             )),
+            ContainerRuntimeCommand::Registry(_) => Err(ContainerProviderError::InvalidRequest(
+                "registry commands are executed by the agent runtime".to_string(),
+            )),
         }
     }
 
@@ -84,7 +87,7 @@ impl ContainerRuntimeExecutor {
                 Ok(json!(self.client.inspect_container(&id_or_name).await?))
             }
             ContainerCommand::Create(request) => {
-                Ok(json!(self.client.create_container(request).await?))
+                Ok(json!(self.client.create_container(*request).await?))
             }
             ContainerCommand::Start { id_or_name } => {
                 Ok(json!(self.client.start_container(&id_or_name).await?))

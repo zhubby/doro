@@ -54,7 +54,7 @@ export function SearchCommand({ open, onOpenChange }: SearchCommandProps) {
 
               return (
                 <CommandItem
-                  key={item.href}
+                  key={item.id}
                   value={`${label} ${description}`}
                   onSelect={() => {
                     onOpenChange(false);

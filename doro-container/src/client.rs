@@ -31,10 +31,12 @@ use crate::ContainerNetworkStore;
 use crate::ContainerVolumeStore;
 use async_trait::async_trait;
 use bollard::Docker;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct DockerProvider {
     docker: Docker,
+    config_dir: Option<std::path::PathBuf>,
 }
 
 impl DockerProvider {
@@ -43,11 +45,18 @@ impl DockerProvider {
             Some(path) => Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION),
             None => Docker::connect_with_unix_defaults(),
         }?;
-        Ok(Self { docker })
+        Ok(Self {
+            docker,
+            config_dir: config.config_dir.clone(),
+        })
     }
 
     pub(crate) fn docker(&self) -> &Docker {
         &self.docker
+    }
+
+    pub(crate) fn config_dir(&self) -> Option<&Path> {
+        self.config_dir.as_deref()
     }
 
     pub async fn probe(&self) -> Result<ContainerRuntimeInfo, ContainerProviderError> {

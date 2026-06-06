@@ -5,20 +5,24 @@ use crate::prelude::*;
 use crate::state::AppState;
 use doro_container::{
     ContainerCommand, ContainerComposeCommand, ContainerDevice, ContainerHealthcheck,
-    ContainerListFilter, ContainerNetworkCommand, ContainerPortBinding, ContainerRestartPolicyName,
-    ContainerRuntimeCommand, ContainerRuntimeCommandEnvelope, ContainerVolumeCommand,
-    CreateContainerRequest, CreateNetworkRequest, CreateVolumeRequest, PullImageRequest,
-    RemoveContainerRequest, RemoveImageRequest, RemoveVolumeRequest, RestartContainerRequest,
-    StopContainerRequest,
+    ContainerListFilter, ContainerNetworkCommand, ContainerPortBinding, ContainerRegistryCommand,
+    ContainerRestartPolicyName, ContainerRuntimeCommand, ContainerRuntimeCommandEnvelope,
+    ContainerVolumeCommand, CreateContainerRequest, CreateNetworkRequest, CreateVolumeRequest,
+    PullImageRequest, RemoveContainerRequest, RemoveImageRequest,
+    RemoveRegistryCredentialRequest as ContainerRegistryCredentialRemoveRequest,
+    RemoveVolumeRequest, RestartContainerRequest, StopContainerRequest,
+    UpsertRegistryCredentialRequest as ContainerRegistryCredentialUpsertRequest,
 };
 use doro_protocol::{
     DockerActionRequest, DockerActionResponse, DockerComposeProject, DockerComposeProjectRequest,
     DockerComposeProjectResponse, DockerContainerCreateExecutionMode, DockerContainerCreateRequest,
     DockerContainerRestartPolicyName, DockerContainerSummary, DockerImagePullRequest,
     DockerImageRemoveRequest, DockerImageSummary, DockerNetworkContainerRequest,
-    DockerNetworkCreateRequest, DockerNetworkSummary, DockerVolumeCreateRequest,
-    DockerVolumeSummary, ListDockerComposeProjectsResponse, ListDockerContainersResponse,
-    ListDockerImagesResponse, ListDockerNetworksResponse, ListDockerVolumesResponse,
+    DockerNetworkCreateRequest, DockerNetworkSummary, DockerRegistryCredentialRemoveRequest,
+    DockerRegistryCredentialResponse, DockerRegistryCredentialSummary,
+    DockerRegistryCredentialUpsertRequest, DockerVolumeCreateRequest, DockerVolumeSummary,
+    ListDockerComposeProjectsResponse, ListDockerContainersResponse, ListDockerImagesResponse,
+    ListDockerNetworksResponse, ListDockerRegistryCredentialsResponse, ListDockerVolumesResponse,
 };
 use serde_json::json;
 
@@ -185,12 +189,134 @@ pub(crate) async fn list_docker_images(
             id: image.id,
             repo_tags: image.repo_tags,
             repo_digests: image.repo_digests,
+            architecture: image.architecture,
             created: image.created,
             size: image.size,
             labels: image.labels,
         }));
     }
     Ok(Json(ListDockerImagesResponse { items }))
+}
+
+pub(crate) async fn list_docker_registry_credentials(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Query(query): Query<DockerHostQuery>,
+) -> Result<Json<ListDockerRegistryCredentialsResponse>, AppError> {
+    let host_id = require_host_id(query.host_id)?;
+    ensure_docker_ready(&state, host_id).await?;
+    record_docker_event(
+        &state,
+        host_id,
+        "docker.registry_credentials.list_requested",
+        json!({ "requested_by": &current_user.username }),
+    )
+    .await?;
+    let details = run_docker_query(
+        &state,
+        host_id,
+        ContainerRuntimeCommand::Registry(ContainerRegistryCommand::List),
+    )
+    .await?;
+    let credentials: Vec<doro_container::RegistryCredentialSummary> =
+        serde_json::from_value(details).map_err(AppError::from)?;
+    Ok(Json(ListDockerRegistryCredentialsResponse {
+        items: credentials
+            .into_iter()
+            .map(|credential| docker_registry_credential_summary(host_id, credential))
+            .collect(),
+    }))
+}
+
+pub(crate) async fn upsert_docker_registry_credential(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<DockerRegistryCredentialUpsertRequest>,
+) -> Result<Json<DockerRegistryCredentialResponse>, AppError> {
+    ensure_docker_ready(&state, request.host_id).await?;
+    record_docker_event(
+        &state,
+        request.host_id,
+        "docker.registry_credential.upsert_requested",
+        json!({
+            "registry": &request.registry,
+            "username": &request.username,
+            "requested_by": &current_user.username,
+        }),
+    )
+    .await?;
+    let host_id = request.host_id;
+    let details = run_docker_query(
+        &state,
+        host_id,
+        ContainerRuntimeCommand::Registry(ContainerRegistryCommand::Upsert(
+            ContainerRegistryCredentialUpsertRequest {
+                registry: request.registry,
+                username: request.username,
+                secret: request.secret,
+            },
+        )),
+    )
+    .await?;
+    let credential: doro_container::RegistryCredentialSummary =
+        serde_json::from_value(details).map_err(AppError::from)?;
+    let item = docker_registry_credential_summary(host_id, credential);
+    record_docker_event(
+        &state,
+        host_id,
+        "docker.registry_credential.upsert_completed",
+        json!({
+            "registry": &item.registry,
+            "username": &item.username,
+            "source": &item.source,
+            "requested_by": &current_user.username,
+        }),
+    )
+    .await?;
+    Ok(Json(DockerRegistryCredentialResponse { item }))
+}
+
+pub(crate) async fn remove_docker_registry_credential(
+    State(state): State<AppState>,
+    Extension(current_user): Extension<CurrentUser>,
+    Json(request): Json<DockerRegistryCredentialRemoveRequest>,
+) -> Result<Json<DockerRegistryCredentialResponse>, AppError> {
+    ensure_docker_ready(&state, request.host_id).await?;
+    record_docker_event(
+        &state,
+        request.host_id,
+        "docker.registry_credential.remove_requested",
+        json!({
+            "registry": &request.registry,
+            "requested_by": &current_user.username,
+        }),
+    )
+    .await?;
+    let host_id = request.host_id;
+    let details = run_docker_query(
+        &state,
+        host_id,
+        ContainerRuntimeCommand::Registry(ContainerRegistryCommand::Remove(
+            ContainerRegistryCredentialRemoveRequest {
+                registry: request.registry,
+            },
+        )),
+    )
+    .await?;
+    let credential: doro_container::RegistryCredentialSummary =
+        serde_json::from_value(details).map_err(AppError::from)?;
+    let item = docker_registry_credential_summary(host_id, credential);
+    record_docker_event(
+        &state,
+        host_id,
+        "docker.registry_credential.remove_completed",
+        json!({
+            "registry": &item.registry,
+            "requested_by": &current_user.username,
+        }),
+    )
+    .await?;
+    Ok(Json(DockerRegistryCredentialResponse { item }))
 }
 
 pub(crate) async fn pull_docker_image(
@@ -205,13 +331,14 @@ pub(crate) async fn pull_docker_image(
             platform: request.platform,
         },
     ));
-    docker_task_response(
+    docker_task_response_with_mode(
         &state,
         current_user.username,
         request.host_id,
         "pull Docker image",
         request.reason,
         command,
+        DockerTaskDispatchMode::Direct,
     )
     .await
 }
@@ -448,13 +575,14 @@ pub(crate) async fn create_docker_compose_project(
         compose_yaml: request.compose_yaml,
         env_file: request.env_file,
     });
-    docker_task_response(
+    docker_task_response_with_mode(
         &state,
         current_user.username,
         request.host_id,
         format!("create or update Docker Compose project {project}"),
         request.reason,
         command,
+        docker_compose_dispatch_mode("create_or_update"),
     )
     .await
 }
@@ -645,13 +773,15 @@ async fn docker_compose_action(
         "delete" => ContainerRuntimeCommand::Compose(ContainerComposeCommand::Delete { project }),
         _ => unreachable!("unsupported compose action"),
     };
-    docker_task_response(
+    let dispatch_mode = docker_compose_dispatch_mode(action);
+    docker_task_response_with_mode(
         &state,
         current_user.username,
         host_id,
         format!("{action} Docker Compose project"),
         request.reason,
         command,
+        dispatch_mode,
     )
     .await
 }
@@ -688,6 +818,13 @@ fn docker_dispatch_mode(
     match execution_mode {
         DockerContainerCreateExecutionMode::Direct => DockerTaskDispatchMode::Direct,
         DockerContainerCreateExecutionMode::Approval => DockerTaskDispatchMode::Approval,
+    }
+}
+
+fn docker_compose_dispatch_mode(action: &str) -> DockerTaskDispatchMode {
+    match action {
+        "create_or_update" | "up" | "pull" => DockerTaskDispatchMode::Direct,
+        _ => DockerTaskDispatchMode::Approval,
     }
 }
 
@@ -739,6 +876,11 @@ async fn create_docker_task(
         "reason": reason,
         "command": envelope,
     });
+    let risk = docker_command_risk(&payload);
+    let summary = match dispatch_mode {
+        DockerTaskDispatchMode::Direct => "Run Docker management command",
+        DockerTaskDispatchMode::Approval => "Run approved Docker management command",
+    };
     let (status, create_step_approvals, execution_mode) = match dispatch_mode {
         DockerTaskDispatchMode::Direct => (TaskStatus::Queued, false, "direct"),
         DockerTaskDispatchMode::Approval => (TaskStatus::WaitingApproval, true, "approval"),
@@ -759,13 +901,32 @@ async fn create_docker_task(
             steps: vec![TaskStep {
                 id: step_id,
                 capability: CapabilityName::ContainersManage,
-                risk: CapabilityRisk::High,
-                summary: "Run approved Docker management command".to_string(),
+                risk,
+                summary: summary.to_string(),
                 status: TaskStepStatus::Pending,
                 payload,
             }],
         })
         .await?)
+}
+
+fn docker_command_risk(payload: &Value) -> CapabilityRisk {
+    let Some(command) = payload
+        .get("command")
+        .and_then(|value| value.get("command"))
+    else {
+        return CapabilityRisk::High;
+    };
+    match (
+        command.get("resource").and_then(Value::as_str),
+        command
+            .get("command")
+            .and_then(|value| value.get("action"))
+            .and_then(Value::as_str),
+    ) {
+        (Some("image"), Some("pull")) | (Some("compose"), Some("pull")) => CapabilityRisk::Medium,
+        _ => CapabilityRisk::High,
+    }
 }
 
 fn dispatch_direct_docker_task(state: AppState, task: Task, host_id: Uuid) {
@@ -1054,7 +1215,7 @@ fn create_container_command(
     let labels = string_map_from_value(request.labels, "labels")?;
     let log_options = string_map_from_value(request.log_options, "log_options")?;
     Ok(ContainerRuntimeCommand::Container(
-        ContainerCommand::Create(CreateContainerRequest {
+        ContainerCommand::Create(Box::new(CreateContainerRequest {
             name: required_text(request.name, "container name is required")?,
             image: required_text(request.image, "container image is required")?,
             platform: request.platform,
@@ -1124,7 +1285,7 @@ fn create_container_command(
             }),
             log_driver: request.log_driver,
             log_options,
-        }),
+        })),
     ))
 }
 
@@ -1181,6 +1342,41 @@ fn parse_json_value(raw: &str) -> Value {
     serde_json::from_str(raw).unwrap_or_else(|_| json!({}))
 }
 
+async fn record_docker_event(
+    state: &AppState,
+    host_id: Uuid,
+    event_type: impl Into<String>,
+    event_json: Value,
+) -> Result<(), AppError> {
+    state
+        .store
+        .events()
+        .record(NewAgentEvent {
+            agent_id: None,
+            host_id: Some(host_id),
+            external_event_id: None,
+            event_type: event_type.into(),
+            event_json,
+            recorded_at: Utc::now(),
+        })
+        .await?;
+    Ok(())
+}
+
+fn docker_registry_credential_summary(
+    host_id: Uuid,
+    credential: doro_container::RegistryCredentialSummary,
+) -> DockerRegistryCredentialSummary {
+    DockerRegistryCredentialSummary {
+        host_id,
+        registry: credential.registry,
+        username: credential.username,
+        source: credential.source,
+        has_secret: credential.has_secret,
+        config_path: credential.config_path,
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ComposeProjectPayload {
     name: String,
@@ -1217,6 +1413,26 @@ mod tests {
         );
         assert_eq!(
             docker_dispatch_mode(DockerContainerCreateExecutionMode::Approval),
+            DockerTaskDispatchMode::Approval,
+        );
+    }
+
+    #[test]
+    fn docker_compose_create_pull_and_up_map_to_direct_dispatch() {
+        assert_eq!(
+            docker_compose_dispatch_mode("create_or_update"),
+            DockerTaskDispatchMode::Direct,
+        );
+        assert_eq!(
+            docker_compose_dispatch_mode("pull"),
+            DockerTaskDispatchMode::Direct,
+        );
+        assert_eq!(
+            docker_compose_dispatch_mode("up"),
+            DockerTaskDispatchMode::Direct,
+        );
+        assert_eq!(
+            docker_compose_dispatch_mode("down"),
             DockerTaskDispatchMode::Approval,
         );
     }
