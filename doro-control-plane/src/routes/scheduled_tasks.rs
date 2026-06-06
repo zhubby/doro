@@ -349,13 +349,13 @@ pub(crate) fn required_text(value: String, message: &'static str) -> Result<Stri
 }
 
 pub(crate) fn normalize_label_selector(labels: Vec<String>) -> Vec<String> {
-    let mut normalized = Vec::new();
+    let mut normalized: Vec<String> = Vec::new();
     for label in labels {
-        let label = label.trim();
-        if label.is_empty() || normalized.iter().any(|existing| existing == label) {
+        let label = label.trim().to_lowercase();
+        if label.is_empty() || normalized.iter().any(|existing| existing == &label) {
             continue;
         }
-        normalized.push(label.to_string());
+        normalized.push(label);
     }
     normalized
 }
@@ -560,17 +560,13 @@ pub(crate) async fn trigger_scheduled_task(
 ) -> Result<ScheduledTaskTrigger, AppError> {
     ensure_scheduled_task_approved(&scheduled_task)?;
     let started_at = Utc::now();
-    let hosts = store.hosts().list().await?;
+    let hosts = store
+        .hosts()
+        .list_by_tags(scheduled_task.label_selector.clone())
+        .await?;
     let mut matches = Vec::new();
     for host in hosts {
         if host.status != HostStatus::Online {
-            continue;
-        }
-        if !scheduled_task
-            .label_selector
-            .iter()
-            .all(|required| host.labels.iter().any(|label| label == required))
-        {
             continue;
         }
         if !host

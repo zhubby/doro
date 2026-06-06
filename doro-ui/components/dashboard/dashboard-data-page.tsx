@@ -55,6 +55,13 @@ const emptyData: DashboardData = {
 const DASHBOARD_REFRESH_INTERVAL_MS = 10_000;
 const DASHBOARD_METRIC_HISTORY_LIMIT = 240;
 
+function hostMatchesTags(host: Host, tags: string[]) {
+  if (tags.length === 0) {
+    return true;
+  }
+  return tags.every((tag) => host.labels.includes(tag));
+}
+
 export function DashboardDataPage({
   view,
 }: {
@@ -62,6 +69,7 @@ export function DashboardDataPage({
 }) {
   const [data, setData] = useState<DashboardData>(emptyData);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [hostTagFilter, setHostTagFilter] = useState<string[]>([]);
   const controlPlaneEnvironmentLoaded = useRef(false);
 
   useEffect(() => {
@@ -70,7 +78,7 @@ export function DashboardDataPage({
 
     async function load() {
       const [hosts, approvals, settings, virtualMachines, containers] = await Promise.all([
-        getHosts(),
+        getHosts({ tags: view === "hosts" ? hostTagFilter : [] }),
         getApprovals(),
         getSettings(),
         view === "overview" || view === "apps"
@@ -160,14 +168,16 @@ export function DashboardDataPage({
         clearTimeout(refreshTimer);
       }
     };
-  }, []);
+  }, [hostTagFilter, view]);
 
   if (view === "hosts") {
     return (
       <HostsPage
         hosts={data.hosts}
+        tagFilter={hostTagFilter}
         metricHistoryByHost={data.metricHistoryByHost}
         apiError={data.error}
+        onTagFilterChange={setHostTagFilter}
         onHostDeleted={(hostId) => {
           setData((current) => {
             const metricHistoryByHost = { ...current.metricHistoryByHost };
@@ -182,9 +192,9 @@ export function DashboardDataPage({
         onHostUpdated={(host) => {
           setData((current) => ({
             ...current,
-            hosts: current.hosts.map((item) =>
-              item.id === host.id ? host : item,
-            ),
+            hosts: hostMatchesTags(host, hostTagFilter)
+              ? current.hosts.map((item) => (item.id === host.id ? host : item))
+              : current.hosts.filter((item) => item.id !== host.id),
           }));
         }}
       />

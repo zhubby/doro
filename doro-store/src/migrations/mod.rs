@@ -80,6 +80,10 @@ pub(crate) fn all() -> &'static [Migration] {
             id: "202606060001_system_notifications",
             sql: include_str!("../../migrations/202606060001_system_notifications.sql"),
         },
+        Migration {
+            id: "202606060002_host_tags",
+            sql: include_str!("../../migrations/202606060002_host_tags.sql"),
+        },
     ]
 }
 

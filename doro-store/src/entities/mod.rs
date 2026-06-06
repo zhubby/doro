@@ -19,6 +19,7 @@ pub mod cron_job_runs;
 pub mod cron_jobs;
 pub mod databases;
 pub mod enrollment_tokens;
+pub mod host_tags;
 pub mod hosts;
 pub mod metric_snapshots;
 pub mod operation_logs;

@@ -9,11 +9,18 @@ pub(crate) struct MetricHistoryQuery {
     limit: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct ListHostsQuery {
+    tags: Option<String>,
+}
+
 pub(crate) async fn list_hosts(
     State(state): State<AppState>,
+    Query(query): Query<ListHostsQuery>,
 ) -> Result<Json<ListHostsResponse>, AppError> {
+    let tags = query.tags.as_deref().map(split_tags).unwrap_or_default();
     Ok(Json(ListHostsResponse {
-        items: state.store.hosts().list().await?,
+        items: state.store.hosts().list_by_tags(tags).await?,
     }))
 }
 
@@ -26,6 +33,15 @@ pub(crate) async fn delete_host(
     }
 
     Err(AppError::status(StatusCode::NOT_FOUND, "host not found"))
+}
+
+fn split_tags(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 pub(crate) async fn update_host(

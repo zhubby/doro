@@ -71,6 +71,7 @@ use serde_json::Value;
 use serde_json::json;
 use sha2::Digest;
 use sha2::Sha256;
+use std::collections::HashSet;
 use std::str::FromStr;
 use std::time::Duration;
 use uuid::Uuid;
@@ -682,6 +683,47 @@ impl HostRepository<'_> {
         Ok(items)
     }
 
+    pub async fn list_by_tags(&self, labels: Vec<String>) -> Result<Vec<Host>, DbErr> {
+        let labels = normalize_labels(labels);
+        if labels.is_empty() {
+            return self.list().await;
+        }
+
+        let mut matching_ids: Option<HashSet<Uuid>> = None;
+        for label in labels {
+            let ids = entities::host_tags::Entity::find()
+                .filter(entities::host_tags::Column::Tag.eq(label))
+                .all(self.store.connection())
+                .await?
+                .into_iter()
+                .map(|tag| tag.host_id)
+                .collect::<HashSet<_>>();
+
+            matching_ids = Some(match matching_ids {
+                Some(current) => current.intersection(&ids).copied().collect(),
+                None => ids,
+            });
+
+            if matching_ids.as_ref().is_some_and(HashSet::is_empty) {
+                return Ok(Vec::new());
+            }
+        }
+
+        let Some(ids) = matching_ids else {
+            return Ok(Vec::new());
+        };
+        let hosts = entities::hosts::Entity::find()
+            .filter(entities::hosts::Column::Id.is_in(ids))
+            .order_by(entities::hosts::Column::Hostname, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        let mut items = Vec::with_capacity(hosts.len());
+        for host in hosts {
+            items.push(self.to_protocol(host).await?);
+        }
+        Ok(items)
+    }
+
     pub async fn delete(&self, host_id: Uuid) -> Result<bool, DbErr> {
         let result = entities::hosts::Entity::delete_by_id(host_id)
             .exec(self.store.connection())
@@ -702,26 +744,25 @@ impl HostRepository<'_> {
 
         let normalized_labels = normalize_labels(labels);
         let now = Utc::now();
+        let transaction = self.store.connection().begin().await?;
         let result = entities::hosts::Entity::update_many()
             .col_expr(
                 entities::hosts::Column::DisplayName,
                 sea_orm::sea_query::Expr::value(display_name),
             )
             .col_expr(
-                entities::hosts::Column::Labels,
-                sea_orm::sea_query::Expr::value(json!(normalized_labels)),
-            )
-            .col_expr(
                 entities::hosts::Column::UpdatedAt,
                 sea_orm::sea_query::Expr::value(now),
             )
             .filter(entities::hosts::Column::Id.eq(host_id))
-            .exec(self.store.connection())
+            .exec(&transaction)
             .await?;
 
         if result.rows_affected == 0 {
             return Err(DbErr::RecordNotFound(format!("host {host_id} not found")));
         }
+        replace_host_tags(&transaction, host_id, normalized_labels, now).await?;
+        transaction.commit().await?;
 
         let host = entities::hosts::Entity::find_by_id(host_id)
             .one(self.store.connection())
@@ -738,12 +779,15 @@ impl HostRepository<'_> {
         observed_at: DateTime<Utc>,
     ) -> Result<(), DbErr> {
         let now = Utc::now();
+        let host_exists = entities::hosts::Entity::find_by_id(host_id)
+            .one(self.store.connection())
+            .await?
+            .is_some();
         let model = entities::hosts::ActiveModel {
             id: Set(host_id),
             hostname: Set(hostname.clone()),
             display_name: Set(hostname),
             status: Set(serialize_host_status(HostStatus::Online)),
-            labels: Set(json!(["agent"])),
             system_profile: Set(json!({})),
             last_seen_at: Set(Some(observed_at.into())),
             created_at: Set(now.into()),
@@ -762,7 +806,25 @@ impl HostRepository<'_> {
             )
             .exec(self.store.connection())
             .await?;
+        if !host_exists {
+            insert_host_tags(
+                self.store.connection(),
+                host_id,
+                vec!["agent".to_string()],
+                now,
+            )
+            .await?;
+        }
         Ok(())
+    }
+
+    async fn labels_for_host(&self, host_id: Uuid) -> Result<Vec<String>, DbErr> {
+        let labels = entities::host_tags::Entity::find()
+            .filter(entities::host_tags::Column::HostId.eq(host_id))
+            .order_by(entities::host_tags::Column::Tag, Order::Asc)
+            .all(self.store.connection())
+            .await?;
+        Ok(labels.into_iter().map(|label| label.tag).collect())
     }
 
     async fn to_protocol(&self, host: entities::hosts::Model) -> Result<Host, DbErr> {
@@ -783,12 +845,13 @@ impl HostRepository<'_> {
 
         let status = current_host_status(&host);
         let last_seen_at = host.last_seen_at.map(Into::into);
+        let labels = self.labels_for_host(host.id).await?;
 
         Ok(Host {
             id: host.id,
             hostname: host.hostname,
             display_name: host.display_name,
-            labels: json_array_strings(host.labels),
+            labels,
             status,
             last_seen_at,
             capabilities,
@@ -3647,12 +3710,15 @@ where
     C: ConnectionTrait,
 {
     let now = Utc::now();
+    let host_exists = entities::hosts::Entity::find_by_id(host_id)
+        .one(connection)
+        .await?
+        .is_some();
     entities::hosts::Entity::insert(entities::hosts::ActiveModel {
         id: Set(host_id),
         hostname: Set(hostname.clone()),
         display_name: Set(hostname),
         status: Set(serialize_host_status(HostStatus::Online)),
-        labels: Set(json!(["agent"])),
         system_profile: Set(system_profile),
         last_seen_at: Set(Some(observed_at.into())),
         created_at: Set(now.into()),
@@ -3671,6 +3737,9 @@ where
     )
     .exec(connection)
     .await?;
+    if !host_exists {
+        insert_host_tags(connection, host_id, vec!["agent".to_string()], now).await?;
+    }
     Ok(())
 }
 
@@ -3895,6 +3964,57 @@ where
     Ok(())
 }
 
+async fn replace_host_tags<C>(
+    connection: &C,
+    host_id: Uuid,
+    tags: Vec<String>,
+    created_at: DateTime<Utc>,
+) -> Result<(), DbErr>
+where
+    C: ConnectionTrait,
+{
+    entities::host_tags::Entity::delete_many()
+        .filter(entities::host_tags::Column::HostId.eq(host_id))
+        .exec(connection)
+        .await?;
+    insert_host_tags(connection, host_id, tags, created_at).await
+}
+
+async fn insert_host_tags<C>(
+    connection: &C,
+    host_id: Uuid,
+    tags: Vec<String>,
+    created_at: DateTime<Utc>,
+) -> Result<(), DbErr>
+where
+    C: ConnectionTrait,
+{
+    let tags = normalize_labels(tags);
+    if tags.is_empty() {
+        return Ok(());
+    }
+
+    let models = tags
+        .into_iter()
+        .map(|tag| entities::host_tags::ActiveModel {
+            host_id: Set(host_id),
+            tag: Set(tag),
+            created_at: Set(created_at.into()),
+        });
+    entities::host_tags::Entity::insert_many(models)
+        .on_conflict(
+            sea_orm::sea_query::OnConflict::columns([
+                entities::host_tags::Column::HostId,
+                entities::host_tags::Column::Tag,
+            ])
+            .do_nothing()
+            .to_owned(),
+        )
+        .exec(connection)
+        .await?;
+    Ok(())
+}
+
 pub fn hash_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
@@ -3914,13 +4034,13 @@ fn json_array_strings(value: Value) -> Vec<String> {
 }
 
 fn normalize_labels(labels: Vec<String>) -> Vec<String> {
-    let mut normalized = Vec::new();
+    let mut normalized: Vec<String> = Vec::new();
     for label in labels {
-        let trimmed = label.trim();
-        if trimmed.is_empty() || normalized.iter().any(|existing| existing == trimmed) {
+        let trimmed = label.trim().to_lowercase();
+        if trimmed.is_empty() || normalized.iter().any(|existing| existing == &trimmed) {
             continue;
         }
-        normalized.push(trimmed.to_string());
+        normalized.push(trimmed);
     }
     normalized
 }
@@ -5158,6 +5278,40 @@ mod tests {
         ]);
 
         assert_eq!(labels, vec!["agent", "infra", "edge"]);
+        let labels = normalize_labels(vec!["Agent".to_string(), "agent".to_string()]);
+        assert_eq!(labels, vec!["agent"]);
+    }
+
+    #[tokio::test]
+    async fn lists_hosts_matching_all_tags() -> anyhow::Result<()> {
+        let mut host_without_edge = host_model("online", Some(Utc::now().into()));
+        let mut host_with_edge = host_model("online", Some(Utc::now().into()));
+        host_without_edge.id = Uuid::new_v4();
+        host_with_edge.id = Uuid::new_v4();
+        let connection = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![
+                host_tag_model(host_without_edge.id, "agent"),
+                host_tag_model(host_with_edge.id, "agent"),
+            ]])
+            .append_query_results([vec![host_tag_model(host_with_edge.id, "edge")]])
+            .append_query_results([[host_with_edge.clone()]])
+            .append_query_results([Vec::<entities::agent_capabilities::Model>::new()])
+            .append_query_results([vec![
+                host_tag_model(host_with_edge.id, "agent"),
+                host_tag_model(host_with_edge.id, "edge"),
+            ]])
+            .into_connection();
+        let store = Store::from_connection(connection, DatabaseBackend::Postgres);
+
+        let hosts = store
+            .hosts()
+            .list_by_tags(vec!["Agent".to_string(), "edge".to_string()])
+            .await?;
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].id, host_with_edge.id);
+        assert_eq!(hosts[0].labels, vec!["agent", "edge"]);
+        Ok(())
     }
 
     #[test]
@@ -5263,11 +5417,18 @@ mod tests {
             hostname: "homelab-node".to_string(),
             display_name: "homelab-node".to_string(),
             status: status.to_string(),
-            labels: json!(["agent"]),
             system_profile: json!({}),
             last_seen_at,
             created_at: Utc::now().into(),
             updated_at: Utc::now().into(),
+        }
+    }
+
+    fn host_tag_model(host_id: Uuid, tag: &str) -> entities::host_tags::Model {
+        entities::host_tags::Model {
+            host_id,
+            tag: tag.to_string(),
+            created_at: Utc::now().into(),
         }
     }
 

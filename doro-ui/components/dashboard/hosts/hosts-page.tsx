@@ -33,6 +33,7 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Tags,
   Trash2,
   X,
 } from "lucide-react";
@@ -40,8 +41,10 @@ import { toast } from "sonner";
 
 type HostsPageProps = {
   hosts: Host[];
+  tagFilter?: string[];
   metricHistoryByHost?: Record<string, MetricSnapshot[]>;
   apiError?: string | null;
+  onTagFilterChange?: (tags: string[]) => void;
   onHostDeleted?: (hostId: string) => void;
   onHostUpdated?: (host: Host) => void;
 };
@@ -284,10 +287,19 @@ function hostColumns(
   ];
 }
 
+function splitTags(value: string) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter((tag, index, tags) => tag.length > 0 && tags.indexOf(tag) === index);
+}
+
 export function HostsPage({
   hosts,
+  tagFilter = [],
   metricHistoryByHost = {},
   apiError,
+  onTagFilterChange,
   onHostDeleted,
   onHostUpdated,
 }: HostsPageProps) {
@@ -308,7 +320,10 @@ export function HostsPage({
   const [newLabel, setNewLabel] = useState("");
   const [editPending, setEditPending] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [tagFilterText, setTagFilterText] = useState(tagFilter.join(", "));
   const onlineHosts = hosts.filter((host) => host.status === "online").length;
+  const parsedTagFilter = splitTags(tagFilterText);
+  const tagFilterChanged = parsedTagFilter.join(",") !== tagFilter.join(",");
   const declaredCapabilities = hosts.reduce(
     (total, host) => total + host.capabilities.length,
     0,
@@ -346,6 +361,10 @@ export function HostsPage({
   useEffect(() => {
     setAgentControlPlaneUrl(inferredAgentControlPlaneUrl());
   }, []);
+
+  useEffect(() => {
+    setTagFilterText(tagFilter.join(", "));
+  }, [tagFilter]);
 
   async function generateHostToken() {
     setTokenPending(true);
@@ -463,10 +482,61 @@ export function HostsPage({
     setNewLabel("");
   }
 
+  function applyTagFilter() {
+    onTagFilterChange?.(parsedTagFilter);
+  }
+
+  function clearTagFilter() {
+    setTagFilterText("");
+    onTagFilterChange?.([]);
+  }
+
   return (
     <PageContainer>
       <div className="space-y-4">
-        <div className="flex justify-end">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-center lg:max-w-xl">
+            <label className="sr-only" htmlFor="host-tag-filter">
+              按标签筛选 Agent
+            </label>
+            <div className="relative min-w-0 flex-1">
+              <Tags
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <input
+                id="host-tag-filter"
+                value={tagFilterText}
+                onChange={(event) => setTagFilterText(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    applyTagFilter();
+                  }
+                }}
+                className="h-9 w-full rounded-md border bg-background py-2 pl-9 pr-3 text-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                placeholder="按标签筛选，逗号分隔"
+              />
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!tagFilterChanged}
+                onClick={applyTagFilter}
+              >
+                筛选
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={tagFilter.length === 0 && !tagFilterText.trim()}
+                onClick={clearTagFilter}
+              >
+                清除
+              </Button>
+            </div>
+          </div>
           <Dialog open={hostDialogOpen} onOpenChange={handleHostDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm">
@@ -616,7 +686,7 @@ export function HostsPage({
           <DialogHeader>
             <DialogTitle>编辑 Agent</DialogTitle>
             <DialogDescription>
-              名称保存到 hosts.display_name，标签保存到 hosts.labels。
+              名称保存到 hosts.display_name，标签保存到 host_tags。
             </DialogDescription>
           </DialogHeader>
 

@@ -368,8 +368,17 @@ export async function changeCurrentUserPassword(
   });
 }
 
-export async function getHosts() {
-  return getJson<ListHostsResponse>("/api/v1/hosts");
+export async function getHosts({
+  tags = [],
+}: {
+  tags?: string[];
+} = {}) {
+  const params = new URLSearchParams();
+  if (tags.length > 0) {
+    params.set("tags", tags.join(","));
+  }
+  const query = params.toString();
+  return getJson<ListHostsResponse>(`/api/v1/hosts${query ? `?${query}` : ""}`);
 }
 
 export async function createEnrollmentToken(
