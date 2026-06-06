@@ -37,12 +37,14 @@
     "title": "计划任务",
     "description": "按 Agent 标签匹配在线主机，定时执行脚本或触发一轮 Agent 占位任务。",
     "create": "创建任务",
+    "creating": "创建中",
     "run": "执行",
     "enable": "启用",
     "disable": "停用",
     "refresh": "刷新计划任务",
     "loading": "正在加载计划任务",
     "empty": "暂无计划任务",
+    "emptyState": "暂无计划任务，创建一个定时自动化流程。",
     "labels": "Agent 标签",
     "allAgents": "所有匹配 Agent",
     "nextRun": "下次运行",
@@ -52,6 +54,39 @@
     "createDescription": "脚本任务创建后需要审批一次，审批通过后按计划自动执行。",
     "kindScript": "定时执行脚本",
     "kindAgent": "定时走一轮 Agent",
+    "summary": {
+      "total": "全部任务",
+      "active": "运行中",
+      "pending": "待审批",
+      "paused": "已停用"
+    },
+    "sections": {
+      "identity": "基础信息",
+      "identityDescription": "定义任务名称、执行类型和 Cron 调度表达式。",
+      "scope": "调度范围",
+      "scopeDescription": "通过 Agent 标签选择可接收该计划任务的主机。",
+      "execution": "执行内容",
+      "executionDescription": "配置计划触发时下发给 Agent 的脚本或提示词。"
+    },
+    "hints": {
+      "name": "建议使用能说明目标和周期的名称。",
+      "kind": "脚本任务会下发脚本；Agent 任务会下发提示词。",
+      "schedule": "使用标准 Cron 表达式，按控制平面时间计算。",
+      "labels": "多个标签用英文逗号分隔；留空时匹配所有可用 Agent。",
+      "script": "脚本会在审批通过后按计划执行，避免写入密钥或本地令牌。",
+      "prompt": "提示词用于触发一轮 Agent 占位任务，AI 输出仍受策略和审批约束。",
+      "timeout": "仅脚本任务使用；留空时由后端采用默认超时。"
+    },
+    "placeholders": {
+      "name": "例如：每日主机巡检",
+      "schedule": "0 3 * * *",
+      "labels": "agent,production",
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\nuptime",
+      "prompt": "检查主机健康状态并汇总异常。",
+      "timeout": "30"
+    },
+    "approvalNoteTitle": "审批与审计",
+    "approvalNoteDescription": "高风险计划任务仍需经过审批和策略校验，创建表单不会绕过控制平面审计。",
     "fields": {
       "name": "名称",
       "kind": "类型",

@@ -37,12 +37,14 @@
     "title": "Scheduled tasks",
     "description": "Match online agents by tags, then run scripts or trigger an agent placeholder on schedule.",
     "create": "Create task",
+    "creating": "Creating",
     "run": "Run",
     "enable": "Enable",
     "disable": "Disable",
     "refresh": "Refresh scheduled tasks",
     "loading": "Loading scheduled tasks",
     "empty": "No scheduled tasks",
+    "emptyState": "No scheduled tasks yet. Create a scheduled automation flow.",
     "labels": "Agent tags",
     "allAgents": "All matching agents",
     "nextRun": "Next run",
@@ -52,6 +54,39 @@
     "createDescription": "Script tasks require one approval before automatic scheduled execution.",
     "kindScript": "Run script on schedule",
     "kindAgent": "Run agent pass on schedule",
+    "summary": {
+      "total": "Total tasks",
+      "active": "Active",
+      "pending": "Pending approval",
+      "paused": "Paused"
+    },
+    "sections": {
+      "identity": "Basics",
+      "identityDescription": "Define the task name, execution type, and Cron schedule.",
+      "scope": "Schedule scope",
+      "scopeDescription": "Use Agent tags to choose hosts that can receive this scheduled task.",
+      "execution": "Execution content",
+      "executionDescription": "Configure the script or prompt sent to Agents when the schedule fires."
+    },
+    "hints": {
+      "name": "Use a name that describes the target and cadence.",
+      "kind": "Script tasks send a script; Agent tasks send a prompt.",
+      "schedule": "Use a standard Cron expression evaluated by the control plane.",
+      "labels": "Separate tags with commas; leave blank to match every available Agent.",
+      "script": "The script runs after approval. Avoid embedding secrets or local tokens.",
+      "prompt": "The prompt triggers an Agent placeholder pass; AI output still follows policy and approval.",
+      "timeout": "Only used for script tasks; leave blank to use the backend default."
+    },
+    "placeholders": {
+      "name": "Daily host inspection",
+      "schedule": "0 3 * * *",
+      "labels": "agent,production",
+      "script": "#!/usr/bin/env bash\nset -euo pipefail\nuptime",
+      "prompt": "Check host health and summarize anomalies.",
+      "timeout": "30"
+    },
+    "approvalNoteTitle": "Approval and audit",
+    "approvalNoteDescription": "High-risk scheduled tasks still go through approval and policy checks; this form does not bypass control-plane auditing.",
     "fields": {
       "name": "Name",
       "kind": "Type",

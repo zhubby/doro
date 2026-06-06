@@ -11,6 +11,7 @@ use std::time::Instant;
 use sysinfo::Components;
 use sysinfo::Disks;
 use sysinfo::Networks;
+use sysinfo::Process;
 use sysinfo::ProcessRefreshKind;
 use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
@@ -96,7 +97,8 @@ impl LocalCollectors {
     fn collect_metrics(&mut self, host_id: uuid::Uuid) -> MetricsCapture {
         self.system.refresh_memory();
         self.system.refresh_cpu_all();
-        if !self.config.process_names.is_empty() {
+        let process_names = self.configured_process_names();
+        if !process_names.is_empty() {
             self.system.refresh_processes_specifics(
                 ProcessesToUpdate::All,
                 true,
@@ -141,9 +143,25 @@ impl LocalCollectors {
                 "disk_io": self.disk_io_payload(sample_interval),
                 "networks": self.network_payload(sample_interval),
                 "components": self.component_payload(),
-                "processes": self.process_payload(),
+                "processes": self.process_payload(&process_names),
+                "process_checks": self.process_check_payload(&process_names),
             }),
         }
+    }
+
+    fn configured_process_names(&self) -> Vec<String> {
+        let mut seen = HashSet::new();
+        self.config
+            .process_names
+            .iter()
+            .filter_map(|name| {
+                let name = name.trim();
+                if name.is_empty() || !seen.insert(name.to_string()) {
+                    return None;
+                }
+                Some(name.to_string())
+            })
+            .collect()
     }
 
     fn cpu_payload(&self) -> Value {
@@ -240,17 +258,12 @@ impl LocalCollectors {
         )
     }
 
-    fn process_payload(&self) -> Value {
-        if self.config.process_names.is_empty() {
+    fn process_payload(&self, process_names: &[String]) -> Value {
+        if process_names.is_empty() {
             return json!([]);
         }
 
-        let names = self
-            .config
-            .process_names
-            .iter()
-            .cloned()
-            .collect::<HashSet<_>>();
+        let names = process_names.iter().cloned().collect::<HashSet<_>>();
         json!(
             self.system
                 .processes()
@@ -261,11 +274,7 @@ impl LocalCollectors {
                         .cmd()
                         .first()
                         .map(|value| value.to_string_lossy().to_string());
-                    if !names.contains(&process_name)
-                        && !command_name
-                            .as_ref()
-                            .is_some_and(|command| names.contains(command))
-                    {
+                    if !process_matches_any(&process_name, command_name.as_deref(), &names) {
                         return None;
                     }
                     let disk_usage = process.disk_usage();
@@ -285,6 +294,50 @@ impl LocalCollectors {
                 .collect::<Vec<_>>()
         )
     }
+
+    fn process_check_payload(&self, process_names: &[String]) -> Value {
+        json!(
+            process_names
+                .iter()
+                .map(|name| {
+                    let pids = matching_process_pids(&self.system, name);
+                    json!({
+                        "name": name,
+                        "matched": !pids.is_empty(),
+                        "count": pids.len(),
+                        "pids": pids,
+                    })
+                })
+                .collect::<Vec<_>>()
+        )
+    }
+}
+
+fn process_matches(process: &Process, name: &str) -> bool {
+    let process_name = process.name().to_string_lossy();
+    process_name == name
+        || process
+            .cmd()
+            .first()
+            .is_some_and(|command| command.to_string_lossy() == name)
+}
+
+fn process_matches_any(
+    process_name: &str,
+    command_name: Option<&str>,
+    names: &HashSet<String>,
+) -> bool {
+    names.contains(process_name) || command_name.is_some_and(|command| names.contains(command))
+}
+
+fn matching_process_pids(system: &System, name: &str) -> Vec<u32> {
+    let mut pids = system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| process_matches(process, name).then_some(pid.as_u32()))
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids
 }
 
 async fn collect_container_snapshot(
@@ -378,6 +431,27 @@ fn collect_gpu_inner() -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn current_process_identity() -> (String, u32) {
+        let current_pid = match sysinfo::get_current_pid() {
+            Ok(pid) => pid,
+            Err(error) => panic!("current pid should be available: {error}"),
+        };
+        let mut system = System::new_all();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[current_pid]),
+            true,
+            ProcessRefreshKind::everything(),
+        );
+        let Some(process) = system.process(current_pid) else {
+            panic!("current process should be visible to sysinfo");
+        };
+        let process_name = process.name().to_string_lossy().trim().to_string();
+        if process_name.is_empty() {
+            panic!("current process name should not be empty");
+        }
+        (process_name, current_pid.as_u32())
+    }
 
     #[test]
     fn percent_handles_zero_total_and_clamps() {
@@ -501,6 +575,7 @@ mod tests {
         };
 
         assert_eq!(metrics.extra["processes"], json!([]));
+        assert_eq!(metrics.extra["process_checks"], json!([]));
     }
 
     #[tokio::test]
@@ -517,6 +592,55 @@ mod tests {
         };
 
         assert_eq!(metrics.extra["processes"], json!([]));
+        assert_eq!(
+            metrics.extra["process_checks"],
+            json!([{
+                "name": "doro-process-that-should-not-exist",
+                "matched": false,
+                "count": 0,
+                "pids": [],
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn process_checks_report_matched_processes() {
+        let (process_name, current_pid) = current_process_identity();
+        let mut collectors = LocalCollectors::new(CollectorConfig {
+            process_names: vec![process_name.clone()],
+            container_metrics_enabled: false,
+            docker_socket_path: None,
+            gpu_metrics_enabled: false,
+        });
+        let events = collectors.collect(uuid::Uuid::new_v4()).await;
+        let Some(CollectorEvent::Metrics(metrics)) = events.first() else {
+            panic!("first collector event should be metrics");
+        };
+
+        let check = metrics.extra["process_checks"]
+            .as_array()
+            .and_then(|checks| checks.iter().find(|check| check["name"] == process_name));
+
+        assert!(
+            check
+                .and_then(|check| check.get("matched"))
+                .and_then(Value::as_bool)
+                .is_some_and(|matched| matched)
+        );
+        assert!(
+            check
+                .and_then(|check| check.get("count"))
+                .and_then(Value::as_u64)
+                .is_some_and(|count| count >= 1)
+        );
+        assert!(
+            check
+                .and_then(|check| check.get("pids"))
+                .and_then(Value::as_array)
+                .is_some_and(|pids| pids
+                    .iter()
+                    .any(|pid| pid.as_u64() == Some(u64::from(current_pid))))
+        );
     }
 
     #[tokio::test]

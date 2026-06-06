@@ -1,7 +1,22 @@
 "use client";
 
-import { History, PauseCircle, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import {
+  Bot,
+  CalendarClock,
+  CheckCircle2,
+  Clock3,
+  History,
+  ListChecks,
+  PauseCircle,
+  Play,
+  Plus,
+  RefreshCw,
+  ScrollText,
+  ShieldCheck,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 
 import { DataTable } from "@/components/admin/data-table";
@@ -28,6 +43,7 @@ import {
   scheduledTaskAction,
 } from "@/lib/control-plane-api";
 import { formatRelativeTime } from "@/lib/datetime";
+import { cn } from "@/lib/utils";
 import type {
   ScheduledTask,
   ScheduledTaskKind,
@@ -56,6 +72,12 @@ const emptyForm: ScheduledTaskForm = {
   timeoutSeconds: "30",
 };
 
+const inputClass =
+  "h-9 w-full rounded-md border bg-background px-3 text-sm outline-none ring-offset-background transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
+
+const textareaClass =
+  "min-h-28 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none ring-offset-background transition-colors placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
+
 function splitLabels(value: string) {
   return value
     .split(",")
@@ -83,6 +105,79 @@ function runStatusVariant(status: ScheduledTaskRun["status"]) {
   return "destructive";
 }
 
+function SummaryTile({
+  icon: Icon,
+  label,
+  value,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  tone: "total" | "active" | "pending" | "paused";
+}) {
+  const toneClass = {
+    total: "bg-muted text-muted-foreground",
+    active: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+    pending: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+    paused: "bg-slate-500/10 text-slate-700 dark:text-slate-300",
+  }[tone];
+
+  return (
+    <div className="rounded-lg border bg-background p-3 transition-colors hover:bg-muted/30">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <span className={cn("flex size-7 items-center justify-center rounded-md", toneClass)}>
+          <Icon className="size-4" aria-hidden="true" />
+        </span>
+      </div>
+      <p className="mt-2 text-2xl font-semibold tracking-tight">{value}</p>
+    </div>
+  );
+}
+
+function FormSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border bg-muted/20 p-3">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="mt-1 text-xs leading-5 text-muted-foreground">{description}</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">{children}</div>
+    </section>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+  className,
+}: {
+  label: string;
+  hint?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={cn("block space-y-2 text-sm", className)}>
+      <span className="block font-medium">{label}</span>
+      {children}
+      {hint ? (
+        <span className="block text-xs leading-5 text-muted-foreground">{hint}</span>
+      ) : null}
+    </label>
+  );
+}
+
 export function CronPage() {
   const t = useTranslations("resources.cron");
   const tColumns = useTranslations("resources.columns");
@@ -98,6 +193,16 @@ export function CronPage() {
   const [pending, setPending] = useState<string | null>(null);
 
   useToastMessage(error, { id: "cron-error", kind: "error" });
+
+  const stats = useMemo(
+    () => ({
+      total: items.length,
+      active: items.filter((item) => item.status === "active").length,
+      pendingApproval: items.filter((item) => item.status === "pending_approval").length,
+      paused: items.filter((item) => item.status === "paused").length,
+    }),
+    [items],
+  );
 
   async function load() {
     setLoading(true);
@@ -120,34 +225,59 @@ export function CronPage() {
       {
         key: "name",
         label: tColumns("name"),
-        width: "22%",
-        render: (row) => (
-          <div className="min-w-0">
-            <p className="truncate font-medium" title={row.name}>
-              {row.name}
-            </p>
-            <p className="truncate text-xs text-muted-foreground">
-              {row.kind === "script" ? t("kindScript") : t("kindAgent")}
-            </p>
-          </div>
-        ),
+        width: "24%",
+        render: (row) => {
+          const KindIcon = row.kind === "script" ? ScrollText : Bot;
+
+          return (
+            <div className="flex min-w-0 items-start gap-2">
+              <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
+                <KindIcon className="size-4" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate font-medium" title={row.name}>
+                  {row.name}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {row.kind === "script" ? t("kindScript") : t("kindAgent")}
+                </p>
+              </div>
+            </div>
+          );
+        },
       },
       {
         key: "schedule",
         label: tColumns("schedule"),
         width: "16%",
-        render: (row) => <span className="font-mono text-xs">{row.schedule}</span>,
+        render: (row) => (
+          <span
+            className="inline-flex max-w-full items-center gap-1 rounded-md border bg-muted/40 px-2 py-1 font-mono text-xs"
+            title={row.schedule}
+          >
+            <CalendarClock
+              className="size-3.5 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <span className="truncate">{row.schedule}</span>
+          </span>
+        ),
       },
       {
         key: "label_selector",
         label: t("labels"),
-        width: "18%",
+        width: "17%",
         render: (row) => (
-          <div className="flex flex-wrap gap-1">
+          <div className="flex min-w-0 flex-wrap gap-1">
             {row.label_selector.length > 0 ? (
               row.label_selector.map((label) => (
-                <Badge key={label} variant="outline">
-                  {label}
+                <Badge
+                  key={label}
+                  variant="outline"
+                  className="max-w-full bg-background font-medium"
+                  title={label}
+                >
+                  <span className="truncate">{label}</span>
                 </Badge>
               ))
             ) : (
@@ -159,9 +289,11 @@ export function CronPage() {
       {
         key: "status",
         label: tColumns("status"),
-        width: "12%",
+        width: "11%",
         render: (row) => (
-          <Badge variant={statusVariant(row.status)}>{t(`status.${row.status}`)}</Badge>
+          <Badge variant={statusVariant(row.status)} className="justify-center">
+            {t(`status.${row.status}`)}
+          </Badge>
         ),
       },
       {
@@ -169,9 +301,12 @@ export function CronPage() {
         label: t("nextRun"),
         width: "14%",
         render: (row) => (
-          <span title={row.next_run_at ?? ""}>
-            {formatRelativeTime(row.next_run_at, { emptyText: "-" })}
-          </span>
+          <div className="flex min-w-0 items-center gap-2" title={row.next_run_at ?? ""}>
+            <Clock3 className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate">
+              {formatRelativeTime(row.next_run_at, { emptyText: "-" })}
+            </span>
+          </div>
         ),
       },
       {
@@ -179,14 +314,17 @@ export function CronPage() {
         label: tColumns("lastRun"),
         width: "14%",
         render: (row) => (
-          <div>
-            <p title={row.last_run_at ?? ""}>
+          <div className="min-w-0 space-y-1">
+            <p className="truncate" title={row.last_run_at ?? ""}>
               {formatRelativeTime(row.last_run_at, { emptyText: "-" })}
             </p>
             {row.last_run_status ? (
-              <p className="text-xs text-muted-foreground">
+              <Badge
+                variant={runStatusVariant(row.last_run_status)}
+                className="px-1.5 py-0 text-[11px] font-medium"
+              >
                 {t(`runStatus.${row.last_run_status}`)}
-              </p>
+              </Badge>
             ) : null}
           </div>
         ),
@@ -262,9 +400,42 @@ export function CronPage() {
     setRuns(result.data.items);
   }
 
+  const createPending = pending === "create";
+  const createDisabled =
+    createPending ||
+    !form.name.trim() ||
+    !form.schedule.trim() ||
+    (form.kind === "script" ? !form.script.trim() : !form.prompt.trim());
+
   return (
     <PageContainer>
       <PageSection title={t("title")} description={t("description")} contentClassName="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <SummaryTile
+            icon={ListChecks}
+            label={t("summary.total")}
+            value={loading ? "-" : String(stats.total)}
+            tone="total"
+          />
+          <SummaryTile
+            icon={CheckCircle2}
+            label={t("summary.active")}
+            value={loading ? "-" : String(stats.active)}
+            tone="active"
+          />
+          <SummaryTile
+            icon={Clock3}
+            label={t("summary.pending")}
+            value={loading ? "-" : String(stats.pendingApproval)}
+            tone="pending"
+          />
+          <SummaryTile
+            icon={PauseCircle}
+            label={t("summary.paused")}
+            value={loading ? "-" : String(stats.paused)}
+            tone="paused"
+          />
+        </div>
         <Toolbar
           left={
             <Button onClick={() => setCreateOpen(true)}>
@@ -281,7 +452,7 @@ export function CronPage() {
         <DataTable
           columns={columns}
           rows={items}
-          emptyText={loading ? t("loading") : t("empty")}
+          emptyText={loading ? t("loading") : t("emptyState")}
           actionsWidth="15rem"
           renderActions={(item) => {
             const isActive = item.status === "active";
@@ -334,25 +505,34 @@ export function CronPage() {
       </PageSection>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("create")}</DialogTitle>
             <DialogDescription>{t("createDescription")}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
-            <label className="grid gap-2 text-sm font-medium">
-              {t("fields.name")}
-              <input
-                className="h-10 rounded-md border bg-background px-3 text-sm"
-                value={form.name}
-                onChange={(event) => setForm({ ...form, name: event.target.value })}
-              />
-            </label>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="grid gap-2 text-sm font-medium">
-                {t("fields.kind")}
+
+          <div className="space-y-4">
+            <FormSection
+              title={t("sections.identity")}
+              description={t("sections.identityDescription")}
+            >
+              <Field
+                label={t("fields.name")}
+                hint={t("hints.name")}
+                className="sm:col-span-2"
+              >
+                <input
+                  className={inputClass}
+                  value={form.name}
+                  disabled={createPending}
+                  placeholder={t("placeholders.name")}
+                  onChange={(event) => setForm({ ...form, name: event.target.value })}
+                />
+              </Field>
+              <Field label={t("fields.kind")} hint={t("hints.kind")}>
                 <Select
                   value={form.kind}
+                  disabled={createPending}
                   onValueChange={(value) =>
                     setForm({ ...form, kind: value as ScheduledTaskKind })
                   }
@@ -361,96 +541,147 @@ export function CronPage() {
                     { value: "agent_run", label: t("kindAgent") },
                   ]}
                 />
-              </label>
-              <label className="grid gap-2 text-sm font-medium">
-                {t("fields.schedule")}
+              </Field>
+              <Field label={t("fields.schedule")} hint={t("hints.schedule")}>
                 <input
-                  className="h-10 rounded-md border bg-background px-3 font-mono text-sm"
+                  className={cn(inputClass, "font-mono")}
                   value={form.schedule}
+                  disabled={createPending}
+                  placeholder={t("placeholders.schedule")}
                   onChange={(event) => setForm({ ...form, schedule: event.target.value })}
                 />
-              </label>
-            </div>
-            <label className="grid gap-2 text-sm font-medium">
-              {t("fields.labels")}
-              <input
-                className="h-10 rounded-md border bg-background px-3 text-sm"
-                value={form.labels}
-                onChange={(event) => setForm({ ...form, labels: event.target.value })}
-              />
-            </label>
-            {form.kind === "script" ? (
-              <>
-                <label className="grid gap-2 text-sm font-medium">
-                  {t("fields.script")}
-                  <textarea
-                    className="min-h-36 rounded-md border bg-background p-3 font-mono text-sm"
-                    value={form.script}
-                    onChange={(event) => setForm({ ...form, script: event.target.value })}
-                  />
-                </label>
-                <label className="grid gap-2 text-sm font-medium">
-                  {t("fields.timeout")}
-                  <input
-                    className="h-10 rounded-md border bg-background px-3 text-sm"
-                    inputMode="numeric"
-                    value={form.timeoutSeconds}
-                    onChange={(event) =>
-                      setForm({ ...form, timeoutSeconds: event.target.value })
-                    }
-                  />
-                </label>
-              </>
-            ) : (
-              <label className="grid gap-2 text-sm font-medium">
-                {t("fields.prompt")}
-                <textarea
-                  className="min-h-28 rounded-md border bg-background p-3 text-sm"
-                  value={form.prompt}
-                  onChange={(event) => setForm({ ...form, prompt: event.target.value })}
+              </Field>
+            </FormSection>
+
+            <FormSection
+              title={t("sections.scope")}
+              description={t("sections.scopeDescription")}
+            >
+              <Field
+                label={t("fields.labels")}
+                hint={t("hints.labels")}
+                className="sm:col-span-2"
+              >
+                <input
+                  className={inputClass}
+                  value={form.labels}
+                  disabled={createPending}
+                  placeholder={t("placeholders.labels")}
+                  onChange={(event) => setForm({ ...form, labels: event.target.value })}
                 />
-              </label>
-            )}
+              </Field>
+            </FormSection>
+
+            <FormSection
+              title={t("sections.execution")}
+              description={t("sections.executionDescription")}
+            >
+              {form.kind === "script" ? (
+                <>
+                  <Field
+                    label={t("fields.script")}
+                    hint={t("hints.script")}
+                    className="sm:col-span-2"
+                  >
+                    <textarea
+                      className={cn(textareaClass, "min-h-40 font-mono")}
+                      value={form.script}
+                      disabled={createPending}
+                      placeholder={t("placeholders.script")}
+                      onChange={(event) => setForm({ ...form, script: event.target.value })}
+                    />
+                  </Field>
+                  <Field label={t("fields.timeout")} hint={t("hints.timeout")}>
+                    <input
+                      className={inputClass}
+                      inputMode="numeric"
+                      type="number"
+                      min="1"
+                      value={form.timeoutSeconds}
+                      disabled={createPending}
+                      placeholder={t("placeholders.timeout")}
+                      onChange={(event) =>
+                        setForm({ ...form, timeoutSeconds: event.target.value })
+                      }
+                    />
+                  </Field>
+                </>
+              ) : (
+                <Field
+                  label={t("fields.prompt")}
+                  hint={t("hints.prompt")}
+                  className="sm:col-span-2"
+                >
+                  <textarea
+                    className={cn(textareaClass, "min-h-32")}
+                    value={form.prompt}
+                    disabled={createPending}
+                    placeholder={t("placeholders.prompt")}
+                    onChange={(event) => setForm({ ...form, prompt: event.target.value })}
+                  />
+                </Field>
+              )}
+            </FormSection>
+
+            <div className="flex gap-3 rounded-lg border bg-muted/30 p-3 text-sm">
+              <ShieldCheck
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <div className="min-w-0">
+                <p className="font-medium">{t("approvalNoteTitle")}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {t("approvalNoteDescription")}
+                </p>
+              </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:space-x-0">
+            <Button
+              variant="outline"
+              disabled={createPending}
+              onClick={() => setCreateOpen(false)}
+            >
               {tActions("cancel")}
             </Button>
-            <Button
-              disabled={
-                pending === "create" ||
-                !form.name.trim() ||
-                !form.schedule.trim() ||
-                (form.kind === "script" ? !form.script.trim() : !form.prompt.trim())
-              }
-              onClick={() => void handleCreate()}
-            >
-              {t("create")}
+            <Button disabled={createDisabled} onClick={() => void handleCreate()}>
+              {createPending ? t("creating") : t("create")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={runsOpen} onOpenChange={setRunsOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>{runsFor?.name ?? t("history")}</DialogTitle>
             <DialogDescription>{t("historyDescription")}</DialogDescription>
           </DialogHeader>
-          <div className="max-h-96 overflow-auto rounded-md border">
+          <div className="max-h-96 overflow-auto rounded-lg border">
             {runs.length === 0 ? (
-              <div className="p-6 text-center text-sm text-muted-foreground">
+              <div className="flex min-h-32 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
+                <History className="size-5" aria-hidden="true" />
                 {t("emptyRuns")}
               </div>
             ) : (
               <div className="divide-y">
                 {runs.map((run) => (
-                  <div key={run.id} className="grid grid-cols-[1fr_auto] gap-3 p-3 text-sm">
+                  <div
+                    key={run.id}
+                    className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 p-3 text-sm transition-colors hover:bg-muted/30"
+                  >
                     <div className="min-w-0">
-                      <p className="truncate font-mono text-xs" title={run.task_id ?? run.id}>
+                      <p
+                        className="truncate font-mono text-xs font-medium"
+                        title={run.task_id ?? run.id}
+                      >
                         {run.task_id ?? run.id}
                       </p>
-                      <p className="text-xs text-muted-foreground" title={run.message ?? ""}>
+                      <p
+                        className="mt-1 truncate text-xs text-muted-foreground"
+                        title={run.message ?? ""}
+                      >
                         {run.message ?? "-"}
                       </p>
                     </div>

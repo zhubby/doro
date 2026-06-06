@@ -75,6 +75,10 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
+function booleanValue(value: unknown) {
+  return typeof value === "boolean" ? value : null;
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value : null;
 }
@@ -84,6 +88,14 @@ function arrayObjects(value: unknown) {
     ? value
         .map((item) => objectValue(item))
         .filter((item): item is JsonObject => Boolean(item))
+    : [];
+}
+
+function numberArray(value: unknown) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => numberValue(item))
+        .filter((item): item is number => item !== null)
     : [];
 }
 
@@ -546,36 +558,72 @@ function GpuDetails({ metric }: { metric: MetricSnapshot | null }) {
 }
 
 function ProcessDetails({ metric }: { metric: MetricSnapshot | null }) {
+  const processChecks = arrayObjects(metricExtra(metric)?.process_checks);
   const processes = arrayObjects(metricExtra(metric)?.processes);
-  if (processes.length === 0) {
+  if (processChecks.length === 0 && processes.length === 0) {
     return <EmptyState text="未配置进程监控或暂无匹配进程" />;
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border">
-      <div className="grid grid-cols-[1fr_5rem_6rem_6rem] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
-        <span>进程</span>
-        <span className="text-right">CPU</span>
-        <span className="text-right">内存</span>
-        <span className="text-right">PID</span>
-      </div>
-      {processes.slice(0, 8).map((process, index) => (
-        <div
-          key={`${numberValue(process.pid) ?? stringValue(process.name) ?? "process"}-${index}`}
-          className="grid grid-cols-[1fr_5rem_6rem_6rem] gap-3 border-b px-3 py-2 text-sm last:border-b-0"
-        >
-          <span className="min-w-0 truncate">{stringValue(process.name) ?? "-"}</span>
-          <span className="text-right tabular-nums">
-            {formatPercent(numberValue(process.cpu_percent))}
-          </span>
-          <span className="text-right tabular-nums">
-            {formatBytes(numberValue(process.memory_bytes))}
-          </span>
-          <span className="text-right tabular-nums text-muted-foreground">
-            {numberValue(process.pid) ?? "-"}
-          </span>
+    <div className="space-y-3">
+      {processChecks.length > 0 ? (
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {processChecks.map((check, index) => {
+            const matched = booleanValue(check.matched) ?? false;
+            const name = stringValue(check.name) ?? `进程 ${index + 1}`;
+            const count = numberValue(check.count) ?? 0;
+            const pids = numberArray(check.pids);
+            return (
+              <div key={`${name}-${index}`} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium">{name}</p>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      {pids.length > 0 ? `PID ${pids.slice(0, 4).join(", ")}` : "未发现匹配 PID"}
+                    </p>
+                  </div>
+                  <Badge variant={matched ? "secondary" : "outline"}>
+                    {matched ? "运行中" : "未运行"}
+                  </Badge>
+                </div>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  匹配进程 {count} 个
+                </p>
+              </div>
+            );
+          })}
         </div>
-      ))}
+      ) : null}
+
+      {processes.length > 0 ? (
+        <div className="overflow-hidden rounded-lg border">
+          <div className="grid grid-cols-[1fr_5rem_6rem_6rem] gap-3 border-b bg-muted/40 px-3 py-2 text-xs font-medium text-muted-foreground">
+            <span>进程</span>
+            <span className="text-right">CPU</span>
+            <span className="text-right">内存</span>
+            <span className="text-right">PID</span>
+          </div>
+          {processes.slice(0, 8).map((process, index) => (
+            <div
+              key={`${numberValue(process.pid) ?? stringValue(process.name) ?? "process"}-${index}`}
+              className="grid grid-cols-[1fr_5rem_6rem_6rem] gap-3 border-b px-3 py-2 text-sm last:border-b-0"
+            >
+              <span className="min-w-0 truncate">{stringValue(process.name) ?? "-"}</span>
+              <span className="text-right tabular-nums">
+                {formatPercent(numberValue(process.cpu_percent))}
+              </span>
+              <span className="text-right tabular-nums">
+                {formatBytes(numberValue(process.memory_bytes))}
+              </span>
+              <span className="text-right tabular-nums text-muted-foreground">
+                {numberValue(process.pid) ?? "-"}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <EmptyState text="当前没有匹配到运行进程详情" />
+      )}
     </div>
   );
 }

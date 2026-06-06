@@ -190,6 +190,21 @@ The base system collector is supported on macOS and Linux. Container collection 
 - `metrics.collector_error`: non-fatal collector failures such as a missing Docker socket or unavailable GPU collector support. These events are audit records and must not disconnect the agent.
 - `log.line`: Agent runtime log line captured from tracing. The control plane keeps recent log lines in memory for the UI log panel and does not persist them to `agent_events`.
 
+When `[agent].process_names` is non-empty, `metrics.snapshot.extra_json` includes two process payloads. `processes` contains detailed rows for matched running processes, and `process_checks` contains one row per configured process name so operations views can tell whether an expected system process is present:
+
+```json
+{
+  "process_checks": [
+    {
+      "name": "doro-control-plane",
+      "matched": true,
+      "count": 1,
+      "pids": [1234]
+    }
+  ]
+}
+```
+
 Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. Docker management requires an online Agent stream and a declared high-risk `ContainersManage` capability. Container creation can be submitted as an audited direct task: the control plane records the task, step, run, and eventual Docker command event, then dispatches `RunDockerCommandCommand` without creating an approval request. Docker image pull, Compose create/update, Compose pull, and Compose up also dispatch as audited direct tasks. Operators can choose the approval mode for container creation, and remaining Docker write operations create normal waiting-approval tasks; only approval resolution dispatches those commands.
 
 Compose management is included in Docker management but remains Agent-owned. When `docker_compose_enabled` is true, the Agent stores managed projects under `docker_compose_root` or `~/.doro/compose` by default. Project names must be conservative slugs, and the Agent rejects traversal, symlink escape, and paths outside the canonical root. Each project contains `compose.yaml` and optional `.env`; create/update writes those files as audited direct Docker tasks. Compose actions run `docker compose -f compose.yaml --project-name <project>` through `std::process::Command` because Compose is a Docker CLI plugin rather than an Engine API. The Agent sets `DOCKER_CONFIG` to the Agent user's default `~/.docker` directory for Compose commands so Compose pull/up can use registry credentials managed through Doro. A missing CLI or non-zero exit code returns a failed Docker command result. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
