@@ -1,0 +1,30 @@
+[Unit]
+Description=Doro Agent
+Documentation=https://github.com/zhubby/doro
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=@DORO_AGENT_USER@
+Group=@DORO_AGENT_GROUP@
+SupplementaryGroups=@DORO_AGENT_SUPPLEMENTARY_GROUPS@
+Environment=HOME=@DORO_AGENT_STATE_DIR@
+Environment=RUST_LOG=@DORO_AGENT_RUST_LOG@
+WorkingDirectory=@DORO_AGENT_STATE_DIR@
+ExecStart=@DORO_BIN@ --config @DORO_AGENT_CONFIG@ agent
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@DORO_AGENT_CONFIG@ @DORO_AGENT_STATE_DIR@
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

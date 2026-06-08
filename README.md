@@ -57,6 +57,32 @@ Run the agent:
 cargo run -p doro-cli -- agent
 ```
 
+Install the control plane as a managed service. The `service` target uses systemd on Linux and launchd on macOS:
+
+```bash
+make control-plane-service-install
+sudoedit /etc/doro/control-plane.toml
+make control-plane-service-start
+make control-plane-service-status
+```
+
+Install the agent the same way:
+
+```bash
+make agent-service-install
+sudoedit /etc/doro/agent.toml
+make agent-service-start
+make agent-service-status
+```
+
+For hosts where the agent should manage Docker, pass a supplementary group during install:
+
+```bash
+make agent-systemd-install DORO_AGENT_SUPPLEMENTARY_GROUPS=docker
+```
+
+Explicit platform targets are also available: `*-systemd-*` for Linux and `*-launchd-*` for macOS.
+
 Set service log verbosity with the global CLI flag:
 
 ```bash

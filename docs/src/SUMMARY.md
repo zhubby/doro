@@ -7,5 +7,6 @@
 - [Technology Stack](tech-stack.md)
 - [Websites](websites.md)
 - [Agent Protocol](agent-protocol.md)
+- [Service Installation](agent-service.md)
 - [Security Model](security-model.md)
 - [Roadmap](roadmap.md)

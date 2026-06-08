@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>@DORO_AGENT_LAUNCHD_LABEL@</string>
+
+    <key>UserName</key>
+    <string>@DORO_AGENT_USER@</string>
+    <key>GroupName</key>
+    <string>@DORO_AGENT_GROUP@</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>@DORO_BIN@</string>
+        <string>--config</string>
+        <string>@DORO_AGENT_CONFIG@</string>
+        <string>agent</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>@DORO_AGENT_STATE_DIR@</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>@DORO_AGENT_STATE_DIR@</string>
+        <key>RUST_LOG</key>
+        <string>@DORO_AGENT_RUST_LOG@</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>@DORO_AGENT_LOG_DIR@/agent.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>@DORO_AGENT_LOG_DIR@/agent.err.log</string>
+
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+</dict>
+</plist>

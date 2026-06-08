@@ -1,0 +1,29 @@
+[Unit]
+Description=Doro Control Plane
+Documentation=https://github.com/zhubby/doro
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=@DORO_CONTROL_PLANE_USER@
+Group=@DORO_CONTROL_PLANE_GROUP@
+Environment=HOME=@DORO_CONTROL_PLANE_STATE_DIR@
+Environment=RUST_LOG=@DORO_CONTROL_PLANE_RUST_LOG@
+WorkingDirectory=@DORO_CONTROL_PLANE_STATE_DIR@
+ExecStart=@DORO_BIN@ --config @DORO_CONTROL_PLANE_CONFIG@ control-plane
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@DORO_CONTROL_PLANE_CONFIG@ @DORO_CONTROL_PLANE_STATE_DIR@
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
