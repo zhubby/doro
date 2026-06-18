@@ -1,0 +1,38 @@
+name: doro
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: doro
+      POSTGRES_USER: doro
+      POSTGRES_PASSWORD: doro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doro -d doro"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    volumes:
+      - doro-postgres-data:/var/lib/postgresql/data
+
+  doro-control-plane:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: doro
+    image: doro-control-plane:local
+    command: ["--config", "/etc/doro/control-plane.toml", "control-plane"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8787:8787"
+      - "8788:8788"
+    restart: unless-stopped
+    volumes:
+      - doro-data:/var/lib/doro
+
+volumes:
+  doro-postgres-data:
+  doro-data:

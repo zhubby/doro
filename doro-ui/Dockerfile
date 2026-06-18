@@ -8,7 +8,7 @@ FROM oven/bun:${BUN_VERSION} AS deps
 
 WORKDIR /workspace/doro-ui
 
-COPY doro-ui/package.json doro-ui/bun.lockb ./
+COPY package.json bun.lockb ./
 
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --frozen-lockfile
@@ -21,7 +21,7 @@ ENV NODE_ENV=production
 WORKDIR /workspace/doro-ui
 
 COPY --from=deps /workspace/doro-ui/node_modules ./node_modules
-COPY doro-ui ./
+COPY . ./
 
 RUN node node_modules/next/dist/bin/next build
 
