@@ -1,12 +1,16 @@
 import {
   Activity,
   Cpu,
+  Download,
   Gauge,
   HardDrive,
+  HardDriveDownload,
+  HardDriveUpload,
   MemoryStick,
   Network,
   Server,
   Thermometer,
+  Upload,
 } from "lucide-react";
 
 import { PageSection } from "@/components/admin/page-section";
@@ -370,6 +374,7 @@ function diskIoMetrics(metric: MetricSnapshot | null): Metric[] {
 
 function resourceTrendPoints(history: MetricSnapshot[]): TrendPoint[] {
   return history.map((snapshot) => ({
+    capturedAt: snapshot.captured_at,
     primary: snapshot.cpu_percent,
     secondary: snapshot.memory_percent,
   }));
@@ -379,6 +384,7 @@ function networkTrendPoints(history: MetricSnapshot[]): TrendPoint[] {
   return history.map((snapshot) => {
     const { totals } = networkTotals(snapshot);
     return {
+      capturedAt: snapshot.captured_at,
       primary: totals.transmittedBytesPerSecond,
       secondary: totals.receivedBytesPerSecond,
     };
@@ -389,6 +395,7 @@ function diskTrendPoints(history: MetricSnapshot[]): TrendPoint[] {
   return history.map((snapshot) => {
     const { totals } = diskIoTotals(snapshot);
     return {
+      capturedAt: snapshot.captured_at,
       primary: totals.readBytesPerSecond,
       secondary: totals.writeBytesPerSecond,
     };
@@ -809,6 +816,8 @@ export function SystemPage({
             label="CPU / 内存趋势"
             points={resourceTrendPoints(metricHistory)}
             seriesLabels={["CPU", "内存"]}
+            seriesIcons={[Cpu, MemoryStick]}
+            valueFormatter={formatPercent}
           />
         </div>
       </PageSection>
@@ -820,6 +829,8 @@ export function SystemPage({
             label="网络吞吐趋势"
             points={networkTrendPoints(metricHistory)}
             seriesLabels={["上行", "下行"]}
+            seriesIcons={[Upload, Download]}
+            valueFormatter={formatBytesPerSecond}
           />
         </div>
       </PageSection>
@@ -831,6 +842,8 @@ export function SystemPage({
             label="磁盘读写趋势"
             points={diskTrendPoints(metricHistory)}
             seriesLabels={["读取", "写入"]}
+            seriesIcons={[HardDriveDownload, HardDriveUpload]}
+            valueFormatter={formatBytesPerSecond}
           />
         </div>
       </PageSection>

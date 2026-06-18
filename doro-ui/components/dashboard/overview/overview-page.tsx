@@ -1,7 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bell, Check, CircleGauge, HardDrive, Network } from "lucide-react";
+import {
+  Bell,
+  Check,
+  CircleGauge,
+  Download,
+  HardDrive,
+  HardDriveDownload,
+  HardDriveUpload,
+  Network,
+  Upload,
+} from "lucide-react";
 
 import { MetricGrid } from "@/components/dashboard/overview/metric-grid";
 import type { TrendPoint } from "@/components/dashboard/overview/trend-preview";
@@ -270,11 +280,11 @@ function trendPoints(
     .map((snapshot) => {
       const totals = sumIoFields([snapshot], extraKey, [fields[0], fields[1], "", ""]);
       return {
+        capturedAt: snapshot.captured_at,
         primary: totals.primaryRate,
         secondary: totals.secondaryRate,
       };
     })
-    .filter((point) => point.primary > 0 || point.secondary > 0)
     .slice(-24);
 }
 
@@ -684,7 +694,9 @@ export function OverviewPage({
                   label="网络吞吐趋势"
                   points={trafficTrend}
                   seriesLabels={["上行", "下行"]}
+                  seriesIcons={[Upload, Download]}
                   emptyText="暂无网络趋势数据，等待 Agent 指标采集"
+                  valueFormatter={formatBytesPerSecond}
                 />
               </TabsContent>
               <TabsContent value="disk" className="space-y-6">
@@ -693,7 +705,9 @@ export function OverviewPage({
                   label="磁盘读写趋势"
                   points={diskTrend}
                   seriesLabels={["读取", "写入"]}
+                  seriesIcons={[HardDriveDownload, HardDriveUpload]}
                   emptyText="暂无磁盘 IO 趋势数据，等待 Agent 指标采集"
+                  valueFormatter={formatBytesPerSecond}
                 />
               </TabsContent>
             </Tabs>
