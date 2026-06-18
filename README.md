@@ -12,8 +12,6 @@ The project is built around one central control panel and many host agents:
 - `doro-agent` runs on each host and exposes host capabilities over gRPC such as metrics, logs, services, containers, files, and command execution.
 - `doro-ui` is the Next.js operations console for hosts, tasks, approvals, applications, resources, logs, and settings.
 
-Doro is not a Codex CLI fork. The previous Codex-derived files were removed from the active workspace and the remaining project surface is being rebuilt around the home-server control-plane model.
-
 ## Workspace
 
 - `doro-protocol` - shared versioned protocol types for the UI, control plane, and agents.
