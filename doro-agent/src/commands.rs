@@ -85,7 +85,7 @@ pub(crate) async fn handle_command(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            "container provider is not enabled",
+                            "container provider is not available",
                         ),
                     }
                 },
@@ -117,7 +117,7 @@ pub(crate) async fn handle_command(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            "virtual machine provider is not enabled",
+                            "virtual machine provider is not available",
                         ),
                     }
                 },
@@ -165,7 +165,7 @@ pub(crate) async fn handle_command(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            "virtual machine provider is not enabled",
+                            "virtual machine provider is not available",
                         ),
                     }
                 },
@@ -204,7 +204,7 @@ pub(crate) async fn handle_command(
                             agent_id,
                             command_id,
                             grpc::CommandStatus::Failed,
-                            "container provider is not enabled",
+                            "container provider is not available",
                         ),
                     }
                 },
@@ -343,7 +343,7 @@ pub(crate) async fn handle_command(
                 async move {
                     let result = match runtime {
                         Some(runtime) => apply_website_routes(&runtime, route_command.routes),
-                        None => Err("website runtime is not enabled".to_string()),
+                        None => Err("website runtime is not available".to_string()),
                     };
                     task_agent.website_routes_applied_event(
                         agent_id,

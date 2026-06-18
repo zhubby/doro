@@ -84,43 +84,66 @@ fn render_agent_startup_summary(
         &mut output,
         "📊",
         "主机指标采集",
-        agent.config.metrics_enabled,
+        true,
         &format!("每 {}s", seconds(agent.config.metrics_interval)),
     );
     push_module_line(
         &mut output,
         "🔎",
         "进程追踪",
-        agent.config.metrics_enabled && !agent.config.process_names.is_empty(),
+        !agent.config.process_names.is_empty(),
         &process_tracking_detail(&agent.config.process_names),
     );
     push_module_line(
         &mut output,
         "📦",
         "容器指标采集",
-        agent.config.metrics_enabled && agent.config.container_metrics_enabled,
-        socket_detail(agent.config.docker_socket_path.as_deref()),
+        agent.container_runtime.is_some(),
+        runtime_detail(
+            &agent.discovery.docker,
+            socket_detail(agent.config.docker_socket_path.as_deref()),
+        ),
     );
     push_module_line(
         &mut output,
         "🐳",
         "Docker 管理",
-        agent.config.docker_manage_enabled,
-        socket_detail(agent.config.docker_socket_path.as_deref()),
+        agent.container_runtime.is_some(),
+        runtime_detail(
+            &agent.discovery.docker,
+            socket_detail(agent.config.docker_socket_path.as_deref()),
+        ),
+    );
+    push_module_line(
+        &mut output,
+        "🧱",
+        "Docker Compose",
+        agent.discovery.docker_compose.is_available(),
+        agent.discovery.docker_compose.detail(),
+    );
+    push_module_line(
+        &mut output,
+        "🎮",
+        "GPU 指标采集",
+        agent.discovery.gpu.is_available(),
+        agent.discovery.gpu.detail(),
     );
     push_module_line(
         &mut output,
         "🖥️",
         "虚拟机管理",
         agent.vm_runtime.is_some(),
-        &vm_detail(&agent.config),
+        runtime_detail(&agent.discovery.vm, &vm_detail(&agent.config)),
     );
     push_module_line(
         &mut output,
         "🌐",
         "网站反向代理",
         agent.website_runtime.is_some(),
-        &format!("HTTP {}", agent.config.websites.http_bind),
+        runtime_detail(
+            &agent.discovery.website,
+            &format!("HTTP {}", agent.config.websites.http_bind),
+        ),
     );
     push_module_line(
         &mut output,
@@ -222,6 +245,17 @@ fn socket_detail(socket_path: Option<&str>) -> &str {
     socket_path.unwrap_or("默认 Docker socket")
 }
 
+fn runtime_detail<'a>(
+    availability: &'a crate::runtime::RuntimeAvailability,
+    fallback: &'a str,
+) -> &'a str {
+    if availability.detail().is_empty() {
+        fallback
+    } else {
+        availability.detail()
+    }
+}
+
 fn process_tracking_detail(process_names: &[String]) -> String {
     if process_names.is_empty() {
         return "未配置进程名单".to_string();
@@ -294,7 +328,6 @@ mod tests {
         let file_config = doro_config::AgentFileConfig {
             agent: doro_config::AgentConfig {
                 process_names: vec!["doro-control-plane".to_string()],
-                vm_manage_enabled: true,
                 ..doro_config::AgentConfig::default()
             },
             ai: doro_config::AiConfig {
@@ -303,7 +336,18 @@ mod tests {
             },
             ..doro_config::AgentFileConfig::default()
         };
-        let agent = Agent::new(AgentConfig::from_file_config(&file_config));
+        let mut agent = Agent::new(AgentConfig::from_file_config(&file_config));
+        agent.discovery.docker_compose = crate::runtime::RuntimeAvailability::Unavailable {
+            reason: "docker compose missing".to_string(),
+        };
+        agent.discovery.vm = crate::runtime::RuntimeAvailability::Available {
+            detail: "QEMU".to_string(),
+        };
+        agent.vm_runtime = Some(crate::runtime::VmRuntime {
+            provider: std::sync::Arc::new(doro_vm::QemuProvider::new(
+                doro_vm::QemuProviderConfig::default(),
+            )),
+        });
 
         let output =
             render_agent_startup_summary(Path::new("/tmp/agent.toml"), true, &file_config, &agent);
@@ -312,6 +356,8 @@ mod tests {
         assert!(output.contains("进程追踪"));
         assert!(output.contains("doro-control-plane"));
         assert!(output.contains("Docker 管理"));
+        assert!(output.contains("Docker Compose"));
+        assert!(output.contains("docker compose missing"));
         assert!(output.contains("虚拟机管理"));
         assert!(output.contains("AI 本地工具"));
         assert!(output.contains("provider=openai"));

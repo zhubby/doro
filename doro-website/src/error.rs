@@ -14,6 +14,12 @@ pub enum WebsiteRuntimeError {
     UnsupportedUpstreamPath,
     #[error("website listen port must be greater than zero")]
     InvalidListenPort,
+    #[error("website HTTP bind address {bind} is unavailable")]
+    HttpBindUnavailable {
+        bind: String,
+        #[source]
+        source: std::io::Error,
+    },
     #[error("failed to start website proxy thread")]
     StartThread(#[source] std::io::Error),
 }

@@ -16,12 +16,12 @@ use sysinfo::ProcessRefreshKind;
 use sysinfo::ProcessesToUpdate;
 use sysinfo::System;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CollectorConfig {
     pub process_names: Vec<String>,
-    pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
-    pub gpu_metrics_enabled: bool,
+    pub collect_containers: bool,
+    pub collect_gpu: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -67,7 +67,7 @@ impl LocalCollectors {
     pub async fn collect(&mut self, host_id: uuid::Uuid) -> Vec<CollectorEvent> {
         let mut events = vec![CollectorEvent::Metrics(self.collect_metrics(host_id))];
 
-        if self.config.container_metrics_enabled {
+        if self.config.collect_containers {
             match collect_container_snapshot(self.config.docker_socket_path.clone()).await {
                 Ok(snapshot) => events.push(CollectorEvent::Containers(snapshot)),
                 Err(error) => events.push(CollectorEvent::Error {
@@ -77,7 +77,7 @@ impl LocalCollectors {
             }
         }
 
-        if self.config.gpu_metrics_enabled {
+        if self.config.collect_gpu {
             match collect_gpu() {
                 Ok(gpus) => {
                     if let Some(CollectorEvent::Metrics(metrics)) = events.first_mut() {
@@ -392,7 +392,7 @@ fn merge_extra(extra: &mut Value, key: &str, value: Value) {
     }
 }
 
-fn collect_gpu() -> anyhow::Result<Value> {
+pub(crate) fn collect_gpu() -> anyhow::Result<Value> {
     collect_gpu_inner()
 }
 
@@ -470,9 +470,9 @@ mod tests {
     async fn system_sampling_produces_metric_snapshot() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let host_id = uuid::Uuid::new_v4();
         let events = collectors.collect(host_id).await;
@@ -514,9 +514,9 @@ mod tests {
     async fn repeated_sampling_reports_non_negative_io_rates() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let host_id = uuid::Uuid::new_v4();
         let _ = collectors.collect(host_id).await;
@@ -565,9 +565,9 @@ mod tests {
     async fn process_names_empty_skips_process_detail() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let events = collectors.collect(uuid::Uuid::new_v4()).await;
         let Some(CollectorEvent::Metrics(metrics)) = events.first() else {
@@ -582,9 +582,9 @@ mod tests {
     async fn process_names_filter_out_unmatched_processes() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: vec!["doro-process-that-should-not-exist".to_string()],
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let events = collectors.collect(uuid::Uuid::new_v4()).await;
         let Some(CollectorEvent::Metrics(metrics)) = events.first() else {
@@ -608,9 +608,9 @@ mod tests {
         let (process_name, current_pid) = current_process_identity();
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: vec![process_name.clone()],
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let events = collectors.collect(uuid::Uuid::new_v4()).await;
         let Some(CollectorEvent::Metrics(metrics)) = events.first() else {
@@ -647,9 +647,9 @@ mod tests {
     async fn unavailable_docker_socket_returns_collector_error() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: Vec::new(),
-            container_metrics_enabled: true,
+            collect_containers: true,
             docker_socket_path: Some("/tmp/doro-missing-docker.sock".to_string()),
-            gpu_metrics_enabled: false,
+            collect_gpu: false,
         });
         let events = collectors.collect(uuid::Uuid::new_v4()).await;
 
@@ -666,9 +666,9 @@ mod tests {
     async fn unavailable_gpu_collector_returns_error_without_stopping_metrics() {
         let mut collectors = LocalCollectors::new(CollectorConfig {
             process_names: Vec::new(),
-            container_metrics_enabled: false,
+            collect_containers: false,
             docker_socket_path: None,
-            gpu_metrics_enabled: true,
+            collect_gpu: true,
         });
         let events = collectors.collect(uuid::Uuid::new_v4()).await;
 

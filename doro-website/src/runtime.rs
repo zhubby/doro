@@ -5,12 +5,38 @@ use crate::route::WebsiteRoute;
 use crate::route::WebsiteRouteTable;
 use arc_swap::ArcSwap;
 use doro_protocol::Website;
+use std::net::TcpListener;
 use std::sync::Arc;
 use std::thread;
 
 #[derive(Debug, Clone)]
 pub struct WebsiteRuntimeHandle {
     routes: Arc<ArcSwap<WebsiteRouteTable>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn http_bind_check_reports_unavailable_address() {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .unwrap_or_else(|error| panic!("test listener should bind: {error}"));
+        let address = listener
+            .local_addr()
+            .unwrap_or_else(|error| panic!("test listener should expose addr: {error}"));
+        let config = WebsiteRuntimeConfig {
+            http_bind: address.to_string(),
+        };
+
+        let result = WebsiteRuntime::check_http_bind(&config);
+
+        assert!(matches!(
+            result,
+            Err(WebsiteRuntimeError::HttpBindUnavailable { .. })
+        ));
+    }
 }
 
 impl Default for WebsiteRuntimeHandle {
@@ -60,10 +86,16 @@ impl WebsiteRuntime {
         self.handle.clone()
     }
 
+    pub fn check_http_bind(config: &WebsiteRuntimeConfig) -> Result<(), WebsiteRuntimeError> {
+        TcpListener::bind(&config.http_bind)
+            .map(|_| ())
+            .map_err(|source| WebsiteRuntimeError::HttpBindUnavailable {
+                bind: config.http_bind.clone(),
+                source,
+            })
+    }
+
     pub fn start(self) -> Result<Option<thread::JoinHandle<()>>, WebsiteRuntimeError> {
-        if !self.config.enabled {
-            return Ok(None);
-        }
         let bind = self.config.http_bind.clone();
         let handle = self.handle.clone();
         let join = thread::Builder::new()

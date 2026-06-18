@@ -508,7 +508,7 @@ impl LocalAgentToolExecutor {
         let Some(runtime) = &self.agent.container_runtime else {
             return AgentToolResult {
                 status: AgentToolResultStatus::Failed,
-                output: json!({ "error": "container runtime is not enabled" }),
+                output: json!({ "error": "container runtime is not available" }),
             };
         };
         value_tool_result(
@@ -524,7 +524,7 @@ impl LocalAgentToolExecutor {
         let Some(runtime) = &self.agent.vm_runtime else {
             return AgentToolResult {
                 status: AgentToolResultStatus::Failed,
-                output: json!({ "error": "virtual machine provider is not enabled" }),
+                output: json!({ "error": "virtual machine provider is not available" }),
             };
         };
         value_tool_result(

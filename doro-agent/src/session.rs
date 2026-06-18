@@ -20,7 +20,7 @@ pub async fn run(loaded_config: doro_config::LoadedAgentConfig) -> anyhow::Resul
     let config_path = loaded_config.path;
     let config_created = loaded_config.created;
     let mut persisted_config = loaded_config.config;
-    let mut agent = Agent::new(AgentConfig::from_file_config(&persisted_config));
+    let mut agent = Agent::discover(AgentConfig::from_file_config(&persisted_config)).await;
     print_agent_startup_summary(&config_path, config_created, &persisted_config, &agent);
     let _website_runtime_thread = agent.start_website_runtime()?;
     let mut reconnect_delay = INITIAL_RECONNECT_DELAY;
@@ -225,49 +225,48 @@ async fn open_agent_stream(
         }
     });
 
-    if agent.config.metrics_enabled {
-        let metrics_agent = agent.clone();
-        let metrics_sender = sender.clone();
-        let metrics_shutdown = shutdown_rx.clone();
-        tokio::spawn(async move {
-            let collector_config = CollectorConfig {
-                process_names: metrics_agent.config.process_names.clone(),
-                container_metrics_enabled: metrics_agent.config.container_metrics_enabled,
-                docker_socket_path: metrics_agent.config.docker_socket_path.clone(),
-                gpu_metrics_enabled: metrics_agent.config.gpu_metrics_enabled,
-            };
-            let mut collectors = LocalCollectors::new(collector_config);
-            let mut interval = tokio::time::interval(metrics_agent.config.metrics_interval);
-            loop {
-                tokio::select! {
-                    _ = interval.tick() => {}
-                    () = wait_for_shutdown(metrics_shutdown.clone()) => return,
-                }
-                for collector_event in collectors.collect(metrics_agent.config.host_id).await {
-                    let event = match collector_event {
-                        CollectorEvent::Metrics(metrics) => {
-                            metrics_agent.metrics_snapshot_event(agent_id, metrics)
-                        }
-                        CollectorEvent::Containers(snapshot) => metrics_agent
-                            .container_snapshot_event(agent_id, String::new(), snapshot),
-                        CollectorEvent::Error { collector, message } => metrics_agent
-                            .collector_error_event(agent_id, String::new(), collector, message),
-                    };
-                    tracing::debug!(
-                        agent_id = %agent_id,
-                        host_id = %metrics_agent.config.host_id,
-                        "queued telemetry event"
-                    );
-                    if send_agent_event(&metrics_agent, &metrics_sender, event)
-                        .await
-                        .is_err()
-                    {
-                        return;
+    let metrics_agent = agent.clone();
+    let metrics_sender = sender.clone();
+    let metrics_shutdown = shutdown_rx.clone();
+    tokio::spawn(async move {
+        let collector_config = CollectorConfig {
+            process_names: metrics_agent.config.process_names.clone(),
+            docker_socket_path: metrics_agent.config.docker_socket_path.clone(),
+            collect_containers: metrics_agent.container_runtime.is_some(),
+            collect_gpu: metrics_agent.discovery.gpu.is_available(),
+        };
+        let mut collectors = LocalCollectors::new(collector_config);
+        let mut interval = tokio::time::interval(metrics_agent.config.metrics_interval);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {}
+                () = wait_for_shutdown(metrics_shutdown.clone()) => return,
+            }
+            for collector_event in collectors.collect(metrics_agent.config.host_id).await {
+                let event = match collector_event {
+                    CollectorEvent::Metrics(metrics) => {
+                        metrics_agent.metrics_snapshot_event(agent_id, metrics)
                     }
+                    CollectorEvent::Containers(snapshot) => {
+                        metrics_agent.container_snapshot_event(agent_id, String::new(), snapshot)
+                    }
+                    CollectorEvent::Error { collector, message } => metrics_agent
+                        .collector_error_event(agent_id, String::new(), collector, message),
+                };
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    host_id = %metrics_agent.config.host_id,
+                    "queued telemetry event"
+                );
+                if send_agent_event(&metrics_agent, &metrics_sender, event)
+                    .await
+                    .is_err()
+                {
+                    return;
                 }
             }
-        });
-    }
+        }
+    });
 
     let mut commands = client
         .open_agent_stream(ReceiverStream::new(receiver))

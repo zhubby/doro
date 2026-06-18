@@ -69,6 +69,31 @@ impl ComposeManager {
         self
     }
 
+    pub(crate) fn probe_cli() -> anyhow::Result<String> {
+        let output = Command::new("docker")
+            .args(["compose", "version"])
+            .output()
+            .map_err(|source| anyhow::anyhow!("failed to run docker compose version: {source}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let message = stderr.trim();
+            if message.is_empty() {
+                anyhow::bail!(
+                    "docker compose version exited with status {}",
+                    output.status
+                );
+            }
+            anyhow::bail!("docker compose version failed: {message}");
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Ok(stdout
+            .lines()
+            .next()
+            .filter(|line| !line.trim().is_empty())
+            .unwrap_or("docker compose is available")
+            .to_string())
+    }
+
     pub(crate) fn execute(
         &self,
         command_id: Uuid,

@@ -138,7 +138,6 @@ impl Default for SecurityConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct WebsiteConfig {
-    pub enabled: bool,
     pub http_bind: String,
     pub https_bind: Option<String>,
     pub tcp_bind: Option<String>,
@@ -150,7 +149,6 @@ pub struct WebsiteConfig {
 impl Default for WebsiteConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             http_bind: "127.0.0.1:8080".to_string(),
             https_bind: None,
             tcp_bind: None,
@@ -170,15 +168,10 @@ pub struct AgentConfig {
     pub agent_id: Option<Uuid>,
     pub host_id: Option<Uuid>,
     pub heartbeat_interval_seconds: u64,
-    pub metrics_enabled: bool,
     pub metrics_interval_seconds: u64,
     pub process_names: Vec<String>,
-    pub container_metrics_enabled: bool,
     pub docker_socket_path: Option<String>,
-    pub docker_manage_enabled: bool,
-    pub docker_compose_enabled: bool,
     pub docker_compose_root: Option<String>,
-    pub vm_manage_enabled: bool,
     pub qemu_binary_dir: Option<String>,
     pub vm_state_dir: Option<String>,
     pub vm_image_dir: Option<String>,
@@ -186,7 +179,6 @@ pub struct AgentConfig {
     pub vm_user_network_enabled: bool,
     pub vm_console_enabled: bool,
     pub vm_vnc_bind: String,
-    pub gpu_metrics_enabled: bool,
 }
 
 impl Default for AgentConfig {
@@ -198,15 +190,10 @@ impl Default for AgentConfig {
             agent_id: None,
             host_id: None,
             heartbeat_interval_seconds: 30,
-            metrics_enabled: true,
             metrics_interval_seconds: 10,
             process_names: Vec::new(),
-            container_metrics_enabled: true,
             docker_socket_path: None,
-            docker_manage_enabled: true,
-            docker_compose_enabled: true,
             docker_compose_root: None,
-            vm_manage_enabled: false,
             qemu_binary_dir: None,
             vm_state_dir: None,
             vm_image_dir: None,
@@ -214,7 +201,6 @@ impl Default for AgentConfig {
             vm_user_network_enabled: true,
             vm_console_enabled: true,
             vm_vnc_bind: "127.0.0.1".to_string(),
-            gpu_metrics_enabled: false,
         }
     }
 }
@@ -476,13 +462,9 @@ mod tests {
             "http://127.0.0.1:8788"
         );
         assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 30);
-        assert!(loaded.config.agent.metrics_enabled);
         assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
         assert!(loaded.config.agent.process_names.is_empty());
-        assert!(loaded.config.agent.container_metrics_enabled);
         assert!(loaded.config.agent.docker_socket_path.is_none());
-        assert!(loaded.config.agent.docker_manage_enabled);
-        assert!(!loaded.config.agent.gpu_metrics_enabled);
         assert!(loaded.config.agent.enrollment_token.is_none());
         assert!(loaded.config.agent.agent_id.is_none());
         assert!(loaded.config.agent.host_id.is_none());
@@ -495,6 +477,13 @@ mod tests {
         assert!(body.contains("[ai]"));
         assert!(body.contains("[ai.openai]"));
         assert!(body.contains("[ai.agent]"));
+        assert!(!body.contains("metrics_enabled"));
+        assert!(!body.contains("container_metrics_enabled"));
+        assert!(!body.contains("docker_manage_enabled"));
+        assert!(!body.contains("docker_compose_enabled"));
+        assert!(!body.contains("vm_manage_enabled"));
+        assert!(!body.contains("gpu_metrics_enabled"));
+        assert!(!body.contains("[websites]\nenabled"));
         assert!(!body.contains("[server]"));
         assert!(!body.contains("[store]"));
         assert!(!body.contains("[security]"));
@@ -556,8 +545,61 @@ mod tests {
         assert_eq!(loaded.config.agent.hostname, "edge-node");
         assert_eq!(loaded.config.agent.heartbeat_interval_seconds, 15);
         assert_eq!(loaded.config.agent.metrics_interval_seconds, 10);
-        assert!(loaded.config.websites.enabled);
         assert_eq!(loaded.config.websites.http_bind, "127.0.0.1:8080");
+
+        Ok(())
+    }
+
+    #[test]
+    fn reads_legacy_agent_config_with_removed_enable_flags()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("legacy-agent.toml");
+        fs::write(
+            &path,
+            r#"
+                [agent]
+                control_plane_url = "http://control-plane:8788"
+                hostname = "edge-node"
+                heartbeat_interval_seconds = 15
+                metrics_enabled = false
+                container_metrics_enabled = false
+                docker_manage_enabled = false
+                docker_compose_enabled = false
+                docker_compose_root = "/srv/doro/compose"
+                gpu_metrics_enabled = true
+                vm_manage_enabled = true
+                qemu_binary_dir = "/opt/qemu/bin"
+                vm_state_dir = "/var/lib/doro/vms"
+                vm_image_dir = "/var/lib/doro/images"
+
+                [websites]
+                enabled = false
+                http_bind = "127.0.0.1:18080"
+            "#,
+        )?;
+
+        let loaded = load_or_create_agent_config(Some(&path))?;
+
+        assert!(!loaded.created);
+        assert_eq!(loaded.config.agent.hostname, "edge-node");
+        assert_eq!(
+            loaded.config.agent.docker_compose_root.as_deref(),
+            Some("/srv/doro/compose")
+        );
+        assert_eq!(
+            loaded.config.agent.qemu_binary_dir.as_deref(),
+            Some("/opt/qemu/bin")
+        );
+        assert_eq!(
+            loaded.config.agent.vm_state_dir.as_deref(),
+            Some("/var/lib/doro/vms")
+        );
+        assert_eq!(
+            loaded.config.agent.vm_image_dir.as_deref(),
+            Some("/var/lib/doro/images")
+        );
+        assert_eq!(loaded.config.websites.http_bind, "127.0.0.1:18080");
 
         Ok(())
     }

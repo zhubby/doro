@@ -16,16 +16,10 @@ enrollment_token = "redacted"
 agent_id = "00000000-0000-0000-0000-000000000000"
 host_id = "00000000-0000-0000-0000-000000000000"
 heartbeat_interval_seconds = 30
-metrics_enabled = true
 metrics_interval_seconds = 10
 process_names = []
-container_metrics_enabled = true
 docker_socket_path = "/var/run/docker.sock"
-docker_manage_enabled = true
-docker_compose_enabled = true
 docker_compose_root = "/home/doro/.doro/compose"
-gpu_metrics_enabled = false
-vm_manage_enabled = false
 qemu_binary_dir = "/usr/local/bin"
 vm_state_dir = "/var/lib/doro/vms"
 vm_image_dir = "/var/lib/doro/vm-images"
@@ -43,7 +37,6 @@ command_cancel_grace_seconds = 5
 preflight_enabled = true
 
 [websites]
-enabled = true
 http_bind = "127.0.0.1:8080"
 
 [ai]
@@ -65,6 +58,8 @@ approval_timeout_seconds = 86400
 ```
 
 On first run, `doro agent` requires `enrollment_token`. If `agent_id` and `host_id` are missing, the agent calls `Enroll`, writes the returned identifiers back to the config file, and uses those identifiers for subsequent heartbeats and streams.
+
+The Agent does not use feature-enable flags for local runtimes. On startup it probes Docker, Docker Compose, QEMU, GPU collector support, and the website HTTP bind address. Runtimes that cannot be detected are reported in startup logs and omitted from capability declarations, but the Agent still starts and keeps base heartbeats, metrics, files, shell, AI, and log forwarding online. Legacy config files that still contain removed enable flags are accepted and those fields are ignored.
 
 ## Connection
 
@@ -131,7 +126,7 @@ One-shot terminal commands use the configured cancellation grace period. The Age
 
 ### Preflight
 
-Before write-oriented work, the Agent performs preflight checks when `[reliability].preflight_enabled` is true. File operations reuse the same home-directory scope checks as execution, reject traversal and targets outside the Agent user's home, enforce transfer limits, reject directory upload targets, and perform a best-effort available-disk check. Docker, virtual machine, website, and AI operations also fail before execution when their configured runtime/provider is not enabled or ready.
+Before write-oriented work, the Agent performs preflight checks when `[reliability].preflight_enabled` is true. File operations reuse the same home-directory scope checks as execution, reject traversal and targets outside the Agent user's home, enforce transfer limits, reject directory upload targets, and perform a best-effort available-disk check. Docker, virtual machine, website, and AI operations also fail before execution when their discovered runtime/provider is not ready.
 
 Preflight is a runtime guard, not an authorization replacement. The control plane still validates capability and risk before dispatch. High-risk work normally waits for approval before it is sent to the Agent, except for explicitly selected audited direct-execution paths such as terminal commands, Docker container creation, Docker image pull, Compose create/update, Compose pull, and Compose up.
 
@@ -171,7 +166,7 @@ If the spool lock is busy while metrics are assembled, `event_spool` may be repo
 
 Local system collection is a one-way agent-to-control-plane flow over `OpenAgentStream`. It does not introduce MQTT, WebSocket, or direct UI-to-agent access.
 
-The base system collector is supported on macOS and Linux. Container collection is implemented through `doro-container`; the current provider is Docker over a Unix socket. The agent uses `docker_socket_path` when set, otherwise the Docker provider follows `DOCKER_HOST=unix://...` or the platform default Docker socket. GPU collection is Linux/NVIDIA-only and requires building the agent with the `gpu` feature.
+The base system collector is supported on macOS and Linux and always runs while the Agent is online. Container collection is implemented through `doro-container`; the current provider is Docker over a Unix socket. The agent uses `docker_socket_path` when set, otherwise the Docker provider follows `DOCKER_HOST=unix://...` or the platform default Docker socket. Container collection runs only when startup probing confirms Docker is reachable. GPU collection is Linux/NVIDIA-only, requires building the agent with the `gpu` feature, and runs only when startup probing confirms NVML is available.
 
 - `metrics.snapshot`: core CPU, memory, disk, and load metrics. The control plane writes the normalized fields to `metric_snapshots` and keeps detailed CPU, disk, network, process, component, and optional GPU data in JSON payloads.
 - `container.snapshot`: read-only container runtime observations from the configured `doro-container` provider. The current Docker provider reports Docker runtime data without changing the existing protocol shape. The control plane upserts current container rows into `containers` and keeps daemon, network, and volume detail in `agent_events`.
@@ -207,7 +202,7 @@ When `[agent].process_names` is non-empty, `metrics.snapshot.extra_json` include
 
 Container collection is read-only. It must not imply `ContainersManage` capability or allow container start, stop, restart, image pull, or delete actions. Docker management requires an online Agent stream and a declared high-risk `ContainersManage` capability. Container creation can be submitted as an audited direct task: the control plane records the task, step, run, and eventual Docker command event, then dispatches `RunDockerCommandCommand` without creating an approval request. Docker image pull, Compose create/update, Compose pull, and Compose up also dispatch as audited direct tasks. Operators can choose the approval mode for container creation, and remaining Docker write operations create normal waiting-approval tasks; only approval resolution dispatches those commands.
 
-Compose management is included in Docker management but remains Agent-owned. When `docker_compose_enabled` is true, the Agent stores managed projects under `docker_compose_root` or `~/.doro/compose` by default. Project names must be conservative slugs, and the Agent rejects traversal, symlink escape, and paths outside the canonical root. Each project contains `compose.yaml` and optional `.env`; create/update writes those files as audited direct Docker tasks. Compose actions run `docker compose -f compose.yaml --project-name <project>` through `std::process::Command` because Compose is a Docker CLI plugin rather than an Engine API. The Agent sets `DOCKER_CONFIG` to the Agent user's default `~/.docker` directory for Compose commands so Compose pull/up can use registry credentials managed through Doro. A missing CLI or non-zero exit code returns a failed Docker command result. GPU collection is optional; agents built without Linux GPU collector support or running on hosts without NVML report collector errors when GPU metrics are enabled.
+Compose management is included in Docker management but remains Agent-owned. When Docker is available and `docker compose version` succeeds, the Agent stores managed projects under `docker_compose_root` or `~/.doro/compose` by default. Project names must be conservative slugs, and the Agent rejects traversal, symlink escape, and paths outside the canonical root. Each project contains `compose.yaml` and optional `.env`; create/update writes those files as audited direct Docker tasks. Compose actions run `docker compose -f compose.yaml --project-name <project>` through `std::process::Command` because Compose is a Docker CLI plugin rather than an Engine API. The Agent sets `DOCKER_CONFIG` to the Agent user's default `~/.docker` directory for Compose commands so Compose pull/up can use registry credentials managed through Doro. A missing CLI or non-zero exit code returns a failed Docker command result without disabling ordinary Docker management.
 
 Docker registry credential management is Agent-local. The control plane sends registry list, upsert, and remove commands over `RunDockerCommandCommand`; the Agent reads or updates `~/.docker/config.json` for its current OS user. List results expose registry, username, credential source, and config path only. Upsert requests carry the secret only in the transient Agent command and the Agent reply never includes it. Entries managed by Docker credential helpers are reported as external and are not overwritten by Doro's inline auth writer.
 

@@ -70,7 +70,6 @@ RUN { \
         echo 'require_tls = false'; \
         echo ''; \
         echo '[websites]'; \
-        echo 'enabled = true'; \
         echo 'http_bind = "0.0.0.0:8080"'; \
         echo ''; \
         echo '[ai]'; \
@@ -81,11 +80,7 @@ RUN { \
         echo 'control_plane_url = "http://doro-control-plane:8788"'; \
         echo 'hostname = "doro-container-agent"'; \
         echo 'heartbeat_interval_seconds = 30'; \
-        echo 'metrics_enabled = true'; \
         echo 'metrics_interval_seconds = 10'; \
-        echo 'container_metrics_enabled = true'; \
-        echo 'docker_manage_enabled = false'; \
-        echo 'vm_manage_enabled = false'; \
         echo ''; \
         echo '[ai]'; \
         echo 'provider = "disabled"'; \

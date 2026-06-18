@@ -1,4 +1,4 @@
-use crate::collectors::system_profile;
+use crate::collectors::{collect_gpu, system_profile};
 use crate::command_registry::CommandRegistry;
 use crate::compose::{ComposeCommandError, ComposeManager};
 use crate::config::AgentConfig;
@@ -17,7 +17,7 @@ use doro_protocol::{
     grpc, protobuf_timestamp_now,
 };
 use doro_vm::network::NetworkPolicy;
-use doro_vm::{QemuProvider, QemuProviderConfig, VirtualMachineProvider};
+use doro_vm::{QemuProvider, QemuProviderConfig, VirtualMachineInventory, VirtualMachineProvider};
 use doro_website::{WebsiteRuntime, WebsiteRuntimeConfig, WebsiteRuntimeHandle};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -26,8 +26,8 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct ContainerRuntime {
-    provider: Result<Arc<dyn ContainerProvider>, String>,
-    executor: Option<ContainerRuntimeExecutor>,
+    provider: Arc<dyn ContainerProvider>,
+    executor: ContainerRuntimeExecutor,
     compose: Option<ComposeManager>,
     registry_config: Option<DockerRegistryConfigManager>,
 }
@@ -39,65 +39,82 @@ impl std::fmt::Debug for ContainerRuntime {
 }
 
 impl ContainerRuntime {
-    fn from_config(config: &AgentConfig) -> Option<Self> {
-        if !config.container_metrics_enabled && !config.docker_manage_enabled {
-            return None;
-        }
-        let registry_config = if config.docker_manage_enabled {
-            match DockerRegistryConfigManager::from_default_config_dir() {
-                Ok(manager) => Some(manager),
-                Err(error) => {
-                    tracing::warn!(%error, "failed to initialize Docker registry config manager");
-                    None
-                }
+    async fn discover(
+        config: &AgentConfig,
+    ) -> (Option<Self>, RuntimeAvailability, RuntimeAvailability) {
+        let registry_config = match DockerRegistryConfigManager::from_default_config_dir() {
+            Ok(manager) => Some(manager),
+            Err(error) => {
+                tracing::warn!(%error, "Docker registry config manager unavailable");
+                None
             }
-        } else {
-            None
         };
         let docker_config_dir = registry_config
             .as_ref()
             .map(|manager| manager.config_dir().to_path_buf());
-        let docker = DockerProvider::connect(
+        let docker = match DockerProvider::connect(
             &DockerProviderConfig::new(config.docker_socket_path.clone())
                 .with_config_dir(docker_config_dir.clone()),
-        );
-        let executor = docker
-            .as_ref()
-            .ok()
-            .filter(|_| config.docker_manage_enabled)
-            .cloned()
-            .map(ContainerRuntimeExecutor::new);
-        let provider = docker
-            .map(|provider| Arc::new(provider) as Arc<dyn ContainerProvider>)
-            .map_err(|error| error.to_string());
-        let compose = if config.docker_manage_enabled && config.docker_compose_enabled {
-            match ComposeManager::from_config(config.docker_compose_root.as_deref()) {
-                Ok(manager) => Some(manager.with_docker_config_dir(docker_config_dir.clone())),
-                Err(error) => {
-                    tracing::warn!(%error, "failed to initialize Docker Compose manager");
-                    None
-                }
+        ) {
+            Ok(provider) => provider,
+            Err(error) => {
+                let message = error.to_string();
+                tracing::warn!(%message, "Docker runtime unavailable");
+                return (
+                    None,
+                    RuntimeAvailability::unavailable(message),
+                    docker_compose_requires_docker(),
+                );
             }
-        } else {
-            None
         };
-        Some(Self {
-            provider,
-            executor,
-            compose,
-            registry_config,
-        })
+        let info = match docker.probe().await {
+            Ok(info) => info,
+            Err(error) => {
+                let message = error.to_string();
+                tracing::warn!(%message, "Docker runtime unavailable");
+                return (
+                    None,
+                    RuntimeAvailability::unavailable(message),
+                    docker_compose_requires_docker(),
+                );
+            }
+        };
+
+        let detail = info
+            .server_version
+            .as_deref()
+            .map(|version| format!("Docker {version}"))
+            .unwrap_or_else(|| "Docker daemon is available".to_string());
+        tracing::info!(detail, "Docker runtime available");
+        let executor = ContainerRuntimeExecutor::new(docker.clone());
+        let provider = Arc::new(docker) as Arc<dyn ContainerProvider>;
+        let (compose, docker_compose) = discover_compose(config, docker_config_dir);
+        (
+            Some(Self {
+                provider,
+                executor,
+                compose,
+                registry_config,
+            }),
+            RuntimeAvailability::available(detail),
+            docker_compose,
+        )
+    }
+
+    #[cfg(test)]
+    fn from_docker_provider(provider: DockerProvider) -> Self {
+        Self {
+            provider: Arc::new(provider.clone()),
+            executor: ContainerRuntimeExecutor::new(provider),
+            compose: None,
+            registry_config: None,
+        }
     }
 
     pub(crate) async fn snapshot(
         &self,
     ) -> Result<ContainerRuntimeSnapshot, doro_container::ContainerProviderError> {
-        match &self.provider {
-            Ok(provider) => provider.snapshot().await,
-            Err(error) => Err(doro_container::ContainerProviderError::InvalidRequest(
-                format!("failed to initialize container provider: {error}"),
-            )),
-        }
+        self.provider.snapshot().await
     }
 
     pub(crate) async fn execute(
@@ -134,7 +151,7 @@ impl ContainerRuntime {
                     return doro_container::ContainerCommandResult {
                         command_id: envelope.command_id,
                         status: doro_container::ContainerCommandStatus::Failed,
-                        message: "docker compose is not enabled".to_string(),
+                        message: "docker compose is not available".to_string(),
                         details: serde_json::json!({}),
                     };
                 };
@@ -155,15 +172,7 @@ impl ContainerRuntime {
                 }
             }
             command => {
-                let Some(executor) = &self.executor else {
-                    return doro_container::ContainerCommandResult {
-                        command_id: envelope.command_id,
-                        status: doro_container::ContainerCommandStatus::Failed,
-                        message: "docker management is not enabled".to_string(),
-                        details: serde_json::json!({}),
-                    };
-                };
-                executor
+                self.executor
                     .execute(ContainerRuntimeCommandEnvelope {
                         command_id: envelope.command_id,
                         task_id: envelope.task_id,
@@ -174,6 +183,39 @@ impl ContainerRuntime {
             }
         }
     }
+}
+
+fn discover_compose(
+    config: &AgentConfig,
+    docker_config_dir: Option<PathBuf>,
+) -> (Option<ComposeManager>, RuntimeAvailability) {
+    match ComposeManager::probe_cli() {
+        Ok(version) => match ComposeManager::from_config(config.docker_compose_root.as_deref()) {
+            Ok(manager) => {
+                tracing::info!(version, "Docker Compose available");
+                (
+                    Some(manager.with_docker_config_dir(docker_config_dir)),
+                    RuntimeAvailability::available(version),
+                )
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                tracing::warn!(%reason, "Docker Compose manager unavailable");
+                (None, RuntimeAvailability::unavailable(reason))
+            }
+        },
+        Err(error) => {
+            let reason = error.to_string();
+            tracing::warn!(%reason, "Docker Compose unavailable");
+            (None, RuntimeAvailability::unavailable(reason))
+        }
+    }
+}
+
+fn docker_compose_requires_docker() -> RuntimeAvailability {
+    let reason = "Docker Compose requires an available Docker runtime".to_string();
+    tracing::warn!(%reason, "Docker Compose unavailable");
+    RuntimeAvailability::unavailable(reason)
 }
 
 #[derive(Clone)]
@@ -188,10 +230,7 @@ impl std::fmt::Debug for VmRuntime {
 }
 
 impl VmRuntime {
-    fn from_config(config: &AgentConfig) -> Option<Self> {
-        if !config.vm_manage_enabled {
-            return None;
-        }
+    async fn discover(config: &AgentConfig) -> (Option<Self>, RuntimeAvailability) {
         let provider = QemuProvider::new(QemuProviderConfig {
             binary_dir: config.qemu_binary_dir.as_ref().map(PathBuf::from),
             state_dir: config
@@ -211,9 +250,133 @@ impl VmRuntime {
             vnc_bind_host: config.vm_vnc_bind.clone(),
             vnc_display_base: 10,
         });
-        Some(Self {
-            provider: Arc::new(provider),
-        })
+        match provider.probe().await {
+            Ok(status) if status.available => {
+                tracing::info!(message = %status.message, "QEMU runtime available");
+                let detail = status
+                    .version
+                    .unwrap_or_else(|| "QEMU is available".to_string());
+                (
+                    Some(Self {
+                        provider: Arc::new(provider),
+                    }),
+                    RuntimeAvailability::available(detail),
+                )
+            }
+            Ok(status) => {
+                tracing::warn!(message = %status.message, "QEMU runtime unavailable");
+                (None, RuntimeAvailability::unavailable(status.message))
+            }
+            Err(error) => {
+                let message = error.to_string();
+                tracing::warn!(%message, "QEMU runtime unavailable");
+                (None, RuntimeAvailability::unavailable(message))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RuntimeDiscovery {
+    pub(crate) docker: RuntimeAvailability,
+    pub(crate) docker_compose: RuntimeAvailability,
+    pub(crate) vm: RuntimeAvailability,
+    pub(crate) gpu: RuntimeAvailability,
+    pub(crate) website: RuntimeAvailability,
+}
+
+impl Default for RuntimeDiscovery {
+    fn default() -> Self {
+        Self {
+            docker: RuntimeAvailability::not_checked(),
+            docker_compose: RuntimeAvailability::not_checked(),
+            vm: RuntimeAvailability::not_checked(),
+            gpu: RuntimeAvailability::not_checked(),
+            website: RuntimeAvailability::not_checked(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum RuntimeAvailability {
+    Available { detail: String },
+    Unavailable { reason: String },
+    NotChecked,
+}
+
+impl RuntimeAvailability {
+    fn available(detail: impl Into<String>) -> Self {
+        Self::Available {
+            detail: detail.into(),
+        }
+    }
+
+    fn unavailable(reason: impl Into<String>) -> Self {
+        Self::Unavailable {
+            reason: reason.into(),
+        }
+    }
+
+    fn not_checked() -> Self {
+        Self::NotChecked
+    }
+
+    pub(crate) fn is_available(&self) -> bool {
+        matches!(self, Self::Available { .. })
+    }
+
+    pub(crate) fn detail(&self) -> &str {
+        match self {
+            Self::Available { detail } => detail,
+            Self::Unavailable { reason } => reason,
+            Self::NotChecked => "未探测",
+        }
+    }
+}
+
+fn discover_gpu() -> RuntimeAvailability {
+    match collect_gpu() {
+        Ok(gpus) => {
+            let count = gpus.as_array().map_or(0, Vec::len);
+            if count == 0 {
+                let reason = "no NVIDIA GPUs detected".to_string();
+                tracing::warn!(%reason, "GPU collector unavailable");
+                return RuntimeAvailability::unavailable(reason);
+            }
+            let detail = if count == 1 {
+                "1 GPU detected".to_string()
+            } else {
+                format!("{count} GPUs detected")
+            };
+            tracing::info!(detail, "GPU collector available");
+            RuntimeAvailability::available(detail)
+        }
+        Err(error) => {
+            let reason = error.to_string();
+            tracing::warn!(%reason, "GPU collector unavailable");
+            RuntimeAvailability::unavailable(reason)
+        }
+    }
+}
+
+fn discover_website(config: &AgentConfig) -> (Option<WebsiteRuntimeHandle>, RuntimeAvailability) {
+    let runtime_config = WebsiteRuntimeConfig {
+        http_bind: config.websites.http_bind.clone(),
+    };
+    match WebsiteRuntime::check_http_bind(&runtime_config) {
+        Ok(()) => {
+            let detail = format!("HTTP {}", config.websites.http_bind);
+            tracing::info!(detail, "website runtime available");
+            (
+                Some(WebsiteRuntimeHandle::default()),
+                RuntimeAvailability::available(detail),
+            )
+        }
+        Err(error) => {
+            let reason = error.to_string();
+            tracing::warn!(%reason, "website runtime unavailable");
+            (None, RuntimeAvailability::unavailable(reason))
+        }
     }
 }
 
@@ -223,21 +386,42 @@ pub struct Agent {
     pub(crate) container_runtime: Option<ContainerRuntime>,
     pub(crate) vm_runtime: Option<VmRuntime>,
     pub(crate) website_runtime: Option<WebsiteRuntimeHandle>,
+    pub(crate) discovery: RuntimeDiscovery,
     pub(crate) command_registry: CommandRegistry,
     pub(crate) event_spool: Arc<Mutex<EventSpool>>,
 }
 
 impl Agent {
     pub fn new(config: AgentConfig) -> Self {
-        let container_runtime = ContainerRuntime::from_config(&config);
-        let vm_runtime = VmRuntime::from_config(&config);
-        let website_runtime = config.websites.enabled.then(WebsiteRuntimeHandle::default);
+        Self {
+            event_spool: Arc::new(Mutex::new(EventSpool::from_config(&config.reliability))),
+            config,
+            container_runtime: None,
+            vm_runtime: None,
+            website_runtime: None,
+            discovery: RuntimeDiscovery::default(),
+            command_registry: CommandRegistry::default(),
+        }
+    }
+
+    pub async fn discover(config: AgentConfig) -> Self {
+        let (container_runtime, docker, docker_compose) = ContainerRuntime::discover(&config).await;
+        let (vm_runtime, vm) = VmRuntime::discover(&config).await;
+        let gpu = discover_gpu();
+        let (website_runtime, website) = discover_website(&config);
         Self {
             event_spool: Arc::new(Mutex::new(EventSpool::from_config(&config.reliability))),
             config,
             container_runtime,
             vm_runtime,
             website_runtime,
+            discovery: RuntimeDiscovery {
+                docker,
+                docker_compose,
+                vm,
+                gpu,
+                website,
+            },
             command_registry: CommandRegistry::default(),
         }
     }
@@ -248,7 +432,6 @@ impl Agent {
         };
         let runtime = WebsiteRuntime::with_handle(
             WebsiteRuntimeConfig {
-                enabled: self.config.websites.enabled,
                 http_bind: self.config.websites.http_bind.clone(),
             },
             handle,
@@ -302,7 +485,7 @@ impl Agent {
                 description: "Manage the host filesystem as the agent OS user".to_string(),
             },
         ];
-        if self.config.docker_manage_enabled {
+        if self.container_runtime.is_some() {
             capabilities.push(AgentCapability {
                 name: CapabilityName::ContainersManage,
                 risk: CapabilityRisk::High,
@@ -474,8 +657,11 @@ mod tests {
     use crate::test_support::test_agent_config;
 
     #[test]
-    fn docker_manage_capability_is_declared_when_enabled() {
-        let agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+    fn docker_manage_capability_is_declared_when_runtime_is_available() {
+        let mut agent = Agent::new(AgentConfig::new("doro-test", "http://127.0.0.1:8788"));
+        let docker = DockerProvider::connect(&DockerProviderConfig::new(None))
+            .unwrap_or_else(|error| panic!("Docker provider should initialize: {error}"));
+        agent.container_runtime = Some(ContainerRuntime::from_docker_provider(docker));
 
         assert!(agent.capabilities().iter().any(|capability| {
             capability.name == CapabilityName::ContainersManage
@@ -518,16 +704,8 @@ mod tests {
     }
 
     #[test]
-    fn network_expose_capability_is_omitted_when_website_runtime_disabled() {
-        let base_config = test_agent_config(Uuid::new_v4());
-
-        let agent = Agent::new(AgentConfig {
-            websites: doro_config::WebsiteConfig {
-                enabled: false,
-                ..doro_config::WebsiteConfig::default()
-            },
-            ..base_config
-        });
+    fn network_expose_capability_is_omitted_without_website_runtime() {
+        let agent = Agent::new(test_agent_config(Uuid::new_v4()));
 
         assert!(
             !agent
@@ -538,13 +716,21 @@ mod tests {
     }
 
     #[test]
-    fn docker_manage_capability_is_omitted_when_disabled() {
-        let base_config = test_agent_config(Uuid::new_v4());
+    fn network_expose_capability_is_declared_when_website_runtime_is_available() {
+        let mut agent = Agent::new(test_agent_config(Uuid::new_v4()));
+        agent.website_runtime = Some(WebsiteRuntimeHandle::default());
 
-        let agent = Agent::new(AgentConfig {
-            docker_manage_enabled: false,
-            ..base_config
-        });
+        assert!(
+            agent
+                .capabilities()
+                .iter()
+                .any(|capability| capability.name == CapabilityName::NetworkExpose)
+        );
+    }
+
+    #[test]
+    fn docker_manage_capability_is_omitted_without_container_runtime() {
+        let agent = Agent::new(test_agent_config(Uuid::new_v4()));
 
         assert!(
             !agent

@@ -340,13 +340,7 @@ agent-config-file:
 			printf 'control_plane_url = "%s"\n' "$(DORO_AGENT_CONTROL_PLANE_URL)"; \
 			printf 'hostname = "%s"\n' "$(DORO_AGENT_HOSTNAME)"; \
 			printf 'heartbeat_interval_seconds = 30\n'; \
-			printf 'metrics_enabled = true\n'; \
 			printf 'metrics_interval_seconds = 10\n'; \
-			printf 'container_metrics_enabled = true\n'; \
-			printf 'docker_manage_enabled = true\n'; \
-			printf 'docker_compose_enabled = true\n'; \
-			printf 'vm_manage_enabled = false\n'; \
-			printf 'gpu_metrics_enabled = false\n'; \
 			printf '\n%s\n' '[reliability]'; \
 			printf 'event_spool_enabled = true\n'; \
 			printf 'event_spool_path = "%s/.doro/agent-event-spool"\n' "$(DORO_AGENT_STATE_DIR)"; \
@@ -355,7 +349,6 @@ agent-config-file:
 			printf 'command_cancel_grace_seconds = 5\n'; \
 			printf 'preflight_enabled = true\n'; \
 			printf '\n%s\n' '[websites]'; \
-			printf 'enabled = true\n'; \
 			printf 'http_bind = "127.0.0.1:8080"\n'; \
 			printf '\n%s\n' '[ai]'; \
 			printf 'provider = "disabled"\n'; \

@@ -15,7 +15,6 @@ approval_policy = "policy_and_human_approval"
 require_tls = false
 
 [websites]
-enabled = true
 http_bind = "0.0.0.0:8080"
 
 [ai]

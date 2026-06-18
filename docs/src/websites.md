@@ -13,11 +13,10 @@ The first executable website capability is HTTP reverse proxy routing:
 
 ## Runtime
 
-`doro-agent` starts `doro-website` when `[websites].enabled` is true in `~/.doro/agent.toml`:
+`doro-agent` probes the configured website HTTP bind address on startup. When the address is available, the Agent starts `doro-website` and declares `NetworkExpose`; when the address is invalid or already in use, the Agent logs the reason, omits `NetworkExpose`, and continues starting other capabilities.
 
 ```toml
 [websites]
-enabled = true
 http_bind = "127.0.0.1:8080"
 https_bind = ""
 tcp_bind = ""
