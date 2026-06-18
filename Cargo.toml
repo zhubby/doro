@@ -72,7 +72,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["zhubby <yanvalue@gmail.com>"]
-version = "0.3.1"
+version = "0.3.2"
 description = "doro"
 repository = "https://github.com/zhubby/doro"
 homepage = "https://github.com/zhubby/doro"
