@@ -22,10 +22,12 @@ services:
       dockerfile: Dockerfile
       target: doro
     image: doro-control-plane:local
-    command: ["--config", "/etc/doro/control-plane.toml", "control-plane"]
+    command: ["control-plane"]
     depends_on:
       postgres:
         condition: service_healthy
+    environment:
+      DORO_CONTROL_PLANE_DATABASE_URL: postgres://doro:doro@postgres:5432/doro
     ports:
       - "8787:8787"
       - "8788:8788"

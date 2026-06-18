@@ -13,8 +13,6 @@
     <key>ProgramArguments</key>
     <array>
         <string>@DORO_BIN@</string>
-        <string>--config</string>
-        <string>@DORO_CONTROL_PLANE_CONFIG@</string>
         <string>control-plane</string>
     </array>
 
@@ -27,6 +25,48 @@
         <string>@DORO_CONTROL_PLANE_STATE_DIR@</string>
         <key>RUST_LOG</key>
         <string>@DORO_CONTROL_PLANE_RUST_LOG@</string>
+        <key>DORO_CONTROL_PLANE_CONSOLE_BIND</key>
+        <string>@DORO_CONTROL_PLANE_CONSOLE_BIND@</string>
+        <key>DORO_CONTROL_PLANE_AGENT_BIND</key>
+        <string>@DORO_CONTROL_PLANE_AGENT_BIND@</string>
+        <key>DORO_CONTROL_PLANE_STORE_BACKEND</key>
+        <string>@DORO_CONTROL_PLANE_STORE_BACKEND@</string>
+        <key>DORO_CONTROL_PLANE_DATABASE_URL</key>
+        <string>@DORO_CONTROL_PLANE_DATABASE_URL@</string>
+        <key>DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS</key>
+        <string>@DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS@</string>
+        <key>DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS</key>
+        <string>@DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS@</string>
+        <key>DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS@</string>
+        <key>DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS@</string>
+        <key>DORO_CONTROL_PLANE_APPROVAL_POLICY</key>
+        <string>@DORO_CONTROL_PLANE_APPROVAL_POLICY@</string>
+        <key>DORO_CONTROL_PLANE_REQUIRE_TLS</key>
+        <string>@DORO_CONTROL_PLANE_REQUIRE_TLS@</string>
+        <key>DORO_CONTROL_PLANE_AI_PROVIDER</key>
+        <string>@DORO_CONTROL_PLANE_AI_PROVIDER@</string>
+        <key>DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV</key>
+        <string>@DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV@</string>
+        <key>DORO_CONTROL_PLANE_OPENAI_BASE_URL</key>
+        <string>@DORO_CONTROL_PLANE_OPENAI_BASE_URL@</string>
+        <key>DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL</key>
+        <string>@DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL@</string>
+        <key>DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL</key>
+        <string>@DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL@</string>
+        <key>DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS@</string>
+        <key>DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS</key>
+        <string>@DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS@</string>
+        <key>DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS</key>
+        <string>@DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS@</string>
+        <key>DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS@</string>
+        <key>DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS@</string>
+        <key>DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS</key>
+        <string>@DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS@</string>
     </dict>
 
     <key>RunAtLoad</key>

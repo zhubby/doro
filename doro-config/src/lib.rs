@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde::Serialize;
+use std::env;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -42,6 +43,12 @@ pub enum ConfigError {
     },
     #[error("failed to serialize config")]
     Serialize(#[from] toml::ser::Error),
+    #[error("invalid environment variable {name}: expected {expected}, got {value:?}")]
+    Env {
+        name: &'static str,
+        value: String,
+        expected: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -293,7 +300,7 @@ impl Default for OpenAiConfig {
 
 #[derive(Debug, Clone)]
 pub struct LoadedControlPlaneConfig {
-    pub path: PathBuf,
+    pub path: Option<PathBuf>,
     pub config: ControlPlaneConfig,
     pub created: bool,
 }
@@ -320,22 +327,7 @@ pub fn default_agent_config_path() -> Result<PathBuf, ConfigError> {
 pub fn load_or_create_control_plane_config(
     path: Option<&Path>,
 ) -> Result<LoadedControlPlaneConfig, ConfigError> {
-    let path = match path {
-        Some(path) => path.to_path_buf(),
-        None => default_control_plane_config_path()?,
-    };
-
-    if path.exists() {
-        return load_existing_control_plane_config(path);
-    }
-
-    let config = ControlPlaneConfig::default();
-    write_toml_config(&path, &config)?;
-    Ok(LoadedControlPlaneConfig {
-        path,
-        config,
-        created: true,
-    })
+    load_control_plane_config_with_env(path, |name| env::var(name).ok())
 }
 
 pub fn load_or_create_agent_config(path: Option<&Path>) -> Result<LoadedAgentConfig, ConfigError> {
@@ -380,22 +372,287 @@ where
     Ok(())
 }
 
-fn load_existing_control_plane_config(
-    path: PathBuf,
-) -> Result<LoadedControlPlaneConfig, ConfigError> {
-    let body = fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-        path: path.clone(),
-        source,
-    })?;
-    let config = toml::from_str(&body).map_err(|source| ConfigError::Parse {
-        path: path.clone(),
-        source,
-    })?;
+fn load_control_plane_config_with_env<F>(
+    path: Option<&Path>,
+    env_value: F,
+) -> Result<LoadedControlPlaneConfig, ConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let explicit_path = path.is_some();
+    let candidate_path = path
+        .map(Path::to_path_buf)
+        .or_else(|| default_control_plane_config_path().ok());
+
+    load_control_plane_config_from_candidate(candidate_path, explicit_path, env_value)
+}
+
+fn load_control_plane_config_from_candidate<F>(
+    candidate_path: Option<PathBuf>,
+    explicit_path: bool,
+    env_value: F,
+) -> Result<LoadedControlPlaneConfig, ConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    let (path, mut config) = match candidate_path {
+        Some(path) if path.exists() => (Some(path.clone()), read_control_plane_config(&path)?),
+        Some(path) if explicit_path => {
+            return Err(ConfigError::Read {
+                path,
+                source: io::Error::new(io::ErrorKind::NotFound, "config file does not exist"),
+            });
+        }
+        _ => (None, ControlPlaneConfig::default()),
+    };
+    apply_control_plane_env_overrides(&mut config, env_value)?;
+
     Ok(LoadedControlPlaneConfig {
         path,
         config,
         created: false,
     })
+}
+
+fn read_control_plane_config(path: &Path) -> Result<ControlPlaneConfig, ConfigError> {
+    let body = fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+
+    toml::from_str(&body).map_err(|source| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn apply_control_plane_env_overrides<F>(
+    config: &mut ControlPlaneConfig,
+    mut env_value: F,
+) -> Result<(), ConfigError>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_CONSOLE_BIND",
+            "DORO_CONTROL_PLANE_SERVER_CONSOLE_BIND",
+        ],
+    ) {
+        config.server.console_bind = value;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_AGENT_BIND",
+            "DORO_CONTROL_PLANE_SERVER_AGENT_BIND",
+        ],
+    ) {
+        config.server.agent_bind = value;
+    }
+    if let Some((name, value)) =
+        first_env_value(&mut env_value, &["DORO_CONTROL_PLANE_STORE_BACKEND"])
+    {
+        config.store.backend = parse_store_backend(name, &value)?;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_DATABASE_URL",
+            "DORO_CONTROL_PLANE_STORE_DATABASE_URL",
+        ],
+    ) {
+        config.store.database_url = value;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS"],
+    ) {
+        config.store.max_connections = parse_u32_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS"],
+    ) {
+        config.store.min_connections = parse_u32_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS"],
+    ) {
+        config.store.connect_timeout_seconds = parse_u64_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS"],
+    ) {
+        config.store.idle_timeout_seconds = parse_u64_env(name, &value)?;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_APPROVAL_POLICY",
+            "DORO_CONTROL_PLANE_SECURITY_APPROVAL_POLICY",
+        ],
+    ) {
+        config.security.approval_policy = value;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_REQUIRE_TLS",
+            "DORO_CONTROL_PLANE_SECURITY_REQUIRE_TLS",
+        ],
+    ) {
+        config.security.require_tls = parse_bool_env(name, &value)?;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_JWT_SECRET",
+            "DORO_CONTROL_PLANE_SECURITY_JWT_SECRET",
+        ],
+    ) {
+        config.security.jwt_secret = Some(value);
+    }
+    if let Some((_, value)) = first_env_value(&mut env_value, &["DORO_CONTROL_PLANE_AI_PROVIDER"]) {
+        config.ai.provider = value;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV",
+            "DORO_CONTROL_PLANE_AI_OPENAI_API_KEY_ENV",
+        ],
+    ) {
+        config.ai.openai.api_key_env = value;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_OPENAI_BASE_URL",
+            "DORO_CONTROL_PLANE_AI_OPENAI_BASE_URL",
+        ],
+    ) {
+        config.ai.openai.base_url = value;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL",
+            "DORO_CONTROL_PLANE_AI_OPENAI_DEFAULT_CHAT_MODEL",
+        ],
+    ) {
+        config.ai.openai.default_chat_model = value;
+    }
+    if let Some((_, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL",
+            "DORO_CONTROL_PLANE_AI_OPENAI_DEFAULT_RESPONSE_MODEL",
+        ],
+    ) {
+        config.ai.openai.default_response_model = value;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &[
+            "DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS",
+            "DORO_CONTROL_PLANE_AI_OPENAI_TIMEOUT_SECONDS",
+        ],
+    ) {
+        config.ai.openai.timeout_seconds = parse_u64_env(name, &value)?;
+    }
+    if let Some((name, value)) =
+        first_env_value(&mut env_value, &["DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS"])
+    {
+        config.ai.agent.max_turns = parse_u32_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS"],
+    ) {
+        config.ai.agent.max_tool_calls = parse_u32_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS"],
+    ) {
+        config.ai.agent.tool_timeout_seconds = parse_u64_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS"],
+    ) {
+        config.ai.agent.shell_timeout_seconds = parse_u64_env(name, &value)?;
+    }
+    if let Some((name, value)) = first_env_value(
+        &mut env_value,
+        &["DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS"],
+    ) {
+        config.ai.agent.approval_timeout_seconds = parse_u64_env(name, &value)?;
+    }
+
+    Ok(())
+}
+
+fn first_env_value<F>(
+    env_value: &mut F,
+    names: &'static [&'static str],
+) -> Option<(&'static str, String)>
+where
+    F: FnMut(&'static str) -> Option<String>,
+{
+    names.iter().find_map(|name| {
+        env_value(name).and_then(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some((*name, value.to_string()))
+            }
+        })
+    })
+}
+
+fn parse_store_backend(name: &'static str, value: &str) -> Result<StoreBackend, ConfigError> {
+    match value.to_ascii_lowercase().as_str() {
+        "postgres" => Ok(StoreBackend::Postgres),
+        _ => Err(ConfigError::Env {
+            name,
+            value: value.to_string(),
+            expected: "postgres",
+        }),
+    }
+}
+
+fn parse_u32_env(name: &'static str, value: &str) -> Result<u32, ConfigError> {
+    value.parse().map_err(|_| ConfigError::Env {
+        name,
+        value: value.to_string(),
+        expected: "an unsigned 32-bit integer",
+    })
+}
+
+fn parse_u64_env(name: &'static str, value: &str) -> Result<u64, ConfigError> {
+    value.parse().map_err(|_| ConfigError::Env {
+        name,
+        value: value.to_string(),
+        expected: "an unsigned 64-bit integer",
+    })
+}
+
+fn parse_bool_env(name: &'static str, value: &str) -> Result<bool, ConfigError> {
+    match value.to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(ConfigError::Env {
+            name,
+            value: value.to_string(),
+            expected: "true, false, 1, 0, yes, no, on, or off",
+        }),
+    }
 }
 
 fn load_existing_agent_config(path: PathBuf) -> Result<LoadedAgentConfig, ConfigError> {
@@ -419,15 +676,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn load_or_create_writes_default_control_plane_config_when_missing()
+    fn load_or_create_uses_default_control_plane_config_when_missing_without_writing_file()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join(".doro").join("control-plane.toml");
 
-        let loaded = load_or_create_control_plane_config(Some(&path))?;
+        let loaded =
+            load_control_plane_config_from_candidate(Some(path.clone()), false, empty_env())?;
 
-        assert!(loaded.created);
-        assert!(path.exists());
+        assert!(!loaded.created);
+        assert!(loaded.path.is_none());
+        assert!(!path.exists());
         assert_eq!(loaded.config.server.console_bind, "0.0.0.0:8787");
         assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:8788");
         assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
@@ -435,14 +694,6 @@ mod tests {
             loaded.config.store.database_url,
             "postgres://doro:doro@127.0.0.1:5432/doro"
         );
-        let body = fs::read_to_string(&path)?;
-        assert!(body.contains("[server]"));
-        assert!(body.contains("[store]"));
-        assert!(body.contains("[security]"));
-        assert!(body.contains("[ai]"));
-        assert!(body.contains("[ai.openai]"));
-        assert!(body.contains("[ai.agent]"));
-        assert!(!body.contains("[agent]"));
 
         Ok(())
     }
@@ -505,9 +756,10 @@ mod tests {
             "#,
         )?;
 
-        let loaded = load_or_create_control_plane_config(Some(&path))?;
+        let loaded = load_control_plane_config_with_env(Some(&path), empty_env())?;
 
         assert!(!loaded.created);
+        assert_eq!(loaded.path.as_deref(), Some(path.as_path()));
         assert_eq!(loaded.config.server.console_bind, "0.0.0.0:9000");
         assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:9001");
         assert_eq!(loaded.config.ai.provider, "disabled");
@@ -623,7 +875,7 @@ mod tests {
             "#,
         )?;
 
-        let loaded = load_or_create_control_plane_config(Some(&path))?;
+        let loaded = load_control_plane_config_with_env(Some(&path), empty_env())?;
 
         assert!(!loaded.created);
         assert_eq!(loaded.config.ai.provider, "openai");
@@ -635,5 +887,159 @@ mod tests {
         assert_eq!(loaded.config.ai.agent.max_turns, 12);
 
         Ok(())
+    }
+
+    #[test]
+    fn control_plane_environment_overrides_all_config_sections()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("missing-control-plane.toml");
+        let loaded = load_control_plane_config_from_candidate(
+            Some(path.clone()),
+            false,
+            static_env(&[
+                ("DORO_CONTROL_PLANE_CONSOLE_BIND", "0.0.0.0:19087"),
+                ("DORO_CONTROL_PLANE_AGENT_BIND", "0.0.0.0:19088"),
+                ("DORO_CONTROL_PLANE_STORE_BACKEND", "postgres"),
+                (
+                    "DORO_CONTROL_PLANE_DATABASE_URL",
+                    "postgres://env:secret@db:5432/env",
+                ),
+                ("DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS", "42"),
+                ("DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS", "4"),
+                ("DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS", "12"),
+                ("DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS", "600"),
+                ("DORO_CONTROL_PLANE_APPROVAL_POLICY", "policy_only"),
+                ("DORO_CONTROL_PLANE_REQUIRE_TLS", "yes"),
+                ("DORO_CONTROL_PLANE_JWT_SECRET", "jwt-from-env"),
+                ("DORO_CONTROL_PLANE_AI_PROVIDER", "openai"),
+                (
+                    "DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV",
+                    "DORO_OPENAI_SECRET",
+                ),
+                (
+                    "DORO_CONTROL_PLANE_OPENAI_BASE_URL",
+                    "https://api.example.test/v1",
+                ),
+                ("DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL", "chat-env"),
+                (
+                    "DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL",
+                    "response-env",
+                ),
+                ("DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS", "90"),
+                ("DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS", "8"),
+                ("DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS", "16"),
+                ("DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS", "11"),
+                ("DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS", "22"),
+                ("DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS", "33"),
+            ]),
+        )?;
+
+        assert_eq!(loaded.path, None);
+        assert_eq!(loaded.config.server.console_bind, "0.0.0.0:19087");
+        assert_eq!(loaded.config.server.agent_bind, "0.0.0.0:19088");
+        assert_eq!(loaded.config.store.backend, StoreBackend::Postgres);
+        assert_eq!(
+            loaded.config.store.database_url,
+            "postgres://env:secret@db:5432/env"
+        );
+        assert_eq!(loaded.config.store.max_connections, 42);
+        assert_eq!(loaded.config.store.min_connections, 4);
+        assert_eq!(loaded.config.store.connect_timeout_seconds, 12);
+        assert_eq!(loaded.config.store.idle_timeout_seconds, 600);
+        assert_eq!(loaded.config.security.approval_policy, "policy_only");
+        assert!(loaded.config.security.require_tls);
+        assert_eq!(
+            loaded.config.security.jwt_secret.as_deref(),
+            Some("jwt-from-env")
+        );
+        assert_eq!(loaded.config.ai.provider, "openai");
+        assert_eq!(loaded.config.ai.openai.api_key_env, "DORO_OPENAI_SECRET");
+        assert_eq!(
+            loaded.config.ai.openai.base_url,
+            "https://api.example.test/v1"
+        );
+        assert_eq!(loaded.config.ai.openai.default_chat_model, "chat-env");
+        assert_eq!(
+            loaded.config.ai.openai.default_response_model,
+            "response-env"
+        );
+        assert_eq!(loaded.config.ai.openai.timeout_seconds, 90);
+        assert_eq!(loaded.config.ai.agent.max_turns, 8);
+        assert_eq!(loaded.config.ai.agent.max_tool_calls, 16);
+        assert_eq!(loaded.config.ai.agent.tool_timeout_seconds, 11);
+        assert_eq!(loaded.config.ai.agent.shell_timeout_seconds, 22);
+        assert_eq!(loaded.config.ai.agent.approval_timeout_seconds, 33);
+
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_missing_control_plane_config_fails() {
+        let dir = tempfile::tempdir().expect("temp dir should be created");
+        let path = dir.path().join("missing-control-plane.toml");
+
+        let error = match load_control_plane_config_with_env(Some(&path), empty_env()) {
+            Ok(_) => panic!("explicit missing config should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("failed to read config"));
+    }
+
+    #[test]
+    fn control_plane_environment_overrides_existing_file_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("control-plane.toml");
+        fs::write(
+            &path,
+            r#"
+                [server]
+                console_bind = "127.0.0.1:9000"
+            "#,
+        )?;
+
+        let loaded = load_control_plane_config_with_env(
+            Some(&path),
+            static_env(&[("DORO_CONTROL_PLANE_CONSOLE_BIND", "0.0.0.0:9000")]),
+        )?;
+
+        assert_eq!(loaded.path.as_deref(), Some(path.as_path()));
+        assert_eq!(loaded.config.server.console_bind, "0.0.0.0:9000");
+
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_control_plane_environment_value_fails() {
+        let error = match load_control_plane_config_with_env(
+            None,
+            static_env(&[("DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS", "many")]),
+        ) {
+            Ok(_) => panic!("invalid env value should fail"),
+            Err(error) => error,
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("invalid environment variable DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS")
+        );
+    }
+
+    fn empty_env() -> impl FnMut(&'static str) -> Option<String> {
+        |_| None
+    }
+
+    fn static_env<'a>(
+        entries: &'a [(&'a str, &'a str)],
+    ) -> impl FnMut(&'static str) -> Option<String> + 'a {
+        move |name| {
+            entries
+                .iter()
+                .find(|(entry_name, _)| *entry_name == name)
+                .map(|(_, value)| (*value).to_string())
+        }
     }
 }

@@ -1162,7 +1162,7 @@ dependencies = [
 
 [[package]]
 name = "doro-agent"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1193,7 +1193,7 @@ dependencies = [
 
 [[package]]
 name = "doro-ai"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1209,7 +1209,7 @@ dependencies = [
 
 [[package]]
 name = "doro-cli"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1226,7 +1226,7 @@ dependencies = [
 
 [[package]]
 name = "doro-config"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "dirs",
  "serde",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "doro-container"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1253,7 +1253,7 @@ dependencies = [
 
 [[package]]
 name = "doro-control-plane"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "doro-protocol"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "prost",
@@ -1303,7 +1303,7 @@ dependencies = [
 
 [[package]]
 name = "doro-store"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "doro-vm"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "doro-website"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "arc-swap",

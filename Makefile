@@ -1,10 +1,10 @@
 .PHONY: dev doro-ui control-plane agent build-release install-doro
 .PHONY: control-plane-service-install control-plane-service-enable-now control-plane-service-start control-plane-service-stop control-plane-service-restart control-plane-service-status control-plane-service-logs control-plane-service-uninstall
 .PHONY: agent-service-install agent-service-enable-now agent-service-start agent-service-stop agent-service-restart agent-service-status agent-service-logs agent-service-uninstall
-.PHONY: control-plane-config-file agent-config-file
-.PHONY: control-plane-systemd-user control-plane-systemd-config control-plane-systemd-unit control-plane-systemd-install control-plane-systemd-enable-now control-plane-systemd-start control-plane-systemd-stop control-plane-systemd-restart control-plane-systemd-status control-plane-systemd-logs control-plane-systemd-uninstall
+.PHONY: agent-config-file
+.PHONY: control-plane-systemd-user control-plane-systemd-unit control-plane-systemd-install control-plane-systemd-enable-now control-plane-systemd-start control-plane-systemd-stop control-plane-systemd-restart control-plane-systemd-status control-plane-systemd-logs control-plane-systemd-uninstall
 .PHONY: agent-systemd-user agent-systemd-config agent-systemd-unit agent-systemd-install agent-systemd-enable-now agent-systemd-start agent-systemd-stop agent-systemd-restart agent-systemd-status agent-systemd-logs agent-systemd-uninstall
-.PHONY: control-plane-launchd-user control-plane-launchd-config control-plane-launchd-plist control-plane-launchd-install control-plane-launchd-enable-now control-plane-launchd-start control-plane-launchd-stop control-plane-launchd-restart control-plane-launchd-status control-plane-launchd-logs control-plane-launchd-uninstall
+.PHONY: control-plane-launchd-user control-plane-launchd-plist control-plane-launchd-install control-plane-launchd-enable-now control-plane-launchd-start control-plane-launchd-stop control-plane-launchd-restart control-plane-launchd-status control-plane-launchd-logs control-plane-launchd-uninstall
 .PHONY: agent-launchd-user agent-launchd-config agent-launchd-plist agent-launchd-install agent-launchd-enable-now agent-launchd-start agent-launchd-stop agent-launchd-restart agent-launchd-status agent-launchd-logs agent-launchd-uninstall
 
 DORO_UI_DEV = cd doro-ui && bun run dev
@@ -39,14 +39,31 @@ DORO_CONTROL_PLANE_SERVICE_FILE ?= $(DORO_SYSTEMD_DIR)/$(DORO_CONTROL_PLANE_SERV
 DORO_CONTROL_PLANE_LAUNCHD_LABEL ?= com.doro.control-plane
 DORO_CONTROL_PLANE_LAUNCHD_TEMPLATE ?= packaging/launchd/doro-control-plane.plist.in
 DORO_CONTROL_PLANE_LAUNCHD_PLIST ?= $(DORO_LAUNCHD_DIR)/$(DORO_CONTROL_PLANE_LAUNCHD_LABEL).plist
-DORO_CONTROL_PLANE_CONFIG ?= /etc/doro/control-plane.toml
 DORO_CONTROL_PLANE_USER ?= $(DORO_SERVICE_USER_DEFAULT)
 DORO_CONTROL_PLANE_GROUP ?= $(DORO_SERVICE_GROUP_DEFAULT)
 DORO_CONTROL_PLANE_STATE_DIR ?= $(DORO_STATE_DIR_DEFAULT)
 DORO_CONTROL_PLANE_LOG_DIR ?= $(DORO_CONTROL_PLANE_STATE_DIR)/logs
 DORO_CONTROL_PLANE_CONSOLE_BIND ?= 0.0.0.0:8787
 DORO_CONTROL_PLANE_AGENT_BIND ?= 0.0.0.0:8788
+DORO_CONTROL_PLANE_STORE_BACKEND ?= postgres
 DORO_CONTROL_PLANE_DATABASE_URL ?= postgres://doro:doro@127.0.0.1:5432/doro
+DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS ?= 10
+DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS ?= 1
+DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS ?= 8
+DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS ?= 300
+DORO_CONTROL_PLANE_APPROVAL_POLICY ?= policy_and_human_approval
+DORO_CONTROL_PLANE_REQUIRE_TLS ?= false
+DORO_CONTROL_PLANE_AI_PROVIDER ?= disabled
+DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV ?= OPENAI_API_KEY
+DORO_CONTROL_PLANE_OPENAI_BASE_URL ?= https://api.openai.com/v1
+DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL ?= gpt-4.1-mini
+DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL ?= gpt-4.1-mini
+DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS ?= 60
+DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS ?= 12
+DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS ?= 32
+DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS ?= 30
+DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS ?= 120
+DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS ?= 86400
 DORO_CONTROL_PLANE_RUST_LOG ?= doro_cli=info,doro_control_plane=info,tower_http=info
 
 DORO_AGENT_SERVICE ?= doro-agent
@@ -166,50 +183,36 @@ control-plane-systemd-user:
 		$(SUDO) useradd --system --gid "$(DORO_CONTROL_PLANE_GROUP)" --home-dir "$(DORO_CONTROL_PLANE_STATE_DIR)" --shell /usr/sbin/nologin "$(DORO_CONTROL_PLANE_USER)"; \
 	fi
 	$(SUDO) $(INSTALL) -d -o "$(DORO_CONTROL_PLANE_USER)" -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0750 "$(DORO_CONTROL_PLANE_STATE_DIR)"
-	@config_dir=$$(dirname "$(DORO_CONTROL_PLANE_CONFIG)"); \
-	if [ "$$config_dir" != "." ]; then \
-		$(SUDO) $(INSTALL) -d -o root -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0750 "$$config_dir"; \
-	fi
 
-control-plane-systemd-config: control-plane-systemd-user
-	$(MAKE) control-plane-config-file
-
-control-plane-config-file:
-	@if [ ! -f "$(DORO_CONTROL_PLANE_CONFIG)" ]; then \
-		tmp=$$(mktemp); \
-		{ \
-			printf '%s\n' '[server]'; \
-			printf 'console_bind = "%s"\n' "$(DORO_CONTROL_PLANE_CONSOLE_BIND)"; \
-			printf 'agent_bind = "%s"\n' "$(DORO_CONTROL_PLANE_AGENT_BIND)"; \
-			printf '\n%s\n' '[store]'; \
-			printf 'backend = "postgres"\n'; \
-			printf 'database_url = "%s"\n' "$(DORO_CONTROL_PLANE_DATABASE_URL)"; \
-			printf 'max_connections = 10\n'; \
-			printf 'min_connections = 1\n'; \
-			printf 'connect_timeout_seconds = 8\n'; \
-			printf 'idle_timeout_seconds = 300\n'; \
-			printf '\n%s\n' '[security]'; \
-			printf 'approval_policy = "policy_and_human_approval"\n'; \
-			printf 'require_tls = false\n'; \
-			printf '\n%s\n' '[ai]'; \
-			printf 'provider = "disabled"\n'; \
-		} > "$$tmp"; \
-		$(SUDO) $(INSTALL) -o "$(DORO_CONTROL_PLANE_USER)" -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0600 "$$tmp" "$(DORO_CONTROL_PLANE_CONFIG)"; \
-		rm -f "$$tmp"; \
-	else \
-		$(SUDO) chown "$(DORO_CONTROL_PLANE_USER):$(DORO_CONTROL_PLANE_GROUP)" "$(DORO_CONTROL_PLANE_CONFIG)"; \
-		$(SUDO) chmod 0600 "$(DORO_CONTROL_PLANE_CONFIG)"; \
-	fi
-
-control-plane-systemd-unit: install-doro control-plane-systemd-config
+control-plane-systemd-unit: install-doro control-plane-systemd-user
 	@tmp=$$(mktemp); \
 	sed \
 		-e 's|@DORO_BIN@|$(DORO_INSTALLED_BIN)|g' \
-		-e 's|@DORO_CONTROL_PLANE_CONFIG@|$(DORO_CONTROL_PLANE_CONFIG)|g' \
 		-e 's|@DORO_CONTROL_PLANE_USER@|$(DORO_CONTROL_PLANE_USER)|g' \
 		-e 's|@DORO_CONTROL_PLANE_GROUP@|$(DORO_CONTROL_PLANE_GROUP)|g' \
 		-e 's|@DORO_CONTROL_PLANE_STATE_DIR@|$(DORO_CONTROL_PLANE_STATE_DIR)|g' \
 		-e 's|@DORO_CONTROL_PLANE_RUST_LOG@|$(DORO_CONTROL_PLANE_RUST_LOG)|g' \
+		-e 's|@DORO_CONTROL_PLANE_CONSOLE_BIND@|$(DORO_CONTROL_PLANE_CONSOLE_BIND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AGENT_BIND@|$(DORO_CONTROL_PLANE_AGENT_BIND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_BACKEND@|$(DORO_CONTROL_PLANE_STORE_BACKEND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_DATABASE_URL@|$(DORO_CONTROL_PLANE_DATABASE_URL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS@|$(DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS@|$(DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_APPROVAL_POLICY@|$(DORO_CONTROL_PLANE_APPROVAL_POLICY)|g' \
+		-e 's|@DORO_CONTROL_PLANE_REQUIRE_TLS@|$(DORO_CONTROL_PLANE_REQUIRE_TLS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_PROVIDER@|$(DORO_CONTROL_PLANE_AI_PROVIDER)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV@|$(DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_BASE_URL@|$(DORO_CONTROL_PLANE_OPENAI_BASE_URL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL@|$(DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL@|$(DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS@|$(DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS@|$(DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS)|g' \
 		"$(DORO_CONTROL_PLANE_SERVICE_TEMPLATE)" > "$$tmp"; \
 	$(SUDO) $(INSTALL) -m 0644 "$$tmp" "$(DORO_CONTROL_PLANE_SERVICE_FILE)"; \
 	rm -f "$$tmp"
@@ -218,8 +221,8 @@ control-plane-systemd-install: control-plane-systemd-unit
 	$(SUDO) $(SYSTEMCTL) daemon-reload
 	$(SUDO) $(SYSTEMCTL) enable "$(DORO_CONTROL_PLANE_SERVICE).service"
 	@printf '\nInstalled %s as a systemd service.\n' "$(DORO_CONTROL_PLANE_SERVICE).service"
-	@printf 'Config: %s\n' "$(DORO_CONTROL_PLANE_CONFIG)"
-	@printf 'Review database and security settings before first start, then run: make control-plane-systemd-start\n'
+	@printf 'Configuration is supplied through service environment variables.\n'
+	@printf 'Review database and security variables before first start, then run: make control-plane-systemd-start\n'
 
 control-plane-systemd-enable-now: control-plane-systemd-install
 	$(MAKE) control-plane-systemd-start
@@ -252,25 +255,38 @@ control-plane-launchd-user:
 	fi
 	$(SUDO) $(INSTALL) -d -o "$(DORO_CONTROL_PLANE_USER)" -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0750 "$(DORO_CONTROL_PLANE_STATE_DIR)"
 	$(SUDO) $(INSTALL) -d -o "$(DORO_CONTROL_PLANE_USER)" -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0750 "$(DORO_CONTROL_PLANE_LOG_DIR)"
-	@config_dir=$$(dirname "$(DORO_CONTROL_PLANE_CONFIG)"); \
-	if [ "$$config_dir" != "." ]; then \
-		$(SUDO) $(INSTALL) -d -o root -g "$(DORO_CONTROL_PLANE_GROUP)" -m 0750 "$$config_dir"; \
-	fi
 
-control-plane-launchd-config: control-plane-launchd-user
-	$(MAKE) control-plane-config-file
-
-control-plane-launchd-plist: install-doro control-plane-launchd-config
+control-plane-launchd-plist: install-doro control-plane-launchd-user
 	@tmp=$$(mktemp); \
 	sed \
 		-e 's|@DORO_BIN@|$(DORO_INSTALLED_BIN)|g' \
-		-e 's|@DORO_CONTROL_PLANE_CONFIG@|$(DORO_CONTROL_PLANE_CONFIG)|g' \
 		-e 's|@DORO_CONTROL_PLANE_USER@|$(DORO_CONTROL_PLANE_USER)|g' \
 		-e 's|@DORO_CONTROL_PLANE_GROUP@|$(DORO_CONTROL_PLANE_GROUP)|g' \
 		-e 's|@DORO_CONTROL_PLANE_STATE_DIR@|$(DORO_CONTROL_PLANE_STATE_DIR)|g' \
 		-e 's|@DORO_CONTROL_PLANE_LOG_DIR@|$(DORO_CONTROL_PLANE_LOG_DIR)|g' \
 		-e 's|@DORO_CONTROL_PLANE_RUST_LOG@|$(DORO_CONTROL_PLANE_RUST_LOG)|g' \
 		-e 's|@DORO_CONTROL_PLANE_LAUNCHD_LABEL@|$(DORO_CONTROL_PLANE_LAUNCHD_LABEL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_CONSOLE_BIND@|$(DORO_CONTROL_PLANE_CONSOLE_BIND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AGENT_BIND@|$(DORO_CONTROL_PLANE_AGENT_BIND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_BACKEND@|$(DORO_CONTROL_PLANE_STORE_BACKEND)|g' \
+		-e 's|@DORO_CONTROL_PLANE_DATABASE_URL@|$(DORO_CONTROL_PLANE_DATABASE_URL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS@|$(DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS@|$(DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_APPROVAL_POLICY@|$(DORO_CONTROL_PLANE_APPROVAL_POLICY)|g' \
+		-e 's|@DORO_CONTROL_PLANE_REQUIRE_TLS@|$(DORO_CONTROL_PLANE_REQUIRE_TLS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_PROVIDER@|$(DORO_CONTROL_PLANE_AI_PROVIDER)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV@|$(DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_BASE_URL@|$(DORO_CONTROL_PLANE_OPENAI_BASE_URL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL@|$(DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL@|$(DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL)|g' \
+		-e 's|@DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS@|$(DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS@|$(DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS)|g' \
+		-e 's|@DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS@|$(DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS)|g' \
 		"$(DORO_CONTROL_PLANE_LAUNCHD_TEMPLATE)" > "$$tmp"; \
 	$(PLUTIL) -lint "$$tmp"; \
 	$(SUDO) $(INSTALL) -d -m 0755 "$(DORO_LAUNCHD_DIR)"; \
@@ -281,8 +297,8 @@ control-plane-launchd-install: control-plane-launchd-plist
 	-$(SUDO) $(LAUNCHCTL) enable "$(DORO_LAUNCHD_DOMAIN)/$(DORO_CONTROL_PLANE_LAUNCHD_LABEL)"
 	@printf '\nInstalled %s as a launchd service.\n' "$(DORO_CONTROL_PLANE_LAUNCHD_LABEL)"
 	@printf 'Plist: %s\n' "$(DORO_CONTROL_PLANE_LAUNCHD_PLIST)"
-	@printf 'Config: %s\n' "$(DORO_CONTROL_PLANE_CONFIG)"
-	@printf 'Review database and security settings before first start, then run: make control-plane-launchd-start\n'
+	@printf 'Configuration is supplied through service environment variables.\n'
+	@printf 'Review database and security variables before first start, then run: make control-plane-launchd-start\n'
 
 control-plane-launchd-enable-now: control-plane-launchd-install
 	$(MAKE) control-plane-launchd-start

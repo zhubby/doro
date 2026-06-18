@@ -16,7 +16,7 @@ Doro is not a Codex CLI fork. The previous Codex-derived files were removed from
 - `doro-control-plane` - console API, event stream, and agent connection surface.
 - `doro-agent` - host daemon for enrollment, heartbeat, metrics, cancellable command execution, and host-local task work.
 - `doro-store` - Postgres persistence boundary using SeaORM.
-- `doro-config` - TOML configuration loading and defaults for `~/.doro/control-plane.toml` and `~/.doro/agent.toml`.
+- `doro-config` - environment/TOML configuration loading for the control plane and Agent config loading for `~/.doro/agent.toml`.
 - `doro-ai` - AI planning/provider abstraction that never bypasses policy or approval.
 - `doro-cli` - Doro operations CLI.
 - `doro-ui` - Next.js frontend.
@@ -61,10 +61,11 @@ Install the control plane as a managed service. The `service` target uses system
 
 ```bash
 make control-plane-service-install
-sudoedit /etc/doro/control-plane.toml
 make control-plane-service-start
 make control-plane-service-status
 ```
+
+Pass `DORO_CONTROL_PLANE_*` variables to `make control-plane-service-install` to override database, bind, security, and AI settings.
 
 Install the agent the same way:
 

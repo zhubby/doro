@@ -53,29 +53,6 @@ COPY --from=rust-builder /workspace/doro /usr/local/bin/doro
 FROM doro-runtime AS doro
 
 RUN { \
-        echo '[server]'; \
-        echo 'console_bind = "0.0.0.0:8787"'; \
-        echo 'agent_bind = "0.0.0.0:8788"'; \
-        echo ''; \
-        echo '[store]'; \
-        echo 'backend = "postgres"'; \
-        echo 'database_url = "postgres://doro:doro@postgres:5432/doro"'; \
-        echo 'max_connections = 10'; \
-        echo 'min_connections = 1'; \
-        echo 'connect_timeout_seconds = 8'; \
-        echo 'idle_timeout_seconds = 300'; \
-        echo ''; \
-        echo '[security]'; \
-        echo 'approval_policy = "policy_and_human_approval"'; \
-        echo 'require_tls = false'; \
-        echo ''; \
-        echo '[websites]'; \
-        echo 'http_bind = "0.0.0.0:8080"'; \
-        echo ''; \
-        echo '[ai]'; \
-        echo 'provider = "disabled"'; \
-    } > /etc/doro/control-plane.toml \
-    && { \
         echo '[agent]'; \
         echo 'control_plane_url = "http://doro-control-plane:8788"'; \
         echo 'hostname = "doro-container-agent"'; \
@@ -85,7 +62,7 @@ RUN { \
         echo '[ai]'; \
         echo 'provider = "disabled"'; \
     } > /etc/doro/agent.toml \
-    && chown doro:doro /etc/doro/control-plane.toml /etc/doro/agent.toml
+    && chown doro:doro /etc/doro/agent.toml
 
 USER doro
 

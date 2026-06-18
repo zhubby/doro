@@ -24,16 +24,13 @@ Install the control plane service:
 make control-plane-service-install
 ```
 
-Before first start, review `/etc/doro/control-plane.toml` for the database URL, bind addresses, TLS posture, and security settings:
+Control-plane configuration is written into the service definition as environment variables. Override database, bind, security, and AI settings when installing:
 
-```toml
-[server]
-console_bind = "0.0.0.0:8787"
-agent_bind = "0.0.0.0:8788"
-
-[store]
-backend = "postgres"
-database_url = "postgres://doro:doro@127.0.0.1:5432/doro"
+```bash
+make control-plane-service-install \
+  DORO_CONTROL_PLANE_DATABASE_URL=postgres://doro:doro@postgres.lan:5432/doro \
+  DORO_CONTROL_PLANE_CONSOLE_BIND=0.0.0.0:8787 \
+  DORO_CONTROL_PLANE_AGENT_BIND=0.0.0.0:8788
 ```
 
 Then start and inspect the service:
@@ -52,7 +49,7 @@ make control-plane-service-stop
 make control-plane-service-uninstall
 ```
 
-`control-plane-service-uninstall` removes the service definition and disables/unloads the service. It leaves `/etc/doro/control-plane.toml`, the state directory, the installed `doro` binary, and service user data in place.
+`control-plane-service-uninstall` removes the service definition and disables/unloads the service. It leaves the state directory, the installed `doro` binary, and service user data in place.
 
 ## Agent
 
@@ -108,7 +105,7 @@ make agent-systemd-logs
 The rendered units run:
 
 ```bash
-/usr/local/bin/doro --config /etc/doro/control-plane.toml control-plane
+/usr/local/bin/doro control-plane
 /usr/local/bin/doro --config /etc/doro/agent.toml agent
 ```
 
@@ -164,7 +161,7 @@ DORO_AGENT_USER=<current user>
 The rendered plists run:
 
 ```bash
-/usr/local/bin/doro --config /etc/doro/control-plane.toml control-plane
+/usr/local/bin/doro control-plane
 /usr/local/bin/doro --config /etc/doro/agent.toml agent
 ```
 
@@ -195,10 +192,11 @@ Shared variables:
 ```text
 DORO_INSTALL_PREFIX=/usr/local
 DORO_INSTALLED_BIN=/usr/local/bin/doro
-DORO_CONTROL_PLANE_CONFIG=/etc/doro/control-plane.toml
 DORO_AGENT_CONFIG=/etc/doro/agent.toml
 DORO_CONTROL_PLANE_CONSOLE_BIND=0.0.0.0:8787
 DORO_CONTROL_PLANE_AGENT_BIND=0.0.0.0:8788
 DORO_CONTROL_PLANE_DATABASE_URL=postgres://doro:doro@127.0.0.1:5432/doro
+DORO_CONTROL_PLANE_REQUIRE_TLS=false
+DORO_CONTROL_PLANE_AI_PROVIDER=disabled
 DORO_AGENT_CONTROL_PLANE_URL=http://127.0.0.1:8788
 ```

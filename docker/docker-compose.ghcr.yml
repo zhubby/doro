@@ -1,0 +1,29 @@
+name: doro-ghcr
+
+services:
+  doro-control-plane:
+    image: ghcr.io/zhubby/doro:${DORO_IMAGE_TAG:-latest}
+    command: ["control-plane"]
+    environment:
+      DORO_CONTROL_PLANE_DATABASE_URL: ${DORO_CONTROL_PLANE_DATABASE_URL:-postgres://doro:doro@host.docker.internal:5432/doro}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8787:8787"
+      - "8788:8788"
+    restart: unless-stopped
+    volumes:
+      - doro-control-plane-data:/var/lib/doro
+
+  doro-ui:
+    image: ghcr.io/zhubby/doro-ui:${DORO_UI_IMAGE_TAG:-latest}
+    depends_on:
+      - doro-control-plane
+    environment:
+      DORO_CONTROL_PLANE_URL: http://doro-control-plane:8787
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+volumes:
+  doro-control-plane-data:

@@ -17,7 +17,7 @@ pub async fn run_loaded(
     loaded_config: doro_config::LoadedControlPlaneConfig,
 ) -> anyhow::Result<()> {
     run_inner(
-        Some(loaded_config.path.as_path()),
+        loaded_config.path.as_deref(),
         loaded_config.created,
         loaded_config.config,
     )

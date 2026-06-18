@@ -33,15 +33,8 @@ fn render_control_plane_startup_summary(
     push_line(
         &mut output,
         &format!(
-            "📄 配置文件: {} ({})",
-            config_path
-                .map(|path| path.display().to_string())
-                .unwrap_or_else(|| "未指定".to_string()),
-            if config_created {
-                "新建"
-            } else {
-                "已读取"
-            }
+            "📄 配置来源: {}",
+            config_source_label(config_path, config_created)
         ),
     );
     push_line(
@@ -66,7 +59,7 @@ fn render_control_plane_startup_summary(
             config.security.approval_policy,
             enabled_label(config.security.require_tls),
             if config.security.jwt_secret.is_some() {
-                "配置文件"
+                "已配置"
             } else {
                 "数据库/自动生成"
             }
@@ -149,6 +142,14 @@ fn render_control_plane_startup_summary(
 fn push_line(output: &mut String, line: &str) {
     output.push_str(line);
     output.push('\n');
+}
+
+fn config_source_label(config_path: Option<&Path>, config_created: bool) -> String {
+    match config_path {
+        Some(path) if config_created => format!("{} (新建)", path.display()),
+        Some(path) => format!("{} (已读取)", path.display()),
+        None => "环境变量/默认值（未使用配置文件）".to_string(),
+    }
 }
 
 fn push_module_line(output: &mut String, emoji: &str, name: &str, enabled: bool, detail: &str) {
@@ -275,12 +276,23 @@ mod tests {
             &config,
         );
 
-        assert!(output.contains("配置文件: /tmp/control-plane.toml (新建)"));
+        assert!(output.contains("配置来源: /tmp/control-plane.toml (新建)"));
         assert!(output.contains("Console REST API"));
         assert!(output.contains("Agent 协议入口"));
         assert!(output.contains("计划任务调度器"));
         assert!(output.contains("AI 入口"));
         assert!(output.contains("provider=openai"));
         assert!(output.contains("/api/v1/approvals"));
+    }
+
+    #[test]
+    fn startup_summary_reports_configless_source() {
+        let output = render_control_plane_startup_summary(
+            None,
+            false,
+            &doro_config::ControlPlaneConfig::default(),
+        );
+
+        assert!(output.contains("配置来源: 环境变量/默认值（未使用配置文件）"));
     }
 }

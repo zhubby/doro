@@ -2,12 +2,12 @@ services:
   control-plane:
     image: doro:local
     container_name: doro-control-plane
-    command: ["--config", "/etc/doro/control-plane.toml", "control-plane"]
+    command: ["control-plane"]
     ports:
       - "8787:8787"
       - "8788:8788"
-    volumes:
-      - ./docker/control-plane.toml:/etc/doro/control-plane.toml:ro
+    environment:
+      - DORO_CONTROL_PLANE_DATABASE_URL=postgres://doro:doro@host.docker.internal:5432/doro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -18,7 +18,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_DORO_CONTROL_PLANE_URL=http://localhost:8787
+      - DORO_CONTROL_PLANE_URL=http://control-plane:8787
     depends_on:
       - control-plane
     restart: unless-stopped

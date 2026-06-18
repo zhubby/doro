@@ -2,14 +2,13 @@
 
 Doro configuration is intentionally small while the control plane and agent protocol stabilize.
 
-The default paths are:
+The default Agent path is:
 
 ```text
-~/.doro/control-plane.toml
 ~/.doro/agent.toml
 ```
 
-If a file does not exist, Doro creates it with defaults. CLI service commands accept a global override:
+The control plane can run without a config file. It starts from defaults, applies any existing `~/.doro/control-plane.toml`, and then applies `DORO_CONTROL_PLANE_*` environment variable overrides. CLI service commands still accept a global TOML override when a file is desired:
 
 ```bash
 doro --config /path/to/control-plane.toml control-plane
@@ -40,13 +39,51 @@ require_tls = false
 
 Production deployments should enable TLS and store secrets outside the repository.
 
+Every control-plane field can be overridden with environment variables. Common examples:
+
+```bash
+DORO_CONTROL_PLANE_CONSOLE_BIND=0.0.0.0:8787
+DORO_CONTROL_PLANE_AGENT_BIND=0.0.0.0:8788
+DORO_CONTROL_PLANE_DATABASE_URL=postgres://doro:doro@postgres.lan:5432/doro
+DORO_CONTROL_PLANE_REQUIRE_TLS=false
+DORO_CONTROL_PLANE_AI_PROVIDER=disabled
+```
+
+Full control-plane environment variable mapping:
+
+| TOML field | Environment variable |
+| --- | --- |
+| `server.console_bind` | `DORO_CONTROL_PLANE_CONSOLE_BIND` |
+| `server.agent_bind` | `DORO_CONTROL_PLANE_AGENT_BIND` |
+| `store.backend` | `DORO_CONTROL_PLANE_STORE_BACKEND` |
+| `store.database_url` | `DORO_CONTROL_PLANE_DATABASE_URL` |
+| `store.max_connections` | `DORO_CONTROL_PLANE_STORE_MAX_CONNECTIONS` |
+| `store.min_connections` | `DORO_CONTROL_PLANE_STORE_MIN_CONNECTIONS` |
+| `store.connect_timeout_seconds` | `DORO_CONTROL_PLANE_STORE_CONNECT_TIMEOUT_SECONDS` |
+| `store.idle_timeout_seconds` | `DORO_CONTROL_PLANE_STORE_IDLE_TIMEOUT_SECONDS` |
+| `security.approval_policy` | `DORO_CONTROL_PLANE_APPROVAL_POLICY` |
+| `security.require_tls` | `DORO_CONTROL_PLANE_REQUIRE_TLS` |
+| `security.jwt_secret` | `DORO_CONTROL_PLANE_JWT_SECRET` |
+| `ai.provider` | `DORO_CONTROL_PLANE_AI_PROVIDER` |
+| `ai.openai.api_key_env` | `DORO_CONTROL_PLANE_OPENAI_API_KEY_ENV` |
+| `ai.openai.base_url` | `DORO_CONTROL_PLANE_OPENAI_BASE_URL` |
+| `ai.openai.default_chat_model` | `DORO_CONTROL_PLANE_OPENAI_DEFAULT_CHAT_MODEL` |
+| `ai.openai.default_response_model` | `DORO_CONTROL_PLANE_OPENAI_DEFAULT_RESPONSE_MODEL` |
+| `ai.openai.timeout_seconds` | `DORO_CONTROL_PLANE_OPENAI_TIMEOUT_SECONDS` |
+| `ai.agent.max_turns` | `DORO_CONTROL_PLANE_AI_AGENT_MAX_TURNS` |
+| `ai.agent.max_tool_calls` | `DORO_CONTROL_PLANE_AI_AGENT_MAX_TOOL_CALLS` |
+| `ai.agent.tool_timeout_seconds` | `DORO_CONTROL_PLANE_AI_AGENT_TOOL_TIMEOUT_SECONDS` |
+| `ai.agent.shell_timeout_seconds` | `DORO_CONTROL_PLANE_AI_AGENT_SHELL_TIMEOUT_SECONDS` |
+| `ai.agent.approval_timeout_seconds` | `DORO_CONTROL_PLANE_AI_AGENT_APPROVAL_TIMEOUT_SECONDS` |
+
+An existing TOML file is still supported for local overrides. Environment variables always win over TOML values.
+
 ## Service managers
 
 Doro provides Makefile targets for Linux systemd and macOS launchd. Use the platform-neutral `service` targets to pick the default manager from `uname`:
 
 ```bash
 make control-plane-service-install
-sudoedit /etc/doro/control-plane.toml
 make control-plane-service-start
 
 make agent-service-install
@@ -68,7 +105,7 @@ make control-plane-launchd-install
 make agent-launchd-install
 ```
 
-Install targets build the release `doro` binary, install it to `/usr/local/bin/doro`, write the relevant `/etc/doro/*.toml` file when missing, install the service definition, and enable the service manager entry. They do not start services automatically so database, security, and enrollment settings can be reviewed first.
+Install targets build the release `doro` binary, install it to `/usr/local/bin/doro`, write Agent TOML when missing, install the service definition, and enable the service manager entry. The control plane service stores its configuration in service environment variables. Install targets do not start services automatically so database, security, and enrollment settings can be reviewed first.
 
 The common platform-neutral service targets are:
 
