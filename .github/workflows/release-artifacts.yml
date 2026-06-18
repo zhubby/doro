@@ -44,7 +44,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          packages=(cmake pkg-config protobuf-compiler)
+          packages=(cmake pkg-config protobuf-compiler libprotobuf-dev)
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             packages+=(gcc-aarch64-linux-gnu g++-aarch64-linux-gnu)
           fi
