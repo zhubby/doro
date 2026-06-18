@@ -1,6 +1,10 @@
-# Doro
+<h1 align="center">Doro</h1>
 
-Doro is an AI-native home server control plane.
+<p align="center">
+  <img src="doro-ui/public/brand/doro-logo.png" alt="Doro logo" width="160" />
+</p>
+
+<p align="center">Doro is an AI-native home server control plane.</p>
 
 The project is built around one central control panel and many host agents:
 
